@@ -1,212 +1,105 @@
 <template>
   <view class="mine-page">
-    <view @tap="pageTo('/pages/mine/profile')" v-if="userStore.token" class="user-profile">
-      <img class="user-avatar" :src="`${baseURL}/${userStore.user.avatar}`" alt="" srcset="" />
-      <view class="user-info">
-        <text class="user-name">{{ userStore.user.name }}</text>
-        <text class="user-email">{{ userStore.user.email }}</text>
+    <!-- 患者上下文 + 采集归属 -->
+    <CaPatientBar />
+    <view class="attr">本次采集归属：{{ attrText }}</view>
+
+    <!-- 采集中状态（以蓝牙已连接近似） -->
+    <CaStatusStrip v-if="isCollecting" title="采集中" :sub="collectSub" />
+
+    <!-- 操作员信息 -->
+    <CaCard title="操作员信息">
+      <view class="op-row"><text class="op-k">医院</text><text class="op-v">{{ op.operator?.hospital || '—' }}</text></view>
+      <view class="op-row"><text class="op-k">科室</text><text class="op-v">{{ op.operator?.dept || '—' }}</text></view>
+      <view class="op-row"><text class="op-k">医生</text><text class="op-v">{{ op.operator?.name || '—' }}</text></view>
+      <view class="op-row"><text class="op-k">联系方式</text><text class="op-v">{{ op.operator?.phone || '—' }}</text></view>
+      <view class="op-btn danger" @tap="reEnable">重新启用本机</view>
+    </CaCard>
+
+    <uni-notice-bar :speed="40" show-icon scrollable :text="getNoticeBarText" />
+
+    <!-- 设备列表 -->
+    <CaCard title="设备列表">
+      <view class="dev-actions">
+        <view class="dev-add" @tap="addDevice">+ 新增设备</view>
       </view>
-      <view @tap="pageTo('/pages/mine/profile')" class="user-profile-btn">修改资料</view>
-    </view>
 
-    <view v-else @tap="pageTo('/pages/login/login')" class="login-prompt">
-      <button class="login-btn">还未登录，点击去登陆</button>
-    </view>
-
-    <view v-if="userStore.token">
-      <uni-notice-bar :speed="40" show-icon scrollable :text="getNoticeBarText" />
-
-      <!-- 功能list -->
-      <uni-section
-        class="chart-section"
-        title="功能列表"
-        subTitle=""
-        type="line"
-        titleColor="#333"
-        titleFontSize="34rpx"
-      >
-        <view class="function-list">
-          <view class="function-item" @tap="addDevice">
-            <view class="function-icon-box">
-              <image src="/static/imgs/1751354444527.png" class="function-icon"></image>
+      <view v-if="blueToothStore.deviceList.length" class="dev-list">
+        <view v-for="item in blueToothStore.deviceList" :key="item.id" class="dev-card">
+          <view class="dev-head">
+            <view class="dev-meta">
+              <view class="dev-title">
+                <text class="dev-name">{{ item.device_name }}</text>
+                <text v-if="getDeviceStatus(item.device_code)" class="dev-tag on">已连接</text>
+                <text v-else class="dev-tag off">未连接</text>
+              </view>
+              <text class="dev-code">{{ item.device_code }}</text>
             </view>
-            <view class="function-text">新增设备</view>
+          </view>
+
+          <view class="dev-ops">
+            <view
+              v-if="getDeviceStatus(item.device_code)"
+              class="dev-op danger"
+              @tap="handleConnect('close', item.id)"
+            >
+              断开连接
+            </view>
+            <view v-else class="dev-op primary" @tap="handleConnect('connect', item.id)">连接</view>
+            <view class="dev-op danger-o" @tap="deleteDevice(item)">删除</view>
           </view>
         </view>
-      </uni-section>
-
-      <!-- 设备card -->
-      <uni-section
-        class="chart-section"
-        title="设备列表"
-        subTitle=""
-        type="line"
-        titleColor="#333"
-        titleFontSize="34rpx"
-      >
-        <!-- 设备列表 -->
-        <swiper
-          v-if="blueToothStore.deviceList.length"
-          class="swiper"
-          :circular="false"
-          next-margin="100rpx"
-          :indicator-dots="false"
-          :autoplay="false"
-          :interval="100"
-          :duration="300"
-        >
-          <swiper-item v-for="item in blueToothStore.deviceList" :key="item.id">
-            <view class="swiper-item">
-              <!-- mask -->
-              <view
-                @click="handleMask(item)"
-                v-if="item.id == activeDeviceId"
-                class="device-mask"
-                style="background-color: rgba(0, 0, 0, 0.6)"
-              >
-                <view @click.stop="deleteDevice(item)" class="delete-device">
-                  <image class="delete-icon" src="../../static/imgs/1746668189565.png"></image>
-                  <view class="delete-text">删除设备</view>
-                </view>
-              </view>
-
-              <view @click="handleMask(item)" class="device-header">
-                <image class="device-icon" src="../../static/imgs/wifi2.png"></image>
-                <view class="device-content">
-                  <view class="device-info">
-                    <view class="device-title">
-                      <text class="device-name">{{ item.device_name }}</text>
-                      <view v-if="getDeviceStatus(item.device_code)" class="status-connected"> 已连接 </view>
-                      <view v-else class="status-disconnected"> 未连接 </view>
-                    </view>
-                    <text class="device-desc">3 Service Advertised</text>
-                  </view>
-                  <!-- 连接 -->
-                  <image
-                    v-if="getDeviceStatus(item.device_code)"
-                    class="connect-icon"
-                    src="../../static/imgs/1746501374311.png"
-                    @click.stop="handleConnect('close', item.id)"
-                  ></image>
-
-                  <!-- 未连接 -->
-                  <image
-                    v-else
-                    @click.stop="handleConnect('connect', item.id)"
-                    class="connect-icon"
-                    src="../../static/imgs/1746501374316.png"
-                  ></image>
-                </view>
-              </view>
-              <!-- 设备ID -->
-              <view class="device-id">{{ item.device_code }}</view>
-              <!-- 设备状态 -->
-              <view v-if="getDeviceStatus(item.device_code)" class="device-controls">
-                <view class="control-item">
-                  <view>控制开关:</view>
-                  <view class="picker-content" @click="() => showSwitchActionSheet(item)">
-                    <view :style="{ color: item.is_enabled ? '#09be4f' : '#f13131' }">
-                      {{ item.is_enabled ? '开启' : '关闭' }}
-                    </view>
-                    <uni-icons type="right" :color="item.is_enabled ? '#09be4f' : '#f13131'" size="16"></uni-icons>
-                  </view>
-                </view>
-                <view class="control-item">
-                  <view>频率:</view>
-                  <view class="picker-content" @click="() => showHzActionSheet(item)">
-                    <view :style="{ color: item.is_enabled ? '#09be4f' : '#f13131' }">{{ pl[item.frequency] }}</view>
-                    <uni-icons type="right" :color="item.is_enabled ? '#09be4f' : '#f13131'" size="16"></uni-icons>
-                  </view>
-                </view>
-              </view>
-              <!-- 未连接 -->
-              <view v-else class="device-controls">
-                <view class="control-item">
-                  <view>控制开关:</view>
-                  <view>--</view>
-                </view>
-                <view class="control-item">
-                  <view>频率:</view>
-                  <view>--</view>
-                </view>
-              </view>
-            </view>
-          </swiper-item>
-        </swiper>
-        
-        <!-- 空状态占位符 -->
-        <view v-else class="empty-device-placeholder">
-          <image class="empty-icon" src="../../static/imgs/wifi2.png"></image>
-          <view class="empty-text">暂无设备</view>
-          <view class="empty-desc">请添加蓝牙设备</view>
-        </view>
-      </uni-section>
-
-      <view class="menu-section">
-        <button type="primary" @tap="logout" style="border-radius: 30rpx">退出登录</button>
-        <!-- <button type="primary" @tap="blueToothStore.searchDevice" style="border-radius: 30rpx; margin-top: 20rpx">
-          初始化蓝牙
-        </button> -->
       </view>
-    </view>
+
+      <!-- 空状态 -->
+      <CaEmpty v-else icon="📡" title="暂无设备" desc="点击新增设备扫描二维码添加" />
+    </CaCard>
 
     <yfx-tooltip ref="tooltip"></yfx-tooltip>
   </view>
 </template>
+
 <script setup>
 import { ref, computed } from 'vue'
-import { pageTo } from '../../utils/index.js'
-import { useUserStoreWithOut, useBlueToothStoreWithOut } from '@/store'
-import { baseURL } from '@/config'
+import { useBlueToothStoreWithOut } from '@/store'
+import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { onLoad, onShow, onUnload } from '@dcloudio/uni-app'
 
-const userStore = useUserStoreWithOut()
 const blueToothStore = useBlueToothStoreWithOut()
+const op = useOperatorStoreWithOut()
 
 const tooltip = ref(null)
-
-const activeDeviceId = ref(null)
-
 const timer = ref(null)
 
-const hz = [
-  {
-    value: 'Low',
-    label: '1HZ'
-  },
-  {
-    value: 'Medium',
-    label: '5HZ'
-  },
-  {
-    value: 'High',
-    label: '10HZ'
-  }
-]
+// 采集归属：医院 · 科室 · 医生
+const attrText = computed(() => {
+  const a = op.attribution()
+  return [a.hospital, a.dept, a.doctor].filter(Boolean).join(' · ') || '未设置'
+})
 
-const pl = computed(() => {
-  const res = hz.reduce((rs, curr) => {
-    rs[curr.value] = curr.label
-    return rs
-  }, {})
-  return res
+// 采集中：用已连接设备近似（无独立采集协议/标志）
+const connectedCodes = computed(() =>
+  Object.keys(blueToothStore.bles_objs).filter((code) => blueToothStore.bles_objs[code]?.isConnected)
+)
+const isCollecting = computed(() => connectedCodes.value.length > 0)
+const collectSub = computed(() => {
+  const names = connectedCodes.value.map((code) => {
+    return blueToothStore.deviceList.find((d) => d.device_code === code)?.device_name || code
+  })
+  return `已连接 ${names.length} 台：${names.join('、')}`
 })
 
 const getNoticeBarText = computed(() => {
-  return '如若需要连接设备，请点击添加设备，然后扫描设备二维码'
+  return '如若需要连接设备，请点击新增设备，然后扫描设备二维码'
 })
 
 onShow(() => {
-  if (userStore.token) {
-    blueToothStore.getDevicesList()
-  }
+  blueToothStore.getDevicesList()
 })
 
 onLoad(() => {
   timer.value = setInterval(() => {
-    if (userStore.token) {
-      blueToothStore.getDevicesList()
-    }
+    blueToothStore.getDevicesList()
   }, 5000)
 })
 
@@ -215,30 +108,19 @@ onUnload(() => {
 })
 
 const getDeviceStatus = (device_code) => {
-  const bles_objs = blueToothStore.bles_objs
-
-  return bles_objs?.[device_code]?.isConnected ? true : false
-}
-
-const handleMask = (device) => {
-  if (device.id == activeDeviceId.value) {
-    activeDeviceId.value = null
-  } else {
-    activeDeviceId.value = device.id
-  }
+  return blueToothStore.bles_objs?.[device_code]?.isConnected ? true : false
 }
 
 const deleteDevice = (item) => {
   uni.vibrateShort()
-  // 判断当前设备是否已经链接
-  const bles_objs = blueToothStore.bles_objs
-  if (bles_objs?.[item.device_code]?.isConnected) {
+  // 已连接的设备需先断开再删除
+  if (blueToothStore.bles_objs?.[item.device_code]?.isConnected) {
     tooltip.value.open({
       msg: '提示',
       content: '当前设备已连接，请先断开连接',
       showCancel: false,
       confirm: () => {
-        userStore.deleteDevice(item.id)
+        blueToothStore.deleteDevice(item.id)
       }
     })
     return
@@ -249,10 +131,11 @@ const deleteDevice = (item) => {
     content: '确定要删除设备吗？',
     showCancel: true,
     confirm: () => {
-      userStore.deleteDevice(item.id)
+      blueToothStore.deleteDevice(item.id)
     }
   })
 }
+
 const handleConnect = (type, id) => {
   if (type == 'close') {
     uni.vibrateShort()
@@ -278,48 +161,6 @@ const handleConnect = (type, id) => {
   }
 }
 
-const onPickerChange = (event, id) => {
-  uni.vibrateShort()
-  const selectedIndex = event.detail.value
-  blueToothStore.updateDevice(id, {
-    is_enabled: selectedIndex === 0 ? false : true
-  })
-
-  const device_code = blueToothStore.deviceList.find((item) => item.id == id)?.device_code
-
-  // 设置蓝牙状态
-  if (selectedIndex === 0) {
-    blueToothStore.sendMassge('0', device_code)
-  } else {
-    blueToothStore.sendMassge('1', device_code)
-  }
-}
-
-const onHzPickerChange = (event, id) => {
-  uni.vibrateShort()
-  const selectedIndex = event.detail.value
-
-  blueToothStore.updateDevice(id, {
-    frequency: hz[selectedIndex].value
-  })
-  const device_code = blueToothStore.deviceList.find((item) => item.id == id)?.device_code
-  // 设置采样率
-  blueToothStore.sendMassge(hz[selectedIndex].value, device_code)
-}
-
-const logout = () => {
-  uni.vibrateShort()
-
-  tooltip.value.open({
-    msg: '提示',
-    content: '确定要退出登录吗？',
-    showCancel: true,
-    confirm: () => {
-      userStore.logout()
-    }
-  })
-}
-
 const addDevice = () => {
   // #ifdef H5
   uni.showToast({ title: '暂不支持H5端', icon: 'none' })
@@ -332,28 +173,22 @@ const addDevice = () => {
     autoDecodeCharset: true,
     success: function (res) {
       console.log('条码：' + res.result)
-      // userStore.addDevice('DEVICE = Insole_1;UUID = 18:8B:0E:CC:81:BD' || res.result)
       blueToothStore.addDevice(res.result)
     }
   })
   // #endif
 }
 
-const showSwitchActionSheet = (item) => {
-  uni.showActionSheet({
-    itemList: ['关闭设备', '开启设备'],
-    success: (res) => {
-      // res.tapIndex: 0为关闭，1为开启
-      onPickerChange({ detail: { value: res.tapIndex } }, item.id)
-    }
-  })
-}
-
-const showHzActionSheet = (item) => {
-  uni.showActionSheet({
-    itemList: hz.map((h) => h.label),
-    success: (res) => {
-      onHzPickerChange({ detail: { value: res.tapIndex } }, item.id)
+// 重新启用本机：清操作员信息并回到启用页
+function reEnable() {
+  uni.showModal({
+    title: '重新启用本机',
+    content: '将清除本机操作员信息并退出，确定？',
+    success: (r) => {
+      if (r.confirm) {
+        op.reset()
+        uni.reLaunch({ url: '/pages/setup/enable' })
+      }
     }
   })
 }
@@ -361,308 +196,157 @@ const showHzActionSheet = (item) => {
 
 <style lang="scss" scoped>
 page {
-  background-color: #ffffff;
-}
-
-.function-list {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 20rpx;
-  background-color: #ffffff;
-}
-
-.function-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background-color: #ffffff;
-  border-radius: 10rpx;
-  padding: 20rpx;
-  .function-icon-box {
-    width: 100rpx;
-    height: 100rpx;
-    background-color: #007bff;
-    border-radius: 10rpx;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .function-icon {
-    width: 60rpx;
-    height: 60rpx;
-  }
-  .function-text {
-    font-size: 24rpx;
-    margin-top: 10rpx;
-  }
+  background-color: $ca-bg;
 }
 
 .mine-page {
-  background-color: #ffffff;
+  background-color: $ca-bg;
   min-height: 100vh;
+  padding-bottom: 40rpx;
 }
 
-.user-profile-btn {
-  background-color: rgba(0, 0, 0, 0.2);
-  color: #fff;
-  padding: 10rpx 20rpx;
-  border-radius: 10rpx;
-  font-size: 24rpx;
+.attr {
+  @include ca-font;
+  font-size: 22rpx;
+  color: $ca-t2;
+  background: #eaf7f0;
+  border-radius: 18rpx;
+  padding: 16rpx 22rpx;
+  margin: 20rpx;
+}
+
+// CaCard 自带左右 margin 之外，包裹时与页面留白对齐
+.mine-page :deep(.ca-card) {
+  margin-left: 20rpx;
+  margin-right: 20rpx;
+}
+
+.op-row {
+  @include ca-font;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14rpx 0;
+  border-bottom: 1rpx solid $ca-border;
+}
+.op-row:last-of-type {
+  border-bottom: none;
+}
+.op-k {
+  font-size: 26rpx;
+  color: $ca-t2;
+}
+.op-v {
+  font-size: 26rpx;
+  color: $ca-t1;
   font-weight: 600;
 }
 
-.swiper {
-  height: 330rpx;
-  padding-left: 20rpx;
+.op-btn {
+  @include ca-font;
+  margin-top: 28rpx;
+  text-align: center;
+  font-size: 28rpx;
+  font-weight: 600;
+  padding: 22rpx 0;
+  border-radius: $ca-radius-input;
+}
+.op-btn.danger {
+  color: $ca-danger;
+  background: #fdeced;
 }
 
-.empty-device-placeholder {
+.dev-actions {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 330rpx;
-  padding: 40rpx 20rpx;
-  background-color: #f8f9fa;
-  border-radius: 16rpx;
-  margin: 0 20rpx;
-}
-
-.empty-icon {
-  width: 80rpx;
-  height: 80rpx;
-  opacity: 0.3;
+  justify-content: flex-end;
   margin-bottom: 20rpx;
 }
-
-.empty-text {
-  font-size: 32rpx;
-  color: #666;
-  margin-bottom: 10rpx;
-  font-weight: 500;
+.dev-add {
+  @include ca-font;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: $ca-primary;
+  background: $ca-primary-light;
+  padding: 14rpx 28rpx;
+  border-radius: $ca-radius-input;
 }
 
-.empty-desc {
-  font-size: 28rpx;
-  color: #999;
-}
-.swiper-item {
+.dev-list {
   display: flex;
   flex-direction: column;
   gap: 20rpx;
-  position: relative;
-  overflow: hidden;
-  height: calc(100% - 20rpx);
-  background-color: #f5f5f5;
-  margin: 10rpx 10rpx;
-  padding: 20rpx;
-  border-radius: 20rpx;
 }
 
-.user-profile {
+.dev-card {
+  background: $ca-bg;
+  border: 1rpx solid $ca-border;
+  border-radius: $ca-radius-input;
+  padding: 24rpx;
+}
+
+.dev-head {
   display: flex;
   align-items: center;
-  padding: 30rpx 30rpx 30rpx 0;
-  background-color: white;
 }
-
-.user-avatar {
-  width: 150rpx;
-  height: 150rpx;
-  border-radius: 50%;
-  padding: 40rpx;
-}
-
-.user-info {
-  display: flex;
+.dev-meta {
   flex: 1;
-  flex-direction: column;
 }
-
-.user-name {
-  font-size: 40rpx;
-  font-weight: bold;
-  color: #333;
-}
-
-.user-email {
-  font-size: 28rpx;
-  font-weight: bold;
-  color: #666;
-  margin-top: 20rpx;
-}
-
-.login-prompt {
+.dev-title {
   display: flex;
   align-items: center;
-  padding: 50rpx 0;
-  background-color: white;
-  justify-content: center;
 }
-
-.login-btn {
-  padding: 50rpx 100rpx;
-  border-radius: 50rpx;
-  background-color: #007bff;
-  color: white;
-  font-size: 28rpx;
-  font-weight: bold;
+.dev-name {
+  @include ca-font;
+  font-size: 30rpx;
+  font-weight: 700;
+  color: $ca-t1;
 }
-
-.device-mask {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.6);
-  z-index: 100;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-}
-
-.delete-device {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-}
-
-.delete-icon {
-  width: 70rpx;
-  height: 70rpx;
-  margin-bottom: 10rpx;
-}
-
-.delete-text {
-  color: white;
-  font-size: 28rpx;
-  font-weight: 600;
-}
-
-.device-header {
-  display: flex;
-  align-items: center;
-  gap: 40rpx;
-  border-bottom: 1px solid #e8eaec;
-  padding: 20rpx 0;
-}
-
-.device-icon {
-  width: 100rpx;
-  height: 100rpx;
-  margin-right: 10rpx;
-  flex-shrink: 0;
-}
-
-.device-content {
-  flex: 1;
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.device-info {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  height: 100%;
-}
-
-.device-title {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-}
-
-.device-name {
-  font-size: 32rpx;
-  font-weight: 600;
-}
-
-.status-connected {
+.dev-tag {
+  @include ca-font;
   font-size: 20rpx;
-  margin-left: 10rpx;
-  background-color: #09be4f;
-  border-radius: 10rpx;
-  color: white;
-  padding: 3rpx 10rpx;
+  margin-left: 14rpx;
+  border-radius: 8rpx;
+  color: #fff;
+  padding: 3rpx 12rpx;
 }
-
-.status-disconnected {
-  font-size: 20rpx;
-  margin-left: 10rpx;
-  background-color: #cccccc;
-  border-radius: 10rpx;
-  color: white;
-  padding: 3rpx 10rpx;
+.dev-tag.on {
+  background: $ca-success;
 }
-
-.device-desc {
-  font-size: 24rpx;
+.dev-tag.off {
+  background: $ca-t3;
+}
+.dev-code {
+  @include ca-font;
+  display: block;
   margin-top: 10rpx;
-}
-
-.connect-icon {
-  width: 50rpx;
-  height: 50rpx;
-}
-
-.device-id {
-  margin: 20rpx 0;
   font-size: 24rpx;
-  font-weight: 600;
+  color: $ca-t2;
 }
 
-.device-controls {
+.dev-ops {
   display: flex;
-  flex-direction: row;
   gap: 20rpx;
-  padding-bottom: 10rpx;
-  padding-right: 10rpx;
+  margin-top: 24rpx;
 }
-
-.control-item {
+.dev-op {
+  @include ca-font;
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
+  text-align: center;
+  font-size: 26rpx;
+  font-weight: 600;
+  padding: 18rpx 0;
+  border-radius: $ca-radius-input;
 }
-
-.control-item:first-child {
-  width: max-content;
+.dev-op.primary {
+  color: #fff;
+  background: $ca-primary;
 }
-
-.picker-content {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.dev-op.danger {
+  color: #fff;
+  background: $ca-danger;
 }
-
-.menu-section {
-  padding: 30rpx;
-  display: flex;
-  flex-direction: column;
-}
-
-.menu-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 30rpx 20rpx;
-}
-
-.menu-item-border {
-  border-bottom: 1px solid #e8eaec;
-}
-
-.menu-text {
-  font-size: 28rpx;
-  font-weight: 500;
+.dev-op.danger-o {
+  color: $ca-danger;
+  background: #fdeced;
 }
 </style>
