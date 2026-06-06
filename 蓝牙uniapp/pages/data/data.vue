@@ -1,161 +1,92 @@
 <template>
   <view class="container">
-    <!-- 步数统计（均值） -->
-    <uni-section class="chart-section" title="步数统计（均值）" subTitle="" type="line" titleColor="#333" titleFontSize="34rpx">
-      <view class="chart-row">
-        <view class="chart-item">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Current Week', '#2fc25b')" :chartData="arc.currentWeek.steps" />
-        </view>
-        <view class="chart-item chart-item-border">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Last Week', '#EE6666')" :chartData="arc.lastWeek.steps" />
-        </view>
-        <view class="chart-item chart-item-border">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Last Month', '#5c65de')" :chartData="arc.lastMonth.steps" />
-        </view>
+    <CaPatientBar />
+    <view class="body">
+      <!-- 时间分段 -->
+      <view class="seg">
+        <view v-for="(t,i) in ranges" :key="i" :class="['seg-i', range===i&&'on']" @tap="range=i">{{ t }}</view>
       </view>
-    </uni-section>
 
-    <!-- 步长统计（均值） -->
-    <uni-section class="chart-section" title="步长统计（均值）" subTitle="" type="line" titleColor="#333" titleFontSize="34rpx">
-      <view class="chart-row">
-        <view class="chart-item">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Current Week', '#2fc25b')" :chartData="arc.currentWeek.stepLength" />
+      <block v-if="hasData">
+        <!-- KPI 概览 -->
+        <view class="kpi">
+          <view class="k" v-for="(k,i) in kpis" :key="i">
+            <view class="kk">{{ k.label }}</view>
+            <view class="kv">{{ k.value }}<text class="ks"> {{ k.unit }}</text></view>
+            <view :class="['kd', k.up ? 'up':'down']">{{ k.up ? '▲':'▼' }} {{ k.delta }}</view>
+          </view>
         </view>
-        <view class="chart-item chart-item-border">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Last Week', '#EE6666')" :chartData="arc.lastWeek.stepLength" />
-        </view>
-        <view class="chart-item chart-item-border">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Last Month', '#5c65de')" :chartData="arc.lastMonth.stepLength" />
-        </view>
-      </view>
-    </uni-section>
 
-    <!-- 步速统计（均值） -->
-    <uni-section class="chart-section" title="步速统计（均值）" subTitle="" type="line" titleColor="#333" titleFontSize="34rpx">
-      <view class="chart-row">
-        <view class="chart-item">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Current Week', '#2fc25b')" :chartData="arc.currentWeek.stepSpeed" />
-        </view>
-        <view class="chart-item chart-item-border">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Last Week', '#EE6666')" :chartData="arc.lastWeek.stepSpeed" />
-        </view>
-        <view class="chart-item chart-item-border">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Last Month', '#5c65de')" :chartData="arc.lastMonth.stepSpeed" />
-        </view>
-      </view>
-    </uni-section>
+        <CaCard title="步速趋势">
+          <qiun-data-charts type="line" :opts="lineOpts" :chartData="lineData" />
+        </CaCard>
+        <CaCard title="左右脚压力对比">
+          <qiun-data-charts type="column" :opts="barOpts" :chartData="pressureData" />
+        </CaCard>
+        <CaCard title="单支撑时间（左/右）">
+          <qiun-data-charts type="column" :opts="barOpts" :chartData="singleData" />
+        </CaCard>
+      </block>
 
-    <!-- 新增图片里面的内容-->
-    <uni-section class="chart-section" title="右左脚压力统计" subTitle="" type="line" titleColor="#333" titleFontSize="34rpx">
-      <view class="bar-chart-container">
-        <qiun-data-charts type="column" :opts="optsBar" :chartData="chartDataBar" />
-      </view>
-    </uni-section>
-
-    <!-- 右脚单支撑统计（均值） -->
-    <uni-section class="chart-section" title="右脚单支撑统计（均值）" subTitle="" type="line" titleColor="#333" titleFontSize="34rpx">
-      <view class="chart-row">
-        <view class="chart-item">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Current Week', '#2fc25b')" :chartData="arc.currentWeek.rightSingle" />
-        </view>
-        <view class="chart-item chart-item-border">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Last Week', '#EE6666')" :chartData="arc.lastWeek.rightSingle" />
-        </view>
-        <view class="chart-item chart-item-border">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Last Month', '#5c65de')" :chartData="arc.lastMonth.rightSingle" />
-        </view>
-      </view>
-    </uni-section>
-
-    <!-- 左脚单支撑统计（均值） -->
-    <uni-section class="chart-section" title="左脚单支撑统计（均值）" subTitle="" type="line" titleColor="#333" titleFontSize="34rpx">
-      <view class="chart-row">
-        <view class="chart-item">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Current Week', '#2fc25b')" :chartData="arc.currentWeek.leftSingle" />
-        </view>
-        <view class="chart-item chart-item-border">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Last Week', '#EE6666')" :chartData="arc.lastWeek.leftSingle" />
-        </view>
-        <view class="chart-item chart-item-border">
-          <qiun-data-charts type="arcbar" :height="160" :opts="getRing('0.000000', 'Last Month', '#5c65de')" :chartData="arc.lastMonth.leftSingle" />
-        </view>
-      </view>
-    </uni-section>
+      <CaEmpty v-else icon="📊" title="暂无数据" desc="完成一次采集后，这里会显示步态统计与趋势分析" />
+    </view>
   </view>
 </template>
 
 <script setup>
-import { reactive } from 'vue'
-import { getRingOpts, getBarOpts } from '@/utils/ucharts'
+import { ref, computed } from 'vue'
+import { getBarOpts } from '@/utils/ucharts'
 
-// 测试数据：使用 0~1 之间的比值；页面展示标题用 6 位小数
-const arc = reactive({
-  currentWeek: {
-    steps: { series: [{ name: '步数', color: '#2fc25b', data: 0.2, labelShow: false }] },
-    stepLength: { series: [{ name: '步长', color: '#2fc25b', data: 0.35, labelShow: false }] },
-    stepSpeed: { series: [{ name: '步速', color: '#2fc25b', data: 0.12, labelShow: false }] },
-    rightSingle: { series: [{ name: '右脚单支撑', color: '#2fc25b', data: 0.18, labelShow: false }] },
-    leftSingle: { series: [{ name: '左脚单支撑', color: '#2fc25b', data: 0.22, labelShow: false }] }
-  },
-  lastWeek: {
-    steps: { series: [{ name: '步数', color: '#EE6666', data: 0.18, labelShow: false }] },
-    stepLength: { series: [{ name: '步长', color: '#EE6666', data: 0.25, labelShow: false }] },
-    stepSpeed: { series: [{ name: '步速', color: '#EE6666', data: 0.08, labelShow: false }] },
-    rightSingle: { series: [{ name: '右脚单支撑', color: '#EE6666', data: 0.16, labelShow: false }] },
-    leftSingle: { series: [{ name: '左脚单支撑', color: '#EE6666', data: 0.2, labelShow: false }] }
-  },
-  lastMonth: {
-    steps: { series: [{ name: '步数', color: '#5c65de', data: 0.22, labelShow: false }] },
-    stepLength: { series: [{ name: '步长', color: '#5c65de', data: 0.28, labelShow: false }] },
-    stepSpeed: { series: [{ name: '步速', color: '#5c65de', data: 0.14, labelShow: false }] },
-    rightSingle: { series: [{ name: '右脚单支撑', color: '#5c65de', data: 0.12, labelShow: false }] },
-    leftSingle: { series: [{ name: '左脚单支撑', color: '#5c65de', data: 0.18, labelShow: false }] }
-  }
+const ranges = ['本周', '上周', '本月', '近半年']
+const range = ref(0)
+
+// 真实数据接入前：默认有示意数据；接入后用「该时间段是否有该患者数据」驱动
+const hasData = ref(true)
+
+const kpis = computed(() => ([
+  { label: '平均步数', value: '6,820', unit: '步', up: true, delta: '8% 较上周' },
+  { label: '平均步速', value: '1.24', unit: 'm/s', up: true, delta: '3%' },
+  { label: '平均步长', value: '66', unit: 'cm', up: false, delta: '2%' },
+  { label: '双支撑时长', value: '0.19', unit: 's', up: true, delta: '1%' }
+]))
+
+const lineOpts = { color: ['#2F6DF6'], padding: [10, 10, 0, 10], legend: { show: false },
+  xAxis: { disableGrid: true }, yAxis: { gridType: 'dash' },
+  extra: { line: { type: 'curve', width: 2 } } }
+const lineData = ref({
+  categories: ['一', '二', '三', '四', '五', '六', '日'],
+  series: [{ name: '步速', data: [1.1, 1.18, 1.15, 1.27, 1.22, 1.33, 1.3] }]
 })
 
-const getRing = (title, subTitle, color) =>
-  getRingOpts({
-    title: { name: title, fontSize: 18, color },
-    subtitle: { name: subTitle, offsetX: 10, fontSize: 11, color }
-  })
-
-// 条形图配置与测试数据（参考 data copy.vue）
-const optsBar = getBarOpts({
-  legend: { show: true }
-})
-
-const chartDataBar = reactive({
-  categories: ['本周', '上周', '上月', '前3个月', '前6个月'],
+const barOpts = getBarOpts({ legend: { show: true } })
+const pressureData = ref({
+  categories: ['本周', '上周', '本月', '半年'],
   series: [
-    { name: '右脚', textColor: '#FFFFFF', data: [35, 33, 31, 13, 34], color: '#1890FF' },
-    { name: '左脚', textColor: '#FFFFFF', data: [18, 27, 21, 6, 28], color: '#91CB74' }
+    { name: '左', data: [70, 58, 50, 80], color: '#2F6DF6' },
+    { name: '右', data: [64, 62, 46, 74], color: '#15A05A' }
+  ]
+})
+const singleData = ref({
+  categories: ['本周', '上周', '本月'],
+  series: [
+    { name: '左', data: [0.6, 0.52, 0.44], color: '#2F6DF6' },
+    { name: '右', data: [0.55, 0.5, 0.48], color: '#15A05A' }
   ]
 })
 </script>
 
 <style lang="scss" scoped>
-.container {
-  padding: 0rpx 20rpx 40rpx;
-}
-.chart-section {
-  border-radius: 12rpx;
-  margin: 16rpx 0 16rpx;
-}
-.bar-chart-container {
-  padding: 0 10rpx 10rpx;
-}
-.chart-row {
-  display: flex;
-  flex-direction: row;
-  padding: 0 10rpx;
-  height: 320rpx;
-}
-.chart-item {
-  flex: 1;
-  overflow: hidden;
-  padding: 0 10rpx 20rpx;
-}
-.chart-item-border {
-  border-left: 2rpx solid #f5f7fa;
-}
+.container { @include ca-font; }
+.body { padding: 28rpx 32rpx; }
+.seg { display: flex; background: #eef1f5; border-radius: 22rpx; padding: 6rpx; margin-bottom: 28rpx; }
+.seg-i { flex: 1; text-align: center; font-size: 25rpx; font-weight: 600; color: $ca-t2; padding: 16rpx; border-radius: 16rpx; }
+.seg-i.on { background: #fff; color: $ca-primary; box-shadow: 0 1rpx 3rpx rgba(0,0,0,.08); }
+.kpi { display: grid; grid-template-columns: 1fr 1fr; gap: 20rpx; margin-bottom: 28rpx; }
+.k { background: #fff; border: 1rpx solid $ca-border; border-radius: 28rpx; padding: 26rpx; }
+.kk { font-size: 23rpx; color: $ca-t2; }
+.kv { font-size: 42rpx; font-weight: 700; color: $ca-t1; margin-top: 6rpx; }
+.ks { font-size: 22rpx; color: $ca-t3; }
+.kd { font-size: 22rpx; margin-top: 8rpx; font-weight: 600; }
+.kd.up { color: $ca-success; }
+.kd.down { color: $ca-danger; }
 </style>
