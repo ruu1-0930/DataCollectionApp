@@ -1,0 +1,34 @@
+{
+    "id": "yfx-tooltip",
+    "name": "提示确认弹窗组件",
+    "displayName": "提示确认弹窗组件",
+    "version": "0.0.2",
+    "description": "信息提示和信息确认弹窗与uni.showModal类似",
+    "keywords": [
+        "uni-popup",
+        "弹窗",
+        "信息",
+        "提示"
+    ],
+    "dcloudext": {
+        "type": "component-vue",
+        "contact": {
+            "qq": ""
+        },
+        "declaration": {
+            "ads": "无",
+            "data": "插件不采集任何数据",
+            "permissions": "无"
+        },
+        "npmurl": ""
+    },
+	"uni_modules": {
+		"dependencies": [
+			"uni-popup"
+		]
+    },
+    "repository": "",
+    "engines": {
+        "HBuilderX": "^4.0"
+    }
+}
