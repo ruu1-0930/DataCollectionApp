@@ -1,0 +1,26 @@
+# Flask 核心框架
+Flask==2.3.3
+Flask-SQLAlchemy==3.0.5
+Flask-CORS==4.0.0
+
+# 数据库驱动
+PyMySQL==1.1.0
+
+# 环境变量加载（读取 back/.env）
+python-dotenv==1.0.1
+
+# JWT 认证
+PyJWT==2.8.0
+
+# 机器学习相关（需 Python >= 3.11）
+# 用下限范围而非精确钉版：本地(3.14)与服务器(3.12)各自能装的最新版不同，
+# 且镜像同步有先后；让 pip 按环境解析可用 wheel，避免“某精确版本缺失”导致装不上。
+numpy>=2.1
+scipy>=1.13
+scikit-learn>=1.7
+
+# 数据处理
+python-dateutil==2.8.2
+
+# 文件处理
+Werkzeug==2.3.7

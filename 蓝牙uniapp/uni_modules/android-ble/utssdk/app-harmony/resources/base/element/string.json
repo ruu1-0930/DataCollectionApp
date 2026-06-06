@@ -1,0 +1,24 @@
+{
+  "string": [
+	{
+      "name": "Harmony_location_permission_reason",
+      "value": "获取位置信息需要访问定位权限"
+    },
+	{
+	  "name": "Harmony_net_permission_reason",
+	  "value": "获取位置信息需要访问网络权限"
+	},{
+	  "name": "Harmony_keep_permission_reason",
+	  "value": "需要后台运行以获取权限"
+	},
+	{
+	  "name": "Harmony_notification_permission_reason",
+	  "value": "用于发送通知"
+	},
+	{
+	  "name": "Harmony_ble_permission_reason",
+	  "value": "需要蓝牙权限"
+	}
+	
+  ]
+}

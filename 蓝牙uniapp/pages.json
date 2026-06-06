@@ -1,0 +1,74 @@
+{
+  "easycom": {
+    "autoscan": true,
+    "custom": {
+      "^uni-(.*)": "@/uni_modules/uni-$1/components/uni-$1/uni-$1.vue"
+    }
+  },
+  "pages": [
+    {
+      "path": "pages/home/home",
+      "style": {
+        "navigationBarTitleText": "首页",
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark"
+      }
+    },
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "首页"
+      }
+    },
+    {
+      "path": "pages/mine/mine",
+      "style": {
+        "navigationBarTitleText": "个人中心"
+      }
+    },
+    {
+      "path": "pages/data/data",
+      "style": {
+        "navigationBarTitleText": "数据可视化"
+      }
+    },
+    { "path": "pages/setup/enable",  "style": { "navigationStyle": "custom" } },
+    { "path": "pages/setup/unlock",  "style": { "navigationStyle": "custom" } },
+    { "path": "pages/patient/select","style": { "navigationBarTitleText": "选择患者" } },
+    { "path": "pages/patient/new",   "style": { "navigationBarTitleText": "新建患者" } }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "uni-app",
+    "navigationBarBackgroundColor": "#fff",
+    "backgroundColor": "#F6F6F6"
+  },
+  "tabBar": {
+    "color": "#333333",
+    "selectedColor": "#007aff",
+    "borderStyle": "#e8eaec",
+    "height": "50px",
+    "backgroundColor": "#ffffff",
+    "list": [
+      {
+        "text": "首页",
+        "pagePath": "pages/home/home",
+        "iconPath": "static/tabbar/1751339093525.png",
+        "selectedIconPath": "static/tabbar/1751339093520.png"
+      },
+      {
+        "text": "数据",
+        "pagePath": "pages/data/data",
+        "iconPath": "static/tabbar/1751339093510.png",
+        "selectedIconPath": "static/tabbar/1751339093515.png"
+      },
+      {
+        "text": "我的",
+        "pagePath": "pages/mine/mine",
+        "iconPath": "static/tabbar/1751339093506.png",
+        "selectedIconPath": "static/tabbar/1751339093499.png"
+      }
+    ]
+  },
+  "uniIdRouter": {}
+}

@@ -1,0 +1,50 @@
+{
+  "module": {
+    "name": "uni_modules__android_ble",
+    "type": "har",
+    "deviceTypes": [
+      "default",
+      "tablet",
+      "2in1"
+    ],
+    "requestPermissions": [
+		{
+		  "name": "ohos.permission.LOCATION",
+		  "reason": "$string:Harmony_keep_permission_reason",
+		  "usedScene": {
+		    "when": "always"
+		  }
+		},
+		{
+		  "name": "ohos.permission.ACCESS_BLUETOOTH",
+		  "reason": "$string:Harmony_ble_permission_reason",
+		  "usedScene": {
+		    "when": "always"
+		  }
+		},{
+		  "name": "ohos.permission.MANAGE_BLUETOOTH",
+		  "reason": "$string:Harmony_ble_permission_reason",
+		  "usedScene": {
+		    "when": "always"
+		  }
+		},
+		{
+		  "name": "ohos.permission.DISCOVER_BLUETOOTH",
+		  "reason": "$string:Harmony_ble_permission_reason",
+		  "usedScene": {
+		    "when": "always"
+		  }
+		},
+		{
+		  "name": "ohos.permission.USE_BLUETOOTH",
+		  "reason": "$string:Harmony_ble_permission_reason",
+		  "usedScene": {
+		    "when": "always"
+		  }
+		}
+		
+		
+		 
+    ]
+  }
+}

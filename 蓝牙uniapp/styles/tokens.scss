@@ -1,0 +1,21 @@
+// styles/tokens.scss —— 临床浅色主题 design tokens
+// 与 .superpowers 预览 design-tokens.html 对齐
+$ca-primary:        #2F6DF6;
+$ca-primary-light:  #E7F0FE;
+$ca-success:        #15A05A; // 右脚/正向
+$ca-warning:        #E8A33D; // 采集中
+$ca-danger:         #E5484D; // 停止/必填/下降
+$ca-bg:             #F5F7FA;
+$ca-border:         #E6EBF2;
+$ca-t1:             #0F172A; // 主文字
+$ca-t2:             #64748B; // 次文字
+$ca-t3:             #94A3B8; // 弱文字
+
+$ca-radius-card:    28rpx; // ~14px
+$ca-radius-input:   24rpx; // ~12px
+$ca-shadow-card:    0 2rpx 6rpx rgba(16, 42, 80, 0.06);
+
+// 字体：Inter / PingFang SC（不用 Segoe UI / 等宽）
+@mixin ca-font {
+  font-family: 'Inter', 'PingFang SC', -apple-system, sans-serif;
+}

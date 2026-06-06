@@ -1,0 +1,118 @@
+<template>
+  <view class="container">
+    <CaPatientBar />
+    <!-- 足部示意（固定点位） -->
+    <view class="foot-card">
+      <view class="foot-bg"></view>
+      <!-- 左脚点位 -->
+      <view v-for="(p, idx) in pointsPercent.left" :key="'l' + idx" class="dot" :style="{ left: p.x + '%', top: p.y + '%' }" />
+      <!-- 右脚点位（镜像） -->
+      <view v-for="(p, idx) in rightPoints" :key="'r' + idx" class="dot" :style="{ left: p.x + '%', top: p.y + '%' }" />
+    </view>
+
+    <view class="mh">实时参数</view>
+    <view class="mgrid" v-if="hasData">
+      <CaMetric label="步速" :value="rt.avg.speed" unit="m/s" :left="rt.left.speed" :right="rt.right.speed" />
+      <CaMetric label="步长" :value="rt.avg.length" unit="cm" :left="rt.left.length" :right="rt.right.length" />
+      <CaMetric label="单支撑时间" :value="rt.avg.leftSingle" unit="s" :left="rt.left.single" :right="rt.right.single" />
+      <CaMetric label="双支撑时间" :value="rt.avg.double" unit="s" :left="rt.left.double" :right="rt.right.double" />
+    </view>
+    <CaEmpty v-else icon="👣" title="还没有开始采集" desc="连接鞋垫并开始采集后，这里会实时显示步态参数" />
+  </view>
+</template>
+
+<script setup>
+import { reactive, computed } from 'vue'
+
+// 点位（百分比坐标）
+const pointsPercent = reactive({
+  left: [
+    { x: 37, y: 8 },
+    { x: 22, y: 28 },
+    { x: 37, y: 32 },
+    { x: 29, y: 30 },
+    { x: 18, y: 45 },
+    { x: 34, y: 52 },
+    { x: 34, y: 64 },
+    { x: 29, y: 86 },
+    { x: 29, y: 78 }
+  ]
+})
+
+// 右脚镜像
+const rightPoints = computed(() => pointsPercent.left.map((p) => ({ x: Number((100 - p.x).toFixed(1)), y: p.y })))
+
+// 实时与平均参数占位（后续可接入接口数据）
+const rt = reactive({
+  right: { speed: '-', length: '-', single: '-', double: '-' },
+  left: { speed: '-', length: '-', single: '-', double: '-' },
+  avg: { speed: '-', length: '-', rightSingle: '-', leftSingle: '-', double: '-' }
+})
+
+// 真实数据接入前：无数据 → 走空态（不再显示一排 '-'）
+const hasData = computed(() => rt.left.speed !== '-' )
+</script>
+
+<style lang="scss" scoped>
+.container {
+  padding: 24rpx;
+}
+
+.foot-card {
+  position: relative;
+  width: 100%;
+  min-height: 600rpx;
+  background-color: #fff;
+  border-radius: 12rpx;
+}
+
+.foot-bg {
+  width: 100%;
+  height: 560rpx;
+  background: url('/static/imgs/foot.png') center/contain no-repeat;
+}
+
+.dot {
+  position: absolute;
+  width: 22rpx;
+  height: 22rpx;
+  border-radius: 50%;
+  background: #60a5fa;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 10rpx rgba(96, 165, 250, 0.2);
+}
+
+.dot::after,
+.dot::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: rgba(96, 165, 250, 0.35);
+  transform: translate(-50%, -50%) scale(1);
+  animation: ripple 2.2s ease-out infinite;
+}
+.dot::before {
+  animation-delay: 1.1s;
+}
+
+@keyframes ripple {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0.6;
+  }
+  70% {
+    transform: translate(-50%, -50%) scale(2.6);
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.mh { @include ca-font; font-size: 30rpx; font-weight: 700; color: $ca-t1; margin: 24rpx 4rpx 20rpx; }
+.mgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 20rpx; }
+</style>

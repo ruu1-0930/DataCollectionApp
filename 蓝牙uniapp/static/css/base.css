@@ -1,0 +1,110 @@
+@font-face {
+  font-family: 'alibaba';
+  src: url('../font/Alibaba-PuHuiTi-Regular.ttf') format('truetype');
+}
+
+view,
+scroll-view,
+swiper,
+swiper-item,
+cover-view,
+cover-image,
+icon,
+text,
+rich-text,
+progress,
+button,
+checkbox,
+form,
+input,
+label,
+radio,
+slider,
+switch,
+textarea,
+navigator,
+audio,
+camera,
+image,
+video {
+  box-sizing: border-box;
+  font-family: alibaba;
+  font-size: 28rpx;
+  color: #333333;
+}
+
+image {
+  display: block;
+}
+
+text {
+  line-height: 1;
+  /* font-family: Helvetica Neue, Helvetica, sans-serif; */
+}
+
+button {
+  padding: 0;
+  margin: 0;
+}
+
+button:after {
+  border: 0;
+}
+
+page {
+  /* 背景颜色 换成rgba */
+  background-color: #f7f8fa;
+}
+
+.places {
+  color: #666666;
+  font-size: 26rpx;
+  font-weight: 400;
+}
+
+.uv-swipe-action-item__right__button__wrapper {
+  border-top-right-radius: 20rpx !important;
+  border-bottom-right-radius: 20rpx !important;
+}
+.uv-swipe-action-item,
+.uv-swipe-action-item__content {
+  border-radius: 20rpx !important;
+}
+
+.common-btn {
+  color: #fff;
+  background: linear-gradient(to bottom, #f16831, #f13131);
+  padding: 10rpx 28rpx;
+  font-size: 28rpx;
+  text-align: center;
+}
+
+.common-btn-cancel {
+  color: #f13131;
+  background: #fff;
+  border-radius: 100rpx;
+  padding: 20rpx 38rpx;
+  font-size: 28rpx;
+  text-align: center;
+  border: 1px solid #f13131;
+}
+
+.mengceng {
+  position: relative;
+}
+
+.mengceng .mengceng-before {
+  content: ''; /* 虽然content在这里不起作用，保留注释以说明原意 */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.25); /* 黑色半透明蒙层 */
+  z-index: 9999; /* 蒙层在元素之下 */
+  border-radius: 156rpx;
+}
+
+.zp-l-text-rpx {
+  font-size: 28rpx !important;
+}
