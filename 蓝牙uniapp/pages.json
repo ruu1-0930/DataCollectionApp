@@ -49,7 +49,11 @@
       "style": {
         "navigationBarTitleText": "数据可视化"
       }
-    }
+    },
+    { "path": "pages/setup/enable",  "style": { "navigationStyle": "custom" } },
+    { "path": "pages/setup/unlock",  "style": { "navigationStyle": "custom" } },
+    { "path": "pages/patient/select","style": { "navigationBarTitleText": "选择患者" } },
+    { "path": "pages/patient/new",   "style": { "navigationBarTitleText": "新建患者" } }
   ],
   "globalStyle": {
     "navigationBarTextStyle": "black",
