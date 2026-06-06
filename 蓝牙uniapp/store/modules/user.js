@@ -40,13 +40,11 @@ export const useUserStore = defineStore('userStore', {
         throw error
       }
     },
+    // 旧登录模型遗留：新临床模型不再使用 App 登录态，此方法已无调用方。
+    // 仅清理用户态，不再清空全部存储（避免误删操作员/患者本地数据）、不再跳登录页。
     logout() {
       this.user = {}
       this.token = ''
-      uni.clearStorage()
-      uni.redirectTo({
-        url: '/pages/login/login'
-      })
     },
 
     /**

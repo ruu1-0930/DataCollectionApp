@@ -27,24 +27,6 @@
       }
     },
     {
-      "path": "pages/login/login",
-      "style": {
-        "navigationStyle": "custom"
-      }
-    },
-    {
-      "path": "pages/register/register",
-      "style": {
-        "navigationBarTitleText": "注册"
-      }
-    },
-    {
-      "path": "pages/mine/profile",
-      "style": {
-        "navigationBarTitleText": "资料修改"
-      }
-    },
-    {
       "path": "pages/data/data",
       "style": {
         "navigationBarTitleText": "数据可视化"

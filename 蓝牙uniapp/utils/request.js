@@ -97,15 +97,10 @@ instance.interceptors.request.use(
     const token = userStore.token
     if (token) {
       config.header['Authorization'] = token
-    } else {
-      // 对于登录接口，不需要token
-      if (!config.url.includes('/login') && !config.url.includes('/register')) {
-        // 退出登录
-        userStore.logout()
-        uni.redirectTo({
-          url: '/pages/login/login'
-        })
-      }
+    } else if (!config.url.includes('/login') && !config.url.includes('/register')) {
+      // 新临床模型暂无 App 登录态：无 token 的鉴权请求直接取消，
+      // 不再强制登出/跳转登录页，各页走空态（后端鉴权改造见后续计划）。
+      return Promise.reject(config)
     }
 
     // 演示custom 用处
@@ -150,11 +145,9 @@ instance.interceptors.response.use(
     if (code === 401) {
       uni.showToast({
         icon: 'none',
-        title: '登录身份已失效，请重新登录',
+        title: '鉴权失败',
         duration: 2000
       })
-      const userStore = useUserStoreWithOut()
-      userStore.logout()
       return Promise.reject(response)
     }
     if (![200].includes(code)) {
@@ -201,13 +194,8 @@ instance.interceptors.response.use(
     } else if ([401].includes(error?.data?.code)) {
       uni.showToast({
         icon: 'none',
-        title: '登录身份已失效，请重新登录',
+        title: '鉴权失败',
         duration: 2000
-      })
-      const userStore = useUserStoreWithOut()
-      userStore.logout()
-      uni.redirectTo({
-        url: '/pages/login/login'
       })
     } else {
       // 其他错误
