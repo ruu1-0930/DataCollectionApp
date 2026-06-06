@@ -42,9 +42,12 @@
 
 与云迁移并行的一条 UI 线，**目标：界面更专业 + 把「个人 App」模型改成「医护操作员 + 患者档案」临床多患者模型**。
 
-- **状态**：✅ 设计与实现计划已定稿；✅ git 仓库就绪（仓库根 = `DataCollectionApp/`）；⏳ 待开始实现编码。
+- **状态**：✅ 设计与实现计划已定稿；✅ git 仓库就绪（仓库根 = `DataCollectionApp/`）；✅ **15 任务全部实现完成**（分支 `feature/frontend-redesign`，子 agent 驱动开发 + 逐任务评审）。
   - 设计 spec：[docs/superpowers/specs/2026-06-06-frontend-redesign-design.md](docs/superpowers/specs/2026-06-06-frontend-redesign-design.md)
   - 实现计划（15 任务 / 3 阶段）：[docs/superpowers/plans/2026-06-06-frontend-redesign.md](docs/superpowers/plans/2026-06-06-frontend-redesign.md)
+  - **已交付**：SCSS 设计令牌（`styles/tokens.scss` + `uni.scss`）；纯逻辑 `utils/patient.js` + vitest（12 测试全过）；本地存储 `utils/clinicStorage.js`；`operatorStore`/`patientStore`；基础组件 `components/base/Ca*.vue`（CaInput/CaCard/CaEmpty/CaMetric/CaStatusStrip/CaPatientBar）；启动网关（`App.vue` onLaunch）+ 路由（`pages.json`）；启用/解锁页（`pages/setup/*`）、患者选择/新建页（`pages/patient/*`）；首页实时区改版（**足底压力图保持原实现不变**）；数据分析页重做；我的页改造为「操作员资料 + 设备管理」（移除 App 登录态与采样频率/开关控制）。
+  - **顺带清理**：删除 `login`/`register`/`profile` 及 `*copy.vue` 死文件；`request.js`/`user.js` 解除旧登录模型副作用（无 token 请求静默取消，不再 `uni.clearStorage()`/跳登录页，避免误删本地临床数据）。
+  - **仍待办（真机验证）**：HBuilderX 真机跑全流程回归（蓝牙连接/采集态/扫码加设备需真机），见计划 Task 15 手动清单；遗留 `pages/index/index` 蓝牙测试页未删（已派后续任务）。
 - **核心模型变更**：取消 App 账号登录；改为**设备级一次性启用（医院/科室/医生/联系方式 + 自设口令）→ 解锁 → 选/建患者 → 当前患者上下文**。采集数据带「医院/科室/医生 + 患者编号」；患者无账号、无密码，系统自动派假名 `subject_id`（如 `#00427`），导出只用编号。
 - **明确保留**：首页足底压力图沿用原实现（`foot.png` + 蓝点 ripple），不替换。
 - **范围边界**：本线只做**视觉 + 交互流程**（用示意数据/空态）。**真实数据接入 + 后端模型改造**（操作员/患者表、`subject_id`、PII 与传感器分表、采集归属、按患者历史只读 API、去标识化导出）划为**后续计划**，与阶段 1/3 合并实现。
