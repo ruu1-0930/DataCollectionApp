@@ -103,16 +103,6 @@ instance.interceptors.request.use(
       return Promise.reject(config)
     }
 
-    // 演示custom 用处
-    if (config.custom.auth) {
-      if (!token) {
-        uni.switchTab({
-          url: '/pages/index/index'
-        })
-        // 如果token不存在，会取消本次请求
-        return Promise.reject(config)
-      }
-    }
     // 是否请求 出现loading
     if (config.custom.loading) {
       uni.showLoading({
