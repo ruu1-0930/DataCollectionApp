@@ -51,4 +51,7 @@ def create_app(test_config=None):
     from api.clinician import clinician_bp
     app.register_blueprint(clinician_bp)
 
+    from api.patient import patient_bp
+    app.register_blueprint(patient_bp)
+
     return app
