@@ -1,6 +1,6 @@
 import Request from '@/js_sdk/luch-request/luch-request'
 import { baseURL, requestTimeout, contentType } from '@/config'
-import { useUserStoreWithOut } from '@/store'
+import { getToken } from '@/utils/auth'
 
 /**
  * @description 处理code异常
@@ -92,14 +92,13 @@ instance.interceptors.request.use(
       data: config.data
     })
     
-    // 可使用async await 做异步操作
-    const userStore = useUserStoreWithOut()
-    const token = userStore.token
+    // token 由操作员启用/登录产生，存为 "Bearer xxx" 整串（auth.getToken）
+    const token = getToken()
+    // 无 token 仅放行启用/登录；其余无 token 请求静默取消（不强制登出，沿用旧策略）
+    const noAuthPaths = ['/clinician/enable', '/clinician/login']
     if (token) {
       config.header['Authorization'] = token
-    } else if (!config.url.includes('/login') && !config.url.includes('/register')) {
-      // 新临床模型暂无 App 登录态：无 token 的鉴权请求直接取消，
-      // 不再强制登出/跳转登录页，各页走空态（后端鉴权改造见后续计划）。
+    } else if (!noAuthPaths.some((p) => config.url.includes(p))) {
       return Promise.reject(config)
     }
 
