@@ -18,3 +18,17 @@ def test_enable_creates_clinician_and_returns_token(client):
 def test_enable_missing_field_rejected(client):
     resp = client.post('/clinician/enable', json=_enable_payload(passcode=''))
     assert resp.get_json()['code'] == 400
+
+
+def test_login_with_correct_passcode(client):
+    client.post('/clinician/enable', json=_enable_payload())
+    resp = client.post('/clinician/login', json={
+        'phone': '13800000000', 'terminal_code': 'term-1', 'passcode': '1234'})
+    assert resp.get_json()['data']['token']
+
+
+def test_login_wrong_passcode_rejected(client):
+    client.post('/clinician/enable', json=_enable_payload())
+    resp = client.post('/clinician/login', json={
+        'phone': '13800000000', 'terminal_code': 'term-1', 'passcode': '0000'})
+    assert resp.get_json()['code'] != 200
