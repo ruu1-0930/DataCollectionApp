@@ -1,33 +1,22 @@
-import jwt
 from functools import wraps
+import jwt
 from flask import request, jsonify, g
-from config import app
-from models.models import User
+from auth import decode_token
+from models.models import Clinician
+
 
 class Response:
     @staticmethod
     def success(data=None, msg="操作成功"):
-        return {
-            'code': 200,
-            'msg': msg,
-            'data': data
-        }
+        return {'code': 200, 'msg': msg, 'data': data}
 
     @staticmethod
     def error(code, msg="操作失败", data=None):
-        return {
-            'code': code,
-            'msg': msg,
-            'data': data
-        }
+        return {'code': code, 'msg': msg, 'data': data}
 
 
-def token_required(role_required=None):
-    """
-    装饰器：检查请求头中是否包含合法的 token，并解析用户信息
-    - 将 user_id 和 role 存入 g.user_id / g.user_role
-    - 如果 role_required 不为空，则校验用户权限
-    """
+def token_required():
+    """校验 Bearer token，解析 clinician_id 存入 g.clinician_id。"""
     def decorator(f):
         @wraps(f)
         def decorated(*args, **kwargs):
@@ -42,23 +31,14 @@ def token_required(role_required=None):
                 return jsonify(Response.error(401, "Token缺失")), 401
 
             try:
-                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-                user_id = payload.get('user_id')
-
-                if not user_id:
-                    return jsonify(Response.error(401, "Token无效: 缺少用户信息")), 401
-
-                user = User.query.get(user_id)
-                if not user:
-                    return jsonify(Response.error(401, "用户不存在")), 401
-
-                g.user_id = user.id
-                g.user_role = int(user.role)
-
-                # 检查权限
-                if role_required is not None and g.user_role < role_required:
-                    return jsonify(Response.error(403, "权限不足")), 403
-
+                payload = decode_token(token)
+                clinician_id = payload.get('clinician_id')
+                if not clinician_id:
+                    return jsonify(Response.error(401, "Token无效: 缺少医护信息")), 401
+                clinician = Clinician.query.get(clinician_id)
+                if not clinician:
+                    return jsonify(Response.error(401, "医护不存在")), 401
+                g.clinician_id = clinician.id
             except jwt.ExpiredSignatureError:
                 return jsonify(Response.error(401, "Token已过期")), 401
             except jwt.InvalidTokenError:
