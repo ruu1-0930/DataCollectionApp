@@ -1,5 +1,5 @@
 // utils/clinicStorage.js —— 操作员档案 / 患者列表 / 当前患者 的本地持久化
-const OPERATOR_KEY = '__operator__'   // { hospital, dept, name, phone, passcode, enabled }
+const OPERATOR_KEY = '__operator__'   // { hospital, dept, name, phone, passcode, enabled, clinicianId, terminalCode }
 const PATIENTS_KEY = '__patients__'   // [ { seq, name, phone, gender, age, createdAt, lastAt, count } ]
 const CURRENT_KEY  = '__current_patient__' // seq
 
