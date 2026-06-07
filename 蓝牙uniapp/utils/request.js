@@ -1,6 +1,7 @@
 import Request from '@/js_sdk/luch-request/luch-request'
 import { baseURL, requestTimeout, contentType } from '@/config'
 import { getToken } from '@/utils/auth'
+import { useOperatorStoreWithOut } from '@/store/modules/operator'
 
 /**
  * @description 处理code异常
@@ -81,6 +82,20 @@ const instance = new Request({
   // }
 })
 
+// 401 静默刷新并重试一次：用本地 phone+terminalCode+passcode 换新 token
+async function retryWithRefresh(config) {
+  if (config._retried) return Promise.reject(config)
+  if (['/clinician/enable', '/clinician/login'].some((p) => config.url.includes(p))) {
+    return Promise.reject(config)
+  }
+  const op = useOperatorStoreWithOut()
+  if (!op.operator || !op.operator.passcode) return Promise.reject(config)
+  await op.refreshToken()
+  config._retried = true
+  config.header = { ...(config.header || {}), Authorization: getToken() }
+  return instance.request(config)
+}
+
 instance.interceptors.request.use(
   (config) => {
     console.log('🚀 发起请求:', {
@@ -132,12 +147,11 @@ instance.interceptors.response.use(
     const code = response.data.code || response.data.status
 
     if (code === 401) {
-      uni.showToast({
-        icon: 'none',
-        title: '鉴权失败',
-        duration: 2000
+      // 静默刷新换 token 重试一次（不弹登录页、不清本地数据）
+      return retryWithRefresh(response.config).catch(() => {
+        uni.showToast({ icon: 'none', title: '鉴权失败，请重新解锁', duration: 2000 })
+        return Promise.reject(response)
       })
-      return Promise.reject(response)
     }
     if (![200].includes(code)) {
       // 服务端返回的状态码不等于200，则reject()
@@ -180,11 +194,10 @@ instance.interceptors.response.use(
         title: errorMessage,
         duration: 3000
       })
-    } else if ([401].includes(error?.data?.code)) {
-      uni.showToast({
-        icon: 'none',
-        title: '鉴权失败',
-        duration: 2000
+    } else if ([401].includes(error?.data?.code) || error?.statusCode === 401) {
+      return retryWithRefresh(error.config).catch(() => {
+        uni.showToast({ icon: 'none', title: '鉴权失败，请重新解锁', duration: 2000 })
+        return Promise.reject(error)
       })
     } else {
       // 其他错误
