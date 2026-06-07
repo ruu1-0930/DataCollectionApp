@@ -47,12 +47,8 @@ def create_app(test_config=None):
     db.init_app(app)
     CORS(app)
 
-    # 蓝图在 create_app 内注册，避免循环 import（Task 16 接入）
-    # from api.clinician import clinician_bp
-    # from api.patient import patient_bp
-    # from api.device import device_bp
-    # app.register_blueprint(clinician_bp)
-    # app.register_blueprint(patient_bp)
-    # app.register_blueprint(device_bp)
+    # 蓝图在 create_app 内注册，避免循环 import
+    from api.clinician import clinician_bp
+    app.register_blueprint(clinician_bp)
 
     return app
