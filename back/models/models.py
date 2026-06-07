@@ -58,7 +58,7 @@ class DeviceRawData(db.Model):
     __tablename__ = 'device_raw_data'
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     device_id = db.Column(db.Integer, db.ForeignKey('devices.id'), nullable=False, index=True)
-    patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False, index=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False)
     clinician_id = db.Column(db.Integer, db.ForeignKey('clinicians.id'), nullable=False, index=True)
     # scope A：暂存 6 维，38 维扩展见后续 spec
     ax = db.Column(db.Float, nullable=False)
@@ -67,8 +67,13 @@ class DeviceRawData(db.Model):
     gx = db.Column(db.Float, nullable=False)
     gy = db.Column(db.Float, nullable=False)
     gz = db.Column(db.Float, nullable=False)
-    collected_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, index=True)
+    collected_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     uploaded_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+    # 复合索引支撑按患者历史的时间范围分页查询，与 SQL idx_raw_patient_collected 一致
+    __table_args__ = (
+        db.Index('idx_raw_patient_collected', 'patient_id', 'collected_at'),
+    )
 
     device = db.relationship('Device', backref='raw_data')
     patient = db.relationship('Patient', backref='raw_data')
