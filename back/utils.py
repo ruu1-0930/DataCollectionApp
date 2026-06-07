@@ -1,5 +1,5 @@
 from functools import wraps
-import jwt
+from jwt import ExpiredSignatureError, InvalidTokenError
 from flask import request, jsonify, g
 from auth import decode_token
 from models.models import Clinician
@@ -33,15 +33,15 @@ def token_required():
             try:
                 payload = decode_token(token)
                 clinician_id = payload.get('clinician_id')
-                if not clinician_id:
+                if clinician_id is None:
                     return jsonify(Response.error(401, "Token无效: 缺少医护信息")), 401
                 clinician = Clinician.query.get(clinician_id)
                 if not clinician:
                     return jsonify(Response.error(401, "医护不存在")), 401
                 g.clinician_id = clinician.id
-            except jwt.ExpiredSignatureError:
+            except ExpiredSignatureError:
                 return jsonify(Response.error(401, "Token已过期")), 401
-            except jwt.InvalidTokenError:
+            except InvalidTokenError:
                 return jsonify(Response.error(401, "Token无效")), 401
 
             return f(*args, **kwargs)
