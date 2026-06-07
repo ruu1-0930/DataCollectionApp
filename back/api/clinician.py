@@ -22,7 +22,10 @@ def enable():
     existing = Clinician.query.filter_by(
         phone=data['phone'], terminal_code=data['terminal_code']).first()
     if existing:
-        # 同手机同终端已启用：直接重发 token（幂等），口令不改
+        # 同手机同终端已启用：幂等重发 token，但必须先校验口令——
+        # 红线（CLAUDE.md §3.2）：不得仅凭手机/终端签发 Token。口令不改。
+        if not verify_passcode(data['passcode'], existing.passcode_hash):
+            return jsonify(Response.error(401, "该终端已启用，口令不匹配")), 401
         return jsonify(Response.success(
             data={'token': issue_token(existing.id), 'clinician': _clinician_public(existing)},
             msg="该终端已启用"))

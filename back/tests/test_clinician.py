@@ -31,7 +31,23 @@ def test_login_wrong_passcode_rejected(client):
     client.post('/clinician/enable', json=_enable_payload())
     resp = client.post('/clinician/login', json={
         'phone': '13800000000', 'terminal_code': 'term-1', 'passcode': '0000'})
-    assert resp.get_json()['code'] != 200
+    assert resp.get_json()['code'] == 401
+
+
+def test_enable_reissue_requires_correct_passcode(client):
+    # 同手机同终端再次启用：口令正确才幂等重发 token
+    client.post('/clinician/enable', json=_enable_payload())
+    resp = client.post('/clinician/enable', json=_enable_payload())
+    assert resp.get_json()['code'] == 200
+    assert resp.get_json()['data']['token']
+
+
+def test_enable_reissue_wrong_passcode_rejected(client):
+    # 红线：已启用终端用错口令再启用，不得签发 token
+    client.post('/clinician/enable', json=_enable_payload())
+    resp = client.post('/clinician/enable', json=_enable_payload(passcode='9999'))
+    assert resp.get_json()['code'] == 401
+    assert resp.get_json().get('data') is None
 
 
 def _token(client):
