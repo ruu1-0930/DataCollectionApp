@@ -45,3 +45,22 @@ def create_patient():
                               email=data.get('email'), address=data.get('address')))
     db.session.commit()
     return jsonify(Response.success(data=_patient_public(p), msg="新建患者成功"))
+
+
+@patient_bp.route('/patients', methods=['GET'])
+@token_required()
+def list_patients():
+    patients = (Patient.query.filter_by(clinician_id=g.clinician_id)
+                .order_by(Patient.created_at.desc()).all())
+    return jsonify(Response.success(data=[_patient_public(p) for p in patients]))
+
+
+@patient_bp.route('/patients/<int:patient_id>', methods=['GET'])
+@token_required()
+def get_patient(patient_id):
+    p = Patient.query.get(patient_id)
+    if not p:
+        return jsonify(Response.error(404, "患者不存在")), 404
+    if p.clinician_id != g.clinician_id:
+        return jsonify(Response.error(403, "无权访问该患者")), 403
+    return jsonify(Response.success(data=_patient_public(p)))
