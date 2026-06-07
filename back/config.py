@@ -54,4 +54,7 @@ def create_app(test_config=None):
     from api.patient import patient_bp
     app.register_blueprint(patient_bp)
 
+    from api.device import device_bp
+    app.register_blueprint(device_bp)
+
     return app
