@@ -64,3 +64,44 @@ def get_patient(patient_id):
     if p.clinician_id != g.clinician_id:
         return jsonify(Response.error(403, "无权访问该患者")), 403
     return jsonify(Response.success(data=_patient_public(p)))
+
+
+@patient_bp.route('/patients/<int:patient_id>/data', methods=['GET'])
+@token_required()
+def patient_history(patient_id):
+    p = Patient.query.get(patient_id)
+    if not p:
+        return jsonify(Response.error(404, "患者不存在")), 404
+    if p.clinician_id != g.clinician_id:
+        return jsonify(Response.error(403, "无权访问该患者")), 403
+
+    q = (db.session.query(DeviceRawData, DeviceTransformedData)
+         .outerjoin(DeviceTransformedData,
+                    DeviceRawData.id == DeviceTransformedData.raw_data_id)
+         .filter(DeviceRawData.patient_id == patient_id))
+
+    start = request.args.get('start')
+    end = request.args.get('end')
+    if start:
+        q = q.filter(DeviceRawData.collected_at >= start)
+    if end:
+        q = q.filter(DeviceRawData.collected_at <= end)
+
+    total = q.count()
+    page = max(int(request.args.get('page', 1)), 1)
+    page_size = min(max(int(request.args.get('page_size', 50)), 1), 500)
+    rows = (q.order_by(DeviceRawData.collected_at.desc())
+            .offset((page - 1) * page_size).limit(page_size).all())
+
+    items = []
+    for raw, tr in rows:
+        items.append({
+            'id': raw.id,
+            'collected_at': raw.collected_at.isoformat() if raw.collected_at else None,
+            'ax': raw.ax, 'ay': raw.ay, 'az': raw.az,
+            'gx': raw.gx, 'gy': raw.gy, 'gz': raw.gz,
+            'transformed': ({'T1': tr.T1, 'T2': tr.T2, 'T3': tr.T3, 'T4': tr.T4, 'T5': tr.T5}
+                            if tr else None),
+        })
+    return jsonify(Response.success(
+        data={'items': items, 'total': total, 'page': page, 'page_size': page_size}))
