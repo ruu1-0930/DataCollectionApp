@@ -105,3 +105,46 @@
 - 响应包络 `{ code, msg, data }` 不变；request.js 响应拦截器 `code===200` 取 `data.data`、401 仅提示不登出——沿用。
 - 首页足底压力图（foot.png + 蓝点 ripple）原实现不动。
 - token 存取沿用 `utils/auth.js` 的 `setToken/getToken`。
+
+---
+
+## 11. 落地状态复核（2026-06-07）
+
+> 复核口径：逐项对照现后端 `back/api/*.py` 与现前端 `蓝牙uniapp/`。结论——**后端 scope A 已实现且与本清单契约高度一致；前端尚未动工，全部 `[需改前端]` 项待办（grep `terminal_code`/`patient_id`/`clinician/enable`/`/patients` 在前端命中 0）。** 对齐的剩余工作量几乎全在前端。
+
+### 11.1 契约符合度（后端，已实现）
+
+| 节 | 后端实现位置 | 与契约 |
+|---|---|---|
+| §2 enable | `back/api/clinician.py:15` | ✅ 字段/响应一致；额外做同手机同终端**幂等重发 token 且仍校验口令**（红线 §3.2） |
+| §3 login | `back/api/clinician.py:44` | ✅ `{phone,terminal_code,passcode}`→`{token,clinician}` |
+| §8 me PUT | `back/api/clinician.py:67` | ✅ `/clinician/me` GET/PUT |
+| §4 患者 | `back/api/patient.py` | ✅ POST/GET/GET`<id>`；查重返回既有患者带 `existed:true`；`subject_id` 后端发（`#%05d`） |
+| §5 上传 | `back/api/device.py:61` | ✅ `patient_id` 必填、归属 clinician+patient+device、落 6 维、内联 SVM；响应 `{raw_data_id, transformed:{T1..T5}}` |
+| §6 设备 | `back/api/device.py:17/41/48` | ✅ POST/GET/DELETE `/devices`，按 token 归属 clinician |
+| §7 历史 | `back/api/patient.py:69` | ✅ `?start=&end=&page=&page_size=`，越权 403 |
+| token | `back/utils.py:18` | 后端要求 `Authorization: Bearer <token>` |
+
+### 11.2 前端待办（全部未动工）
+
+| 节 | 现状文件 | 缺口 |
+|---|---|---|
+| §1 | `utils/clinicStorage.js`、`store/modules/operator.js` | 无 terminal_code 字段，无生成/持久化逻辑 |
+| §2 | `store/modules/operator.js:15` | `enable()` 纯本地写，未调后端、未存 token |
+| §3 | `utils/request.js` | 无 401 静默换 token 重试；本地 `unlock()` 已符合（保留） |
+| §4 | `store/modules/patient.js`、`utils/patient.js`、`pages/patient/*` | 仍本地 `seq`+`formatSubjectId`；`new.vue` 还在创建前预览编号；`select.vue` 按 `seq` 取数 |
+| §5 | `store/modules/blueTooth.js:246` | `sendDeviceRawDataApi(device_code, apiData)` 不带 `patient_id`，无「无当前患者禁采」 |
+| §7 | `pages/data/data.vue` | 全是示意数据，未拉 `/patients/<id>/data` |
+| §8 | `api/user.js`、`api/index.js` | 旧接口函数全在，无任何 clinician/patient 新接口函数 |
+
+### 11.3 复核新发现的落地细节（写进 plan）
+
+1. **request.js 鉴权白名单**：`utils/request.js:100` 仅放行 `/login`、`/register` 的无 token 请求，其余无 token 直接 `Promise.reject`。**enable/login 改用新路径后，必须把 `/clinician/enable`、`/clinician/login` 加入白名单**，否则首启拿不到 token 的请求会被拦截。
+2. **token 来源单一化**：`request.js:96` 现从 `useUserStore().token` 读 token（旧登录模型）。新模型 token 由 operator 启用/登录产生，建议拦截器改为直接读 `utils/auth.js` 的 `getToken()`，与产生方解耦；保存格式沿用现约定的 `"Bearer xxx"` 整串（后端按空格切分取第 2 段）。
+3. **§6 设备接口已对齐，保留扫码加设备**：现前端 `addUserDeviceListApi`(POST `/devices`)/`getUserDeviceListApi`(GET)/`deleteDeviceApi`(DELETE `/devices/<id>`) 与新后端契约**已一致**，`mine.vue` 扫码加设备 → `blueTooth.addDevice()` 流程在 token 就绪后即可直接工作。**本清单 §6「蓝牙连接时注册/非扫码」属交互偏好，非对齐必需**——为遵循既有可用流程与 YAGNI，**plan 不强行重做为连接时注册**，仅在数据归属正确的前提下沿用扫码加设备；连接时自动注册列为可选后续优化。
+4. **患者数据形状变更的连带改动**：患者对象由 `{seq,...}` 改为 `{id, subject_id, name, phone, gender, age, last_collected_at}` 后，`utils/patient.js` 的 `formatSubjectId`/`nextSeq` 不再用于发号（仅旧测试保留），`searchPatients`/`maskPhone`/`validatePatient` 仍复用；`new.vue` 取消「创建前预览编号」（编号改由后端创建后返回），`select.vue`/`CaPatientBar` 改用 `subject_id` 与后端 `id`。
+
+### 11.4 测试现实（影响 plan 的 TDD 粒度）
+
+- 前端测试基建 = 纯 `vitest`（`tests/patient.test.js` 仅测 `utils/patient.js` 纯函数），**无 uni/BLE 原生模块的 mock**。
+- 故 plan 中：**可抽成纯函数的部分走 TDD**（terminal_code 生成、后端患者对象→前端形状的归一化、上传 payload 组装、历史项映射）；**store/页面/网络/蓝牙 的接线只能真机+真后端手动验证**（HBuilderX 跑 `http://118.31.39.47`），与现有测试边界一致。
