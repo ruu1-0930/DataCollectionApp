@@ -84,14 +84,17 @@ const instance = new Request({
 
 // 401 静默刷新并重试一次：用本地 phone+terminalCode+passcode 换新 token
 async function retryWithRefresh(config) {
-  if (config._retried) return Promise.reject(config)
+  if (!config) return Promise.reject(config)
+  // 重试标记必须放在 custom 上：luch-request 的 mergeConfig 只透传 custom/header 等白名单字段，
+  // 顶层自定义属性（如 _retried）会在 instance.request 重新合并配置时被丢弃，导致 401 无限重试。
+  if (config.custom && config.custom._retried) return Promise.reject(config)
   if (['/clinician/enable', '/clinician/login'].some((p) => config.url.includes(p))) {
     return Promise.reject(config)
   }
   const op = useOperatorStoreWithOut()
   if (!op.operator || !op.operator.passcode) return Promise.reject(config)
   await op.refreshToken()
-  config._retried = true
+  config.custom = { ...(config.custom || {}), _retried: true }
   config.header = { ...(config.header || {}), Authorization: getToken() }
   return instance.request(config)
 }
