@@ -15,11 +15,11 @@
     <CaEmpty v-if="list.length === 0" icon="🧑‍⚕️" title="还没有患者"
       desc="点上方「新建患者」录入第一位患者" />
 
-    <view v-for="p in list" :key="p.seq" class="pcell" @tap="onPick(p.seq)">
+    <view v-for="p in list" :key="p.id" class="pcell" @tap="onPick(p.id)">
       <view class="av">{{ p.name.slice(0,1) }}</view>
       <view class="info">
         <view class="nm">{{ p.name }} <text class="ph">{{ mask(p.phone) }}</text></view>
-        <view class="meta">{{ id(p.seq) }} · 最近 {{ fmtDate(p.lastAt) }} · {{ p.count || 0 }} 次采集</view>
+        <view class="meta">{{ p.subjectId }} · 最近 {{ fmtDate(p.lastAt) }}</view>
       </view>
       <text class="arr">›</text>
     </view>
@@ -30,24 +30,23 @@
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { usePatientStoreWithOut } from '@/store/modules/patient'
-import { maskPhone, formatSubjectId } from '@/utils/patient'
+import { maskPhone } from '@/utils/patient'
 const ps = usePatientStoreWithOut()
 const kw = ref('')
 const all = computed(() => ps.patients)
 const list = computed(() => ps.list(kw.value))
 const mask = maskPhone
-const id = formatSubjectId
 function fmtDate(ts) {
   if (!ts) return '—'
   const d = new Date(ts)
   return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 function goNew() { uni.navigateTo({ url: '/pages/patient/new' }) }
-function onPick(seq) {
-  ps.select(seq)
+function onPick(id) {
+  ps.select(id)
   uni.switchTab({ url: '/pages/home/home' })
 }
-onShow(() => { /* 从新建页返回时列表自动随 store 更新 */ })
+onShow(() => { ps.loadList().catch(() => { /* 离线：用本地缓存展示 */ }) })
 </script>
 
 <style lang="scss" scoped>
