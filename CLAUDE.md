@@ -30,7 +30,9 @@
 0. **🔴 进行中 — 迁移到自有云**：现有 ECS/数据库**均不在我方名下**（随时可能停机），迁到自有阿里云 **ECS + RDS**（同 VPC、RDS 不开公网）。**当前任务，先于阶段 1。** 因**尚未开始采集，无历史数据需迁移**，成本最低；迁移顺带完成阶段 1 的 HTTPS、收回 DB 公网、密钥/口令入环境变量（最后一项已完成）。逐步操作见 [迁移操作清单.md](迁移操作清单.md)；背景见架构方案阶段 0.5 与 FAQ 10.2。
    - **已完成**：ECS+RDS 开通、建库导 schema、gunicorn+systemd+nginx 部署跑通（公网 IP `118.31.39.47`）；三端地址改到新服务器（option A：先 `http://IP`）；清理上一个开发者「捡漏/短剧」模板残留。
    - **待办**：HBuilderX 重打包 App；域名备案+HTTPS（nginx 切 443、App 端 `sslVerify` 翻 `true`）；关 RDS 公网、复查安全组、下线旧机器。
-1. **🔴 阶段 1 — 止血**：全字段落库（38 维，不再只存 6 维）+ 登录加密码（HTTPS/密钥/收回公网随迁移完成）。**迁移后做。**
+1. **🟠 阶段 1 — 止血（部分完成）**：
+   - ✅ **后端净重设（scope A，已完成）**：六表临床模型（clinicians/devices/patients/patient_pii/device_raw_data/device_transformed_data）+ 医护口令认证（bcrypt + JWT）+ 采集归属 clinician+patient+device + 按患者历史只读 API。子 agent 驱动 TDD，34 测试全绿。见 `back/` 与 `database_schema_mysql.sql`。
+   - ⏳ **待办**：6→38 维全量落库（先与硬件核对字段顺序）；App 端接入新接口（enable/login/患者/上传补 patient_id/历史）；HTTPS/密钥/收回公网随迁移完成。
 2. 🟠 阶段 2 — 可靠采集（批量上传 + 离线重传）
 3. 🟠 阶段 3 — 实验室分析侧（科研只读 API + 去标识化导出）
 4. 🟡 阶段 4 — 采集与分析解耦（SVM 异步化）
@@ -111,10 +113,12 @@ npm install && npm run dev
 ## 5. 关键代码索引
 
 - 蓝牙解析与上传：`蓝牙uniapp/store/modules/blueTooth.js:170 / :187 / :246`
-- 上传接口（当前仅存 6 维，待扩）：`back/api/device.py:188`
-- SVM 推理（待异步解耦）：`back/api/device.py:224 / :611`
-- 登录（当前无密码，待修）：`back/api/user.py:55`
-- 鉴权：`back/utils.py:25`
+- 应用工厂与蓝图注册（`create_app` + clinician/patient/device 三蓝图）：`back/config.py`；入口 `back/app.py`
+- 医护认证（启用/登录/资料，bcrypt + JWT(clinician_id)）：`back/api/clinician.py`；口令哈希与签发：`back/auth.py`
+- 鉴权（`token_required` 基于 `clinician_id`）：`back/utils.py`
+- 患者与按患者历史（CRUD + `subject_id` + 分页/时间范围只读）：`back/api/patient.py`
+- 设备与上传（蓝牙注册鞋垫 + 上传原始数据带 `patient_id`，归属 clinician+patient+device）：`back/api/device.py`
+- SVM 推理（已抽出独立模块，`analyze()`；待异步解耦）：`back/api/analysis.py`
 - 配置（DB 串与 `SECRET_KEY` 已改为读环境变量，模板见 `back/.env.example`）：`back/config.py`
 - 后端地址（`baseURL`）：采集端 `蓝牙uniapp/config/index.js`；**管理台改 `admin/.env` 的 `VITE_BASE_URL`/`VITE_BASE_URL_PRO`（实际生效），`admin/src/config/index.js` 无人 import 是死配置**
 - 数据表结构：`back/database_schema_mysql.sql`（唯一权威；旧 SQLite 版 `database_schema.sql` 已删）
