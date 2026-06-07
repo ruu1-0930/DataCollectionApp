@@ -1,6 +1,9 @@
+import datetime
 from flask import Blueprint, request, jsonify, g
 from config import db
 from models.models import Device
+from models.models import Patient, DeviceRawData, DeviceTransformedData
+from api.analysis import analyze
 from utils import Response, token_required
 
 device_bp = Blueprint('device', __name__)
@@ -53,3 +56,46 @@ def delete_device(device_id):
     db.session.delete(d)
     db.session.commit()
     return jsonify(Response.success(msg="设备已删除"))
+
+
+@device_bp.route('/devices/<string:device_code>/raw_data', methods=['POST'])
+@token_required()
+def upload_raw_data(device_code):
+    device = Device.query.filter_by(device_code=device_code,
+                                    clinician_id=g.clinician_id).first()
+    if not device:
+        return jsonify(Response.error(404, "设备不存在或不属于当前医护")), 404
+
+    data = request.json or {}
+    patient_id = data.get('patient_id')
+    if not patient_id:
+        return jsonify(Response.error(400, "patient_id 为必填")), 400
+
+    patient = Patient.query.get(patient_id)
+    if not patient or patient.clinician_id != g.clinician_id:
+        return jsonify(Response.error(403, "患者不存在或不属于当前医护")), 403
+
+    try:
+        ax = float(data['ax']); ay = float(data['ay']); az = float(data['az'])
+        gx = float(data['gx']); gy = float(data['gy']); gz = float(data['gz'])
+    except (KeyError, TypeError, ValueError):
+        return jsonify(Response.error(400, "缺少或非法的 6 轴传感器字段")), 400
+
+    now = datetime.datetime.utcnow()
+    raw = DeviceRawData(device_id=device.id, patient_id=patient.id,
+                        clinician_id=g.clinician_id,
+                        ax=ax, ay=ay, az=az, gx=gx, gy=gy, gz=gz,
+                        collected_at=now, uploaded_at=now)
+    db.session.add(raw)
+    db.session.flush()
+
+    T1, T2, T3, T4, T5 = analyze(ax, ay, az, gx, gy, gz)
+    db.session.add(DeviceTransformedData(raw_data_id=raw.id,
+                                         T1=T1, T2=T2, T3=T3, T4=T4, T5=T5))
+    patient.last_collected_at = now
+    db.session.commit()
+
+    return jsonify(Response.success(
+        data={'raw_data_id': raw.id,
+              'transformed': {'T1': T1, 'T2': T2, 'T3': T3, 'T4': T4, 'T5': T5}},
+        msg="数据上传成功"))
