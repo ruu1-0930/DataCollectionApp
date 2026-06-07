@@ -68,3 +68,16 @@ describe('searchPatients', () => {
     expect(searchPatients(list, '427')[0].name).toBe('张建国')
   })
 })
+
+describe('searchPatients 支持后端 subjectId', () => {
+  const list = [
+    { id: 7, subjectId: '#00007', name: '李雷', phone: '13812346543' },
+    { id: 8, subjectId: '#00008', name: '韩梅', phone: '15912342071' }
+  ]
+  it('按 subjectId 字符串命中', () => {
+    expect(searchPatients(list, '#00008')[0].name).toBe('韩梅')
+  })
+  it('按编号数字命中', () => {
+    expect(searchPatients(list, '7')[0].name).toBe('李雷')
+  })
+})
