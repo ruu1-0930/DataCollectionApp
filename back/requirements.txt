@@ -24,3 +24,6 @@ python-dateutil==2.8.2
 
 # 文件处理
 Werkzeug==2.3.7
+
+# 口令哈希（医护口令，禁止明文）
+bcrypt==4.1.2

@@ -13,6 +13,10 @@ back/ME5001/
 *.unpackage
 unpackage/
 
+# Python
+__pycache__/
+*.pyc
+
 # Log files
 npm-debug.log*
 yarn-debug.log*
