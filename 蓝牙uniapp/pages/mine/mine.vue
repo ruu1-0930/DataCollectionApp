@@ -76,7 +76,12 @@
             <view v-else class="scan-add-btn" @tap="onAddScanned(d)">添加</view>
           </view>
         </scroll-view>
-        <view class="scan-close" @tap="closeScan">关闭</view>
+        <view class="scan-foot">
+          <view class="scan-foot-btn refresh" @tap="startScan">
+            {{ blueToothStore.isScanning ? '扫描中…' : '🔄 重新扫描' }}
+          </view>
+          <view class="scan-foot-btn" @tap="closeScan">关闭</view>
+        </view>
       </view>
     </uni-popup>
   </view>
@@ -191,7 +196,8 @@ const openScanPopup = () => {
   uni.showToast({ title: '暂不支持 H5 端', icon: 'none' })
   return
   // #endif
-  if (!blueToothStore.isBluetoothOpen) {
+  // 用原生实时状态判断（避免启动前已开启时旧标志位为 false）
+  if (!blueToothStore.syncBluetoothState()) {
     uni.showToast({ title: '请先打开手机蓝牙', icon: 'none' })
     return
   }
@@ -459,8 +465,13 @@ page {
   padding: 12rpx 30rpx;
   border-radius: $ca-radius-input;
 }
-.scan-close {
+.scan-foot {
+  display: flex;
+  gap: 20rpx;
   margin-top: 28rpx;
+}
+.scan-foot-btn {
+  flex: 1;
   text-align: center;
   font-size: 28rpx;
   font-weight: 600;
@@ -469,5 +480,10 @@ page {
   padding: 22rpx 0;
   border-radius: $ca-radius-input;
   border: 1rpx solid $ca-border;
+}
+.scan-foot-btn.refresh {
+  color: $ca-primary;
+  background: $ca-primary-light;
+  border-color: transparent;
 }
 </style>

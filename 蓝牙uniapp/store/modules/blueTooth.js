@@ -58,16 +58,75 @@ export const useBlueToothStore = defineStore('blueToothStore', {
   },
   getters: {},
   actions: {
+    // 实时同步系统蓝牙开关状态（initBle 的监听只在“切换”时触发，启动前已开启的情况要主动查一次）
+    syncBluetoothState() {
+      // #ifdef APP-PLUS
+      try {
+        this.isBluetoothOpen = this.globalBle.isEnabled()
+      } catch (e) {
+        console.warn('读取蓝牙状态失败', e)
+      }
+      // #endif
+      return this.isBluetoothOpen
+    },
+
+    // 申请蓝牙扫描所需的 Android 运行时权限（旧代码从不扫描列表，故这些“危险权限”从未在运行时被授予）
+    // Android 12+ 需 BLUETOOTH_SCAN/CONNECT；Android 11- 扫描需 ACCESS_FINE_LOCATION，一次性都申请。
+    requestBlePermissions() {
+      return new Promise((resolve) => {
+        // #ifdef APP-PLUS
+        if (uni.getSystemInfoSync().platform !== 'android') {
+          resolve(true)
+          return
+        }
+        try {
+          plus.android.requestPermissions(
+            ['android.permission.BLUETOOTH_SCAN', 'android.permission.BLUETOOTH_CONNECT', 'android.permission.ACCESS_FINE_LOCATION'],
+            (res) => {
+              // 不同 Android 版本要求的权限不同，拿到任意扫描相关权限即放行
+              resolve((res.granted && res.granted.length > 0) || false)
+            },
+            (err) => {
+              console.warn('申请蓝牙权限失败', err)
+              resolve(false)
+            }
+          )
+        } catch (e) {
+          console.warn('requestPermissions 异常', e)
+          resolve(true) // 异常时不阻塞，交给扫描结果兜底
+        }
+        // #endif
+        // #ifndef APP-PLUS
+        resolve(true)
+        // #endif
+      })
+    },
+
     // 扫描附近蓝牙设备（durationMs 后原生自动停止），结果按 MAC 去重存入 discovered
-    scanNearbyDevices(durationMs = 6000) {
-      if (!this.isBluetoothOpen) {
+    async scanNearbyDevices(durationMs = 6000) {
+      // 用原生实时状态判断，避免依赖只在“切换”时更新的 isBluetoothOpen 旧值
+      if (!this.syncBluetoothState()) {
         uni.showToast({ title: '请先打开手机蓝牙', icon: 'none' })
         return
       }
+
+      // Android 扫描必须先拿到运行时权限，否则系统静默返回 0 个结果
+      const granted = await this.requestBlePermissions()
+      if (!granted) {
+        this.isScanning = false
+        uni.showToast({ title: '需授予蓝牙/定位权限才能搜索设备', icon: 'none', duration: 2500 })
+        return
+      }
+
       this.discovered = []
       this.isScanning = true
       const known = new Set(this.deviceList.map((d) => String(d.device_code).toUpperCase()))
       this.globalBle.startScanBleDevice(durationMs, (res) => {
+        // 仅 type==0 是扫描结果帧，其余为错误/状态帧
+        if (res?.type !== 0) {
+          if (res?.type != null) console.log('扫描回调非结果帧', res.type, res.message)
+          return
+        }
         const d = res?.data?.device
         const mac = d?.address
         if (!mac) return // 无 MAC 不可连，跳过
