@@ -48,24 +48,60 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         // }
       },
       // 设备列表
-      deviceList: []
+      deviceList: [],
+
+      // 新增设备：蓝牙扫描到的附近设备（按 MAC 去重，临时态）
+      discovered: [],
+      // 是否正在扫描
+      isScanning: false
     }
   },
   getters: {},
   actions: {
-    searchDevice() {
+    // 扫描附近蓝牙设备（durationMs 后原生自动停止），结果按 MAC 去重存入 discovered
+    scanNearbyDevices(durationMs = 6000) {
       if (!this.isBluetoothOpen) {
-        uni.showToast({
-          title: '蓝牙未开启',
-          icon: 'none'
-        })
+        uni.showToast({ title: '请先打开手机蓝牙', icon: 'none' })
         return
       }
-      this.globalBle.startScanBleDevice(5000, (res) => {
-        if (res.data.device?.alias?.includes('Right_Foot')) {
-          console.log('找到设备', res.data.device)
-        }
+      this.discovered = []
+      this.isScanning = true
+      const known = new Set(this.deviceList.map((d) => String(d.device_code).toUpperCase()))
+      this.globalBle.startScanBleDevice(durationMs, (res) => {
+        const d = res?.data?.device
+        const mac = d?.address
+        if (!mac) return // 无 MAC 不可连，跳过
+        const name = d.name || d.alias || res?.data?.scanRecord?.deviceName || ''
+        // 只展示有名字的设备（过滤海量无名广播），避免列表噪声
+        if (!name) return
+        const macU = String(mac).toUpperCase()
+        if (this.discovered.some((x) => x.address.toUpperCase() === macU)) return
+        this.discovered.push({
+          name,
+          address: mac,
+          rssi: res?.data?.rssi ?? null,
+          added: known.has(macU) // 是否已在设备列表
+        })
       })
+      // 原生扫描到时长后自停，这里同步收起“扫描中”态
+      setTimeout(() => { this.isScanning = false }, durationMs)
+    },
+
+    // 把扫描到的设备登记到后端（device_code = MAC），成功后刷新列表，返回是否成功
+    async addScannedDevice(dev) {
+      if (!dev?.address) return false
+      uni.showLoading({ title: '添加中', mask: true })
+      try {
+        await registerDeviceApi({ device_name: dev.name || dev.address, device_code: dev.address })
+        await this.getDevicesList()
+        uni.hideLoading()
+        uni.showToast({ title: '添加设备成功', icon: 'success' })
+        return true
+      } catch (e) {
+        uni.hideLoading()
+        uni.showToast({ title: '添加失败：请检查网络', icon: 'none' })
+        return false
+      }
     },
     initBle() {
       this.globalBle.onBtOpenStateListener((res) => {
