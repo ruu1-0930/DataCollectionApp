@@ -58,6 +58,27 @@ def delete_device(device_id):
     return jsonify(Response.success(msg="设备已删除"))
 
 
+# 一帧 BLE = 合并 38 字段：前 19 左脚、后 19 右脚（硬件固定顺序）。
+# 摄取时按 schema 列 → App apiData 源字段名 拆成两条每脚记录。
+_LEFT_SRC = {
+    **{f'p{i}': f'lp{i}' for i in range(1, 10)},
+    'ax': 'ax', 'ay': 'ay', 'az': 'az', 'gx': 'gx', 'gy': 'gy', 'gz': 'gz',
+    'step_length': 'left_step_size', 'walking_speed': 'left_speed',
+    'single_support_time': 'left_single_sp_time', 'double_support_time': 'left_double_sp_time',
+}
+_RIGHT_SRC = {
+    **{f'p{i}': f'rp{i}' for i in range(1, 10)},
+    'ax': 'right_ax', 'ay': 'right_ay', 'az': 'right_az',
+    'gx': 'right_gx', 'gy': 'right_gy', 'gz': 'right_gz',
+    'step_length': 'right_step_size', 'walking_speed': 'right_speed',
+    'single_support_time': 'right_single_sp_time', 'double_support_time': 'right_double_sp_time',
+}
+
+
+def _parse_foot(data, src_map):
+    return {col: float(data[key]) for col, key in src_map.items()}
+
+
 @device_bp.route('/devices/<string:device_code>/raw_data', methods=['POST'])
 @token_required()
 def upload_raw_data(device_code):
@@ -76,26 +97,27 @@ def upload_raw_data(device_code):
         return jsonify(Response.error(403, "患者不存在或不属于当前医护")), 403
 
     try:
-        ax = float(data['ax']); ay = float(data['ay']); az = float(data['az'])
-        gx = float(data['gx']); gy = float(data['gy']); gz = float(data['gz'])
+        feet = {'L': _parse_foot(data, _LEFT_SRC), 'R': _parse_foot(data, _RIGHT_SRC)}
     except (KeyError, TypeError, ValueError):
-        return jsonify(Response.error(400, "缺少或非法的 6 轴传感器字段")), 400
+        return jsonify(Response.error(400, "缺少或非法的 38 字段（每脚 9 压力 + 6 IMU + 4 步态）")), 400
 
     now = datetime.datetime.utcnow()
-    raw = DeviceRawData(device_id=device.id, patient_id=patient.id,
-                        clinician_id=g.clinician_id,
-                        ax=ax, ay=ay, az=az, gx=gx, gy=gy, gz=gz,
-                        collected_at=now, uploaded_at=now)
-    db.session.add(raw)
-    db.session.flush()
-
-    T1, T2, T3, T4, T5 = analyze(ax, ay, az, gx, gy, gz)
-    db.session.add(DeviceTransformedData(raw_data_id=raw.id,
-                                         T1=T1, T2=T2, T3=T3, T4=T4, T5=T5))
+    result = {}
+    for foot, vals in feet.items():
+        raw = DeviceRawData(device_id=device.id, patient_id=patient.id,
+                            clinician_id=g.clinician_id, foot=foot,
+                            collected_at=now, uploaded_at=now, **vals)
+        db.session.add(raw)
+        db.session.flush()
+        T1, T2, T3, T4, T5 = analyze(vals['ax'], vals['ay'], vals['az'],
+                                     vals['gx'], vals['gy'], vals['gz'])
+        db.session.add(DeviceTransformedData(raw_data_id=raw.id,
+                                             T1=T1, T2=T2, T3=T3, T4=T4, T5=T5))
+        result['left' if foot == 'L' else 'right'] = {
+            'raw_data_id': raw.id,
+            'transformed': {'T1': T1, 'T2': T2, 'T3': T3, 'T4': T4, 'T5': T5},
+        }
     patient.last_collected_at = now
     db.session.commit()
 
-    return jsonify(Response.success(
-        data={'raw_data_id': raw.id,
-              'transformed': {'T1': T1, 'T2': T2, 'T3': T3, 'T4': T4, 'T5': T5}},
-        msg="数据上传成功"))
+    return jsonify(Response.success(data=result, msg="数据上传成功"))

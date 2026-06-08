@@ -57,14 +57,28 @@ CREATE TABLE patient_pii (
   CONSTRAINT fk_pii_patient FOREIGN KEY (patient_id) REFERENCES patients(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 一行 = 一只脚的一帧，与硬件原始导出（每行带 L/R 标记、19 个传感字段）一致：
+--   foot=Col B；p1..p9=Col C-K（压力）；ax..gz=Col L-Q（IMU 10-15）；
+--   step_length/walking_speed/single_support_time/double_support_time=Col R-U（16-19）。
+-- 注：BLE 一帧仅含上述 38 个传感字段、不含设备时间戳，故 collected_at 实为「服务器接收/入库时刻」
+--   （device.py 取 datetime.utcnow()），非设备原始 Col A 采样时刻；同一帧拆出的 L/R 两行共享该时刻用于配对。
+--   若日后硬件改为上传 Col A，再把 collected_at 切到设备时刻。raw 仅增不改。
 CREATE TABLE device_raw_data (
   id INT AUTO_INCREMENT PRIMARY KEY,
   device_id INT NOT NULL,
   patient_id INT NOT NULL,
   clinician_id INT NOT NULL,
+  foot ENUM('L','R') NOT NULL,
+  p1 FLOAT NOT NULL, p2 FLOAT NOT NULL, p3 FLOAT NOT NULL,
+  p4 FLOAT NOT NULL, p5 FLOAT NOT NULL, p6 FLOAT NOT NULL,
+  p7 FLOAT NOT NULL, p8 FLOAT NOT NULL, p9 FLOAT NOT NULL,
   ax FLOAT NOT NULL, ay FLOAT NOT NULL, az FLOAT NOT NULL,
   gx FLOAT NOT NULL, gy FLOAT NOT NULL, gz FLOAT NOT NULL,
-  collected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  step_length FLOAT NOT NULL,
+  walking_speed FLOAT NOT NULL,
+  single_support_time FLOAT NOT NULL,
+  double_support_time FLOAT NOT NULL,
+  collected_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),  -- 服务器接收/入库时刻（非设备采样时刻）；同帧 L/R 两行共享，用于配对
   uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   KEY idx_raw_device (device_id),
   KEY idx_raw_clinician (clinician_id),

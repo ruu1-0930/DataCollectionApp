@@ -19,8 +19,12 @@ export function buildRawDataPayload(patientId, apiData) {
 export function mapHistoryItem(it = {}) {
   return {
     id: it.id,
+    foot: it.foot,
     collectedAt: it.collected_at ? Date.parse(it.collected_at) : null,
+    pressure: [it.p1, it.p2, it.p3, it.p4, it.p5, it.p6, it.p7, it.p8, it.p9],
     ax: it.ax, ay: it.ay, az: it.az, gx: it.gx, gy: it.gy, gz: it.gz,
+    stepLength: it.step_length, walkingSpeed: it.walking_speed,
+    singleSupportTime: it.single_support_time, doubleSupportTime: it.double_support_time,
     t: it.transformed ? { ...it.transformed } : null
   }
 }

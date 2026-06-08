@@ -97,9 +97,15 @@ def patient_history(patient_id):
     for raw, tr in rows:
         items.append({
             'id': raw.id,
+            'foot': raw.foot,
             'collected_at': raw.collected_at.isoformat() if raw.collected_at else None,
+            'p1': raw.p1, 'p2': raw.p2, 'p3': raw.p3, 'p4': raw.p4, 'p5': raw.p5,
+            'p6': raw.p6, 'p7': raw.p7, 'p8': raw.p8, 'p9': raw.p9,
             'ax': raw.ax, 'ay': raw.ay, 'az': raw.az,
             'gx': raw.gx, 'gy': raw.gy, 'gz': raw.gz,
+            'step_length': raw.step_length, 'walking_speed': raw.walking_speed,
+            'single_support_time': raw.single_support_time,
+            'double_support_time': raw.double_support_time,
             'transformed': ({'T1': tr.T1, 'T2': tr.T2, 'T3': tr.T3, 'T4': tr.T4, 'T5': tr.T5}
                             if tr else None),
         })

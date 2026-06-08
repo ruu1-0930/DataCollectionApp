@@ -60,13 +60,32 @@ class DeviceRawData(db.Model):
     device_id = db.Column(db.Integer, db.ForeignKey('devices.id'), nullable=False, index=True)
     patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False)
     clinician_id = db.Column(db.Integer, db.ForeignKey('clinicians.id'), nullable=False, index=True)
-    # scope A：暂存 6 维，38 维扩展见后续 spec
+    # 一行 = 一只脚的一帧，与硬件原始导出（每行带 L/R 标记）一致
+    foot = db.Column(db.String(1), nullable=False)  # 'L' / 'R'
+    # 压力 1-9（原始导出 C-K 列）
+    p1 = db.Column(db.Float, nullable=False)
+    p2 = db.Column(db.Float, nullable=False)
+    p3 = db.Column(db.Float, nullable=False)
+    p4 = db.Column(db.Float, nullable=False)
+    p5 = db.Column(db.Float, nullable=False)
+    p6 = db.Column(db.Float, nullable=False)
+    p7 = db.Column(db.Float, nullable=False)
+    p8 = db.Column(db.Float, nullable=False)
+    p9 = db.Column(db.Float, nullable=False)
+    # 加速度/IMU 10-15（原始导出 L-Q 列）
     ax = db.Column(db.Float, nullable=False)
     ay = db.Column(db.Float, nullable=False)
     az = db.Column(db.Float, nullable=False)
     gx = db.Column(db.Float, nullable=False)
     gy = db.Column(db.Float, nullable=False)
     gz = db.Column(db.Float, nullable=False)
+    # 步态 16-19（原始导出 R-U 列）
+    step_length = db.Column(db.Float, nullable=False)
+    walking_speed = db.Column(db.Float, nullable=False)
+    single_support_time = db.Column(db.Float, nullable=False)
+    double_support_time = db.Column(db.Float, nullable=False)
+    # collected_at = 服务器接收/入库时刻（BLE 帧不含设备时间戳，故非设备 Col A 采样时刻）；
+    # 同一帧拆出的 L/R 两行共享该时刻用于配对。uploaded_at 同为落库时刻。
     collected_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     uploaded_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 

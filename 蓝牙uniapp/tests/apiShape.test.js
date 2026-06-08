@@ -32,11 +32,18 @@ describe('buildRawDataPayload', () => {
 describe('mapHistoryItem', () => {
   it('映射历史记录与 transformed', () => {
     const it = mapHistoryItem({
-      id: 11, collected_at: '2026-06-07T03:00:00',
-      ax: 1, ay: 2, az: 3, gx: 4, gy: 5, gz: 6, transformed: { T1: 1, T2: 2, T3: 3, T4: 4, T5: 5 }
+      id: 11, foot: 'R', collected_at: '2026-06-07T03:00:00',
+      p1: 1, p2: 2, p3: 3, p4: 4, p5: 5, p6: 6, p7: 7, p8: 8, p9: 9,
+      ax: 1, ay: 2, az: 3, gx: 4, gy: 5, gz: 6,
+      step_length: 16, walking_speed: 17, single_support_time: 18, double_support_time: 19,
+      transformed: { T1: 1, T2: 2, T3: 3, T4: 4, T5: 5 }
     })
     expect(it.id).toBe(11)
+    expect(it.foot).toBe('R')
     expect(it.collectedAt).toBe(Date.parse('2026-06-07T03:00:00'))
+    expect(it.pressure).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(it.stepLength).toBe(16)
+    expect(it.doubleSupportTime).toBe(19)
     expect(it.t).toEqual({ T1: 1, T2: 2, T3: 3, T4: 4, T5: 5 })
   })
   it('transformed 缺省为 null', () => {
