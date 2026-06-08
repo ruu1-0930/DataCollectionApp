@@ -18,7 +18,7 @@ const avatar = computed(() => (ps.current?.name || '?').slice(0, 1))
 const sub = computed(() => {
   const p = ps.current
   if (!p) return '点此选择患者'
-  return [ps.currentId, p.gender, p.age ? p.age + '岁' : ''].filter(Boolean).join(' · ')
+  return [ps.currentSubjectId, p.gender, p.age ? p.age + '岁' : ''].filter(Boolean).join(' · ')
 })
 function onSwitch() {
   uni.navigateTo({ url: '/pages/patient/select' })

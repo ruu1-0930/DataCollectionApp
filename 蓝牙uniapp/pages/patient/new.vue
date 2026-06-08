@@ -15,24 +15,31 @@
       </view>
     </view>
     <view class="lab">患者编号</view>
-    <view class="idrow"><text class="idtag">{{ nextId }} 自动生成</text><text class="idnote">导出科研只用此编号</text></view>
+    <view class="idrow"><text class="idtag">创建后由系统自动派发</text><text class="idnote">导出科研只用此编号</text></view>
     <view class="btn" @tap="onCreate">创建并设为当前患者</view>
     <view class="hint">姓名仅本机供医护辨认；对外导出默认去标识化，只带编号。</view>
   </view>
 </template>
 
 <script setup>
-import { reactive, computed } from 'vue'
+import { reactive } from 'vue'
 import { usePatientStoreWithOut } from '@/store/modules/patient'
-import { validatePatient, formatSubjectId, nextSeq } from '@/utils/patient'
+import { validatePatient } from '@/utils/patient'
 const ps = usePatientStoreWithOut()
 const f = reactive({ name: '', phone: '', gender: '', age: '' })
-const nextId = computed(() => formatSubjectId(nextSeq(ps.patients)))
-function onCreate() {
+async function onCreate() {
   const v = validatePatient(f)
   if (!v.ok) return uni.showToast({ title: v.msg, icon: 'none' })
-  ps.create({ ...f })
-  uni.switchTab({ url: '/pages/home/home' })
+  uni.showLoading({ title: '创建中', mask: true })
+  try {
+    const p = await ps.create({ ...f })
+    uni.hideLoading()
+    if (p.existed) uni.showToast({ title: '该患者已存在，已为你选中', icon: 'none', duration: 2000 })
+    uni.switchTab({ url: '/pages/home/home' })
+  } catch (e) {
+    uni.hideLoading()
+    uni.showToast({ title: '创建失败：请检查网络', icon: 'none' })
+  }
 }
 </script>
 

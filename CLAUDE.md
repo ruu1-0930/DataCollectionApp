@@ -32,7 +32,9 @@
    - **待办**：HBuilderX 重打包 App；域名备案+HTTPS（nginx 切 443、App 端 `sslVerify` 翻 `true`）；关 RDS 公网、复查安全组、下线旧机器。
 1. **🟠 阶段 1 — 止血（部分完成）**：
    - ✅ **后端净重设（scope A，已完成）**：六表临床模型（clinicians/devices/patients/patient_pii/device_raw_data/device_transformed_data）+ 医护口令认证（bcrypt + JWT）+ 采集归属 clinician+patient+device + 按患者历史只读 API。子 agent 驱动 TDD，34 测试全绿。见 `back/` 与 `database_schema_mysql.sql`。
-   - ⏳ **待办**：6→38 维全量落库（先与硬件核对字段顺序）；App 端接入新接口（enable/login/患者/上传补 patient_id/历史）；HTTPS/密钥/收回公网随迁移完成。
+   - ✅ **App 端接入新接口（代码完成，scope A）**：分支 `feature/frontend-backend-alignment`，子 agent 驱动 12 任务。`utils/terminal.js`（terminal_code）、`api/{clinician,patient,device}.js` 薄封装、`utils/apiShape.js`（后端↔前端形状映射）、`request.js`（token 走 `auth.getToken()`「Bearer xxx」整串 + 401 静默重登）、`operatorStore.enable/refreshToken`（启用即 enable→发 token）、`patientStore` 改后端发 `id/subject_id`、患者新建/选择页接 `POST/GET /patients`、采集上传补 `patient_id` 且无当前患者禁采、数据页按 `/patients/<id>/data` 拉历史、删除作废 `api/user.js` 与旧登录 `store/modules/user.js`。纯函数 vitest 22 测试全绿。对齐 spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-07-frontend-backend-alignment.md`。
+   - ✅ **6→38 维全量落库（每脚一行，代码完成）**：一帧 BLE = 合并 38 字段（**固定前 19 左脚 / 后 19 右脚**），后端摄取拆成 L/R 两条每脚记录入库。`device_raw_data` 由「6 轴 IMU」扩为每脚 `foot`(L/R)+9 压力 `p1..p9`+6 IMU+4 步态（步长/步速/单支撑/双支撑，皆为设备固件输出，非本仓库模型计算；仅 SVM T1–T5 为推理）。改动文件：`models/models.py`、`database_schema_mysql.sql`、`migrations/001_raw_data_per_foot.sql`、`api/device.py`(38→2 行拆分 + 每脚跑 SVM)、`api/patient.py`(历史返回带 `foot`+全量压力/步态)；App `utils/apiShape.js` 的 `mapHistoryItem` 同步暴露 `foot`/`pressure`/步态。**后端 35 测试 + App 22 vitest 全绿**。`蓝牙uniapp` 上传侧无需改（已发 38 命名字段，拆分在后端）。
+   - ⏳ **待办**：**App 端真机回归**（HBuilderX → 真后端 `http://118.31.39.47`：启用/解锁、选/建患者、扫码加设备、连接采集落库归属、按患者历史——store/页面/蓝牙/网络无法 vitest mock，见 plan Task 12 手动清单）；HTTPS/密钥/收回公网随迁移完成。
 2. 🟠 阶段 2 — 可靠采集（批量上传 + 离线重传）
 3. 🟠 阶段 3 — 实验室分析侧（科研只读 API + 去标识化导出）
 4. 🟡 阶段 4 — 采集与分析解耦（SVM 异步化）

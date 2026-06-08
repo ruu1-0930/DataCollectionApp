@@ -38,11 +38,13 @@ export function searchPatients(patients, keyword) {
   return (patients || []).filter((p) => {
     const name = String(p.name || '').toLowerCase()
     const phone = String(p.phone || '')
-    const id = formatSubjectId(p.seq).toLowerCase() // 形如 #00001
+    // 后端患者带 subjectId（#00007）；旧本地对象回退用 seq 计算
+    const id = String(p.subjectId || formatSubjectId(p.seq)).toLowerCase()
+    const idDigits = id.replace(/[^0-9]/g, '')
     if (name.includes(k)) return true
     if (kDigits && phone.includes(kDigits)) return true
     if (id.includes(k)) return true
-    if (kDigits && String(p.seq).includes(kDigits)) return true
+    if (kDigits && idDigits.includes(kDigits)) return true
     return false
   })
 }

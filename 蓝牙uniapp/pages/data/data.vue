@@ -35,13 +35,30 @@
 
 <script setup>
 import { ref, computed } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import { getBarOpts } from '@/utils/ucharts'
+import { usePatientStoreWithOut } from '@/store/modules/patient'
+import { getPatientHistoryApi } from '@/api'
+import { mapHistoryItem } from '@/utils/apiShape'
 
+const ps = usePatientStoreWithOut()
 const ranges = ['本周', '上周', '本月', '近半年']
 const range = ref(0)
 
-// 真实数据接入前：默认有示意数据；接入后用「该时间段是否有该患者数据」驱动
-const hasData = ref(true)
+const history = ref([])
+const hasData = computed(() => history.value.length > 0)
+
+async function loadHistory() {
+  const id = ps.currentId
+  if (!id) { history.value = []; return }
+  try {
+    const res = await getPatientHistoryApi(id, { page: 1, page_size: 200 })
+    history.value = (res?.items || []).map(mapHistoryItem)
+  } catch (e) {
+    history.value = [] // 离线/越权：走空态
+  }
+}
+onShow(loadHistory)
 
 const kpis = computed(() => ([
   { label: '平均步数', value: '6,820', unit: '步', up: true, delta: '8% 较上周' },

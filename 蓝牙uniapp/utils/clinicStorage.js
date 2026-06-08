@@ -1,7 +1,7 @@
 // utils/clinicStorage.js —— 操作员档案 / 患者列表 / 当前患者 的本地持久化
-const OPERATOR_KEY = '__operator__'   // { hospital, dept, name, phone, passcode, enabled }
+const OPERATOR_KEY = '__operator__'   // { hospital, dept, name, phone, passcode, enabled, clinicianId, terminalCode }
 const PATIENTS_KEY = '__patients__'   // [ { seq, name, phone, gender, age, createdAt, lastAt, count } ]
-const CURRENT_KEY  = '__current_patient__' // seq
+const CURRENT_KEY  = '__current_patient_id__' // 后端 patient_id
 
 export function getOperator() {
   try { return uni.getStorageSync(OPERATOR_KEY) || null } catch (e) { return null }
@@ -14,8 +14,8 @@ export function getPatients() {
 }
 export function setPatients(list) { uni.setStorageSync(PATIENTS_KEY, list || []) }
 
-export function getCurrentSeq() {
+export function getCurrentPatientId() {
   try { return uni.getStorageSync(CURRENT_KEY) || null } catch (e) { return null }
 }
-export function setCurrentSeq(seq) { uni.setStorageSync(CURRENT_KEY, seq) }
-export function clearCurrentSeq() { uni.removeStorageSync(CURRENT_KEY) }
+export function setCurrentPatientId(id) { uni.setStorageSync(CURRENT_KEY, id) }
+export function clearCurrentPatientId() { uni.removeStorageSync(CURRENT_KEY) }

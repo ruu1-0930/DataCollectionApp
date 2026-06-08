@@ -1,6 +1,7 @@
 import Request from '@/js_sdk/luch-request/luch-request'
 import { baseURL, requestTimeout, contentType } from '@/config'
-import { useUserStoreWithOut } from '@/store'
+import { getToken } from '@/utils/auth'
+import { useOperatorStoreWithOut } from '@/store/modules/operator'
 
 /**
  * @description 处理code异常
@@ -81,6 +82,23 @@ const instance = new Request({
   // }
 })
 
+// 401 静默刷新并重试一次：用本地 phone+terminalCode+passcode 换新 token
+async function retryWithRefresh(config) {
+  if (!config) return Promise.reject(config)
+  // 重试标记必须放在 custom 上：luch-request 的 mergeConfig 只透传 custom/header 等白名单字段，
+  // 顶层自定义属性（如 _retried）会在 instance.request 重新合并配置时被丢弃，导致 401 无限重试。
+  if (config.custom && config.custom._retried) return Promise.reject(config)
+  if (['/clinician/enable', '/clinician/login'].some((p) => config.url.includes(p))) {
+    return Promise.reject(config)
+  }
+  const op = useOperatorStoreWithOut()
+  if (!op.operator || !op.operator.passcode) return Promise.reject(config)
+  await op.refreshToken()
+  config.custom = { ...(config.custom || {}), _retried: true }
+  config.header = { ...(config.header || {}), Authorization: getToken() }
+  return instance.request(config)
+}
+
 instance.interceptors.request.use(
   (config) => {
     console.log('🚀 发起请求:', {
@@ -92,14 +110,13 @@ instance.interceptors.request.use(
       data: config.data
     })
     
-    // 可使用async await 做异步操作
-    const userStore = useUserStoreWithOut()
-    const token = userStore.token
+    // token 由操作员启用/登录产生，存为 "Bearer xxx" 整串（auth.getToken）
+    const token = getToken()
+    // 无 token 仅放行启用/登录；其余无 token 请求静默取消（不强制登出，沿用旧策略）
+    const noAuthPaths = ['/clinician/enable', '/clinician/login']
     if (token) {
       config.header['Authorization'] = token
-    } else if (!config.url.includes('/login') && !config.url.includes('/register')) {
-      // 新临床模型暂无 App 登录态：无 token 的鉴权请求直接取消，
-      // 不再强制登出/跳转登录页，各页走空态（后端鉴权改造见后续计划）。
+    } else if (!noAuthPaths.some((p) => config.url.includes(p))) {
       return Promise.reject(config)
     }
 
@@ -133,12 +150,11 @@ instance.interceptors.response.use(
     const code = response.data.code || response.data.status
 
     if (code === 401) {
-      uni.showToast({
-        icon: 'none',
-        title: '鉴权失败',
-        duration: 2000
+      // 静默刷新换 token 重试一次（不弹登录页、不清本地数据）
+      return retryWithRefresh(response.config).catch(() => {
+        uni.showToast({ icon: 'none', title: '鉴权失败，请重新解锁', duration: 2000 })
+        return Promise.reject(response)
       })
-      return Promise.reject(response)
     }
     if (![200].includes(code)) {
       // 服务端返回的状态码不等于200，则reject()
@@ -181,11 +197,10 @@ instance.interceptors.response.use(
         title: errorMessage,
         duration: 3000
       })
-    } else if ([401].includes(error?.data?.code)) {
-      uni.showToast({
-        icon: 'none',
-        title: '鉴权失败',
-        duration: 2000
+    } else if ([401].includes(error?.data?.code) || error?.statusCode === 401) {
+      return retryWithRefresh(error.config).catch(() => {
+        uni.showToast({ icon: 'none', title: '鉴权失败，请重新解锁', duration: 2000 })
+        return Promise.reject(error)
       })
     } else {
       // 其他错误

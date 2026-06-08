@@ -21,12 +21,19 @@ import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { isValidPhone } from '@/utils/patient'
 const op = useOperatorStoreWithOut()
 const f = reactive({ hospital: '', dept: '', name: '', phone: '', passcode: '' })
-function onEnable() {
+async function onEnable() {
   if (!f.hospital || !f.dept || !f.name) return uni.showToast({ title: '请填写医院/科室/姓名', icon: 'none' })
   if (!isValidPhone(f.phone)) return uni.showToast({ title: '请输入正确手机号', icon: 'none' })
   if (!f.passcode || f.passcode.length < 4) return uni.showToast({ title: '口令至少 4 位', icon: 'none' })
-  op.enable({ ...f })
-  uni.reLaunch({ url: '/pages/patient/select' })
+  uni.showLoading({ title: '启用中', mask: true })
+  try {
+    await op.enable({ ...f })
+    uni.hideLoading()
+    uni.reLaunch({ url: '/pages/patient/select' })
+  } catch (e) {
+    uni.hideLoading()
+    uni.showToast({ title: '启用失败：请检查网络后重试', icon: 'none', duration: 2500 })
+  }
 }
 </script>
 

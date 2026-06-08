@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { store } from '@/store'
-import { getUserDeviceListApi, sendDeviceRawDataApi, addUserDeviceListApi, updateDeviceApi, deleteDeviceApi } from '@/api'
+import { listDevicesApi, registerDeviceApi, deleteDeviceApi as deleteDeviceApiReq, uploadRawDataApi } from '@/api'
+import { buildRawDataPayload } from '@/utils/apiShape'
+import { usePatientStoreWithOut } from '@/store/modules/patient'
 import { BleLib } from '@/uni_modules/android-ble'
 
 const mapper = {
@@ -243,7 +245,14 @@ export const useBlueToothStore = defineStore('blueToothStore', {
               }
 
               // console.log('apiData', apiData)
-              sendDeviceRawDataApi(device.device_code,apiData)
+              const ps = usePatientStoreWithOut()
+              const patientId = ps.currentId
+              if (!patientId) {
+                // 无当前患者：禁止上传（避免数据无法归属）
+                console.warn('未选择患者，已跳过本帧上传')
+                return
+              }
+              uploadRawDataApi(device.device_code, buildRawDataPayload(patientId, apiData))
             })
           })
         } else {
@@ -299,7 +308,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
      * 获取设备列表
      */
     async getDevicesList() {
-      this.deviceList = await getUserDeviceListApi()
+      this.deviceList = await listDevicesApi()
       console.log('设备列表', this.deviceList)
 
       const existDeviceList = Object.keys(this.bles_objs)
@@ -336,16 +345,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       })
     },
     /**
-     * 修改设备信息
-     * @param {*} id
-     * @param {*} data
-     */
-    async updateDevice(id, data) {
-      await updateDeviceApi(id, data)
-      await this.getDevicesList()
-    },
-
-    /**
      * 添加设备
      * @param {*} deviceStr
      */
@@ -359,7 +358,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
           is_active: false,
           frequency: 1
         }
-        await addUserDeviceListApi(deviceObj)
+        await registerDeviceApi(deviceObj)
         // 设置设备列表
         await this.getDevicesList()
         uni.showToast({
@@ -382,7 +381,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         title: '删除中..'
       })
       try {
-        await deleteDeviceApi(id)
+        await deleteDeviceApiReq(id)
         const device = this.deviceList.find((item) => item.id == id)
         this.bles_objs[device.device_code].ble.close()
         delete this.bles_objs[device.device_code]
