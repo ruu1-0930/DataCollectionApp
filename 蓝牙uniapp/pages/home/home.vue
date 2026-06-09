@@ -23,6 +23,9 @@
 
 <script setup>
 import { reactive, computed } from 'vue'
+import { useBlueToothStore } from '@/store/modules/blueTooth'
+
+const ble = useBlueToothStore()
 
 // 点位（百分比坐标）
 const pointsPercent = reactive({
@@ -42,15 +45,34 @@ const pointsPercent = reactive({
 // 右脚镜像
 const rightPoints = computed(() => pointsPercent.left.map((p) => ({ x: Number((100 - p.x).toFixed(1)), y: p.y })))
 
-// 实时与平均参数占位（后续可接入接口数据）
-const rt = reactive({
-  right: { speed: '-', length: '-', single: '-', double: '-' },
-  left: { speed: '-', length: '-', single: '-', double: '-' },
-  avg: { speed: '-', length: '-', rightSingle: '-', leftSingle: '-', double: '-' }
+// 显示用：数值保留两位；非数值/缺失显示 '-'
+const fmt = (v) => {
+  const n = Number(v)
+  return v === '-' || v == null || Number.isNaN(n) ? '-' : n.toFixed(2)
+}
+// 左右平均：任一非数值则返回 '-'
+const mean = (a, b) => {
+  const x = Number(a), y = Number(b)
+  return Number.isNaN(x) || Number.isNaN(y) ? '-' : ((x + y) / 2).toFixed(2)
+}
+
+// 实时与平均参数：来自蓝牙 store 的最近一帧（采集时每 ~5s 刷新）
+const rt = computed(() => {
+  const r = ble.realtime
+  return {
+    left: { speed: fmt(r.left.speed), length: fmt(r.left.length), single: fmt(r.left.single), double: fmt(r.left.double) },
+    right: { speed: fmt(r.right.speed), length: fmt(r.right.length), single: fmt(r.right.single), double: fmt(r.right.double) },
+    avg: {
+      speed: mean(r.left.speed, r.right.speed),
+      length: mean(r.left.length, r.right.length),
+      leftSingle: mean(r.left.single, r.right.single),
+      double: mean(r.left.double, r.right.double)
+    }
+  }
 })
 
-// 真实数据接入前：无数据 → 走空态（不再显示一排 '-'）
-const hasData = computed(() => rt.left.speed !== '-' )
+// 收到过实时帧才显示参数，否则走空态
+const hasData = computed(() => ble.realtime.hasData)
 </script>
 
 <style lang="scss" scoped>

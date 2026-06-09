@@ -53,7 +53,14 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       // 新增设备：蓝牙扫描到的附近设备（按 MAC 去重，临时态）
       discovered: [],
       // 是否正在扫描
-      isScanning: false
+      isScanning: false,
+
+      // 最近一帧实时步态（仅供首页展示，不落库；落库走后端拆分）
+      realtime: {
+        hasData: false,
+        left: { speed: '-', length: '-', single: '-', double: '-' },
+        right: { speed: '-', length: '-', single: '-', double: '-' }
+      }
     }
   },
   getters: {},
@@ -189,6 +196,12 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       const device = this.deviceList.find((item) => item.id == id)
       this.bles_objs[device.device_code].isConnected = false
       this.bles_objs[device.device_code].ble.close()
+      // 断开后清空首页实时显示，避免残留上一次的数据
+      this.realtime = {
+        hasData: false,
+        left: { speed: '-', length: '-', single: '-', double: '-' },
+        right: { speed: '-', length: '-', single: '-', double: '-' }
+      }
       console.log(`${device.device_code} 断开连接`)
     },
 
@@ -219,20 +232,25 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         return
       }
 
-   const timer = setTimeout(() => {
+      // Android BLE 首次 connectGatt 偶发失败（GATT 133 等），允许自动重试一次
+      let retriesLeft = 1
+      // 是否已成功连上过：区分「首连失败重试」与「已连后掉线/手动断开」——后者绝不能自动重连
+      let connected = false
+      const timer = setTimeout(() => {
         uni.showToast({
           title: '连接超时,请检查设备是否开启',
           icon: 'none'
         })
         uni.hideLoading()
-        clearTimeout(timer)
-        return
       }, 10000)
 
-      currentBle.ble.connect(device.device_code, true, (res) => {
+      // autoConnect=false：点击即连这种直连场景更快更稳；true 只适合断线后台慢速重连，是首连必失败的主因
+      const tryConnect = () => {
+      currentBle.ble.connect(device.device_code, false, (res) => {
         console.log(`${device.device_code} 连接结果`, res)
         // type==0 表示连接成功 type==1
         if (res.type == 0) {
+          connected = true
           this.bles_objs[device.device_code].isConnected = true
 
           currentBle.ble.scanServices(async (resSevice) => {
@@ -240,13 +258,9 @@ export const useBlueToothStore = defineStore('blueToothStore', {
               console.log('setMtu', res)
             })
 
-            console.log('服务数据', resSevice)
-
-            // 获取服务数据
+            // 获取服务数据（自定义服务固定在 data[2]：含 NOTIFY 特征 4f93ccac）
             const resSeviceData = resSevice.data[2]
 
-            console.log('resSeviceData', resSeviceData)
-            
             // 设置服务uuid
             this.bles_objs[device.device_code].service_uuid = resSeviceData.uuid
             // 设置写特征值uuid  找到写特征值uuid
@@ -273,7 +287,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
 
               // 替换掉\n
               const dataArray = stringValue.split(',').map((item) => item.replace('\n', ''))
-              // console.log('拿到通知数据', dataArray)
 
               // 效果验证 长度40个字符串
               if (dataArray.length != 38) {
@@ -340,6 +353,24 @@ export const useBlueToothStore = defineStore('blueToothStore', {
               }
 
               // console.log('apiData', apiData)
+
+              // 每帧刷新首页实时显示（与是否落库无关：即使未选患者也能看到数据）
+              this.realtime = {
+                hasData: true,
+                left: {
+                  speed: apiData.left_speed,
+                  length: apiData.left_step_size,
+                  single: apiData.left_single_sp_time,
+                  double: apiData.left_double_sp_time
+                },
+                right: {
+                  speed: apiData.right_speed,
+                  length: apiData.right_step_size,
+                  single: apiData.right_single_sp_time,
+                  double: apiData.right_double_sp_time
+                }
+              }
+
               const ps = usePatientStoreWithOut()
               const patientId = ps.currentId
               if (!patientId) {
@@ -351,6 +382,25 @@ export const useBlueToothStore = defineStore('blueToothStore', {
             })
           })
         } else {
+          // 已成功连过又收到失败回调 = 掉线/被断开：仅复位状态，绝不自动重连
+          if (connected) {
+            this.bles_objs[device.device_code].isConnected = false
+            this.realtime = {
+              hasData: false,
+              left: { speed: '-', length: '-', single: '-', double: '-' },
+              right: { speed: '-', length: '-', single: '-', double: '-' }
+            }
+            uni.hideLoading()
+            clearTimeout(timer)
+            return
+          }
+          // 仅首连阶段才自动重试一次，避免把 Android 固有的偶发 GATT 失败直接抛给用户
+          if (retriesLeft > 0) {
+            retriesLeft--
+            console.warn(`${device.device_code} 连接失败(type:${res.type})，自动重试…`)
+            setTimeout(tryConnect, 600)
+            return
+          }
           uni.showToast({
             title: mapper[res.type] || '连接失败',
             icon: 'none'
@@ -359,6 +409,8 @@ export const useBlueToothStore = defineStore('blueToothStore', {
           clearTimeout(timer)
         }
       })
+      }
+      tryConnect()
     },
 
     sendMassge(data, device_code) {
@@ -429,7 +481,10 @@ export const useBlueToothStore = defineStore('blueToothStore', {
 
       Object.keys(this.bles_objs).forEach(async (device_code) => {
         const isConnected = this.bles_objs[device_code].isConnected
-        if (isConnected) {
+        // 仅当设备暴露了可写特征值时才下发频率/开关指令；
+        // 当前鞋垫的自定义 service 只有 NOTIFY、无 WRITE，写不进去且设备会自行裸流数据，
+        // 否则每 5s 都会刷一条「不支持写入」报错。
+        if (isConnected && this.bles_objs[device_code].write_characteristic_uuid) {
           // 判断档前的发送频率 跟 开关状态
           const device = this.deviceList.find((item) => item.device_code == device_code)
           await new Promise((resolve) => setTimeout(resolve, 1000))

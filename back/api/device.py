@@ -101,7 +101,7 @@ def upload_raw_data(device_code):
     except (KeyError, TypeError, ValueError):
         return jsonify(Response.error(400, "缺少或非法的 38 字段（每脚 9 压力 + 6 IMU + 4 步态）")), 400
 
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).replace(tzinfo=None)
     result = {}
     for foot, vals in feet.items():
         raw = DeviceRawData(device_id=device.id, patient_id=patient.id,
