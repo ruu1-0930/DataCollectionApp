@@ -25,6 +25,8 @@ pnpm-debug.log*
 
 # 打包产物
 *.apk
+# 部署/备份打包
+*.tar.gz
 
 # Editor directories and files
 .idea
