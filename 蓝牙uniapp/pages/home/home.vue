@@ -12,6 +12,25 @@
         :style="{ left: p.x + '%', top: p.y + '%', background: rightColors[idx] }">{{ rightVals[idx] }}</view>
     </view>
 
+    <view class="imu-card">
+      <view class="imu-head" @tap="imuOpen = !imuOpen">
+        <text>IMU 原始数据</text>
+        <text class="imu-arrow">{{ imuOpen ? '▾' : '▸' }}</text>
+      </view>
+      <view v-if="imuOpen" class="imu-body">
+        <view class="imu-col">
+          <view class="imu-foot">左脚</view>
+          <view class="imu-row">加速度 ax {{ imu.left.ax }} · ay {{ imu.left.ay }} · az {{ imu.left.az }}</view>
+          <view class="imu-row">角速度 gx {{ imu.left.gx }} · gy {{ imu.left.gy }} · gz {{ imu.left.gz }}</view>
+        </view>
+        <view class="imu-col">
+          <view class="imu-foot">右脚</view>
+          <view class="imu-row">加速度 ax {{ imu.right.ax }} · ay {{ imu.right.ay }} · az {{ imu.right.az }}</view>
+          <view class="imu-row">角速度 gx {{ imu.right.gx }} · gy {{ imu.right.gy }} · gz {{ imu.right.gz }}</view>
+        </view>
+      </view>
+    </view>
+
     <view class="mh">实时参数</view>
     <view class="mgrid" v-if="hasData">
       <CaMetric label="步速" :value="rt.avg.speed" unit="m/s" :left="rt.left.speed" :right="rt.right.speed" />
@@ -24,7 +43,7 @@
 </template>
 
 <script setup>
-import { reactive, computed } from 'vue'
+import { reactive, computed, ref } from 'vue'
 import { useBlueToothStore } from '@/store/modules/blueTooth'
 import { shade, mToCm } from '@/utils/footMetrics'
 
@@ -86,6 +105,17 @@ const rt = computed(() => {
 
 // 收到过实时帧才显示参数，否则走空态
 const hasData = computed(() => ble.realtime.hasData)
+
+// IMU 折叠卡开关（默认折叠）
+const imuOpen = ref(false)
+// IMU 显示值：2 位小数；非数值显示 '-'
+const imu = computed(() => {
+  const f = (o) => ({
+    ax: fmt(o.ax), ay: fmt(o.ay), az: fmt(o.az),
+    gx: fmt(o.gx), gy: fmt(o.gy), gz: fmt(o.gz)
+  })
+  return { left: f(ble.realtime.left.imu), right: f(ble.realtime.right.imu) }
+})
 </script>
 
 <style lang="scss" scoped>
@@ -126,4 +156,12 @@ const hasData = computed(() => ble.realtime.hasData)
 
 .mh { @include ca-font; font-size: 30rpx; font-weight: 700; color: $ca-t1; margin: 24rpx 4rpx 20rpx; }
 .mgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 20rpx; }
+.imu-card { background: #fff; border-radius: 12rpx; margin: 24rpx 0 0; }
+.imu-head { @include ca-font; display: flex; justify-content: space-between; align-items: center;
+  padding: 22rpx 24rpx; font-size: 28rpx; font-weight: 700; color: $ca-t1; }
+.imu-arrow { color: $ca-t3; font-size: 26rpx; }
+.imu-body { display: grid; grid-template-columns: 1fr 1fr; gap: 16rpx; padding: 0 24rpx 22rpx; }
+.imu-col { background: #f7f9fc; border-radius: 10rpx; padding: 16rpx; }
+.imu-foot { font-size: 24rpx; font-weight: 700; color: $ca-t2; margin-bottom: 10rpx; }
+.imu-row { font-size: 22rpx; color: $ca-t1; line-height: 1.7; }
 </style>
