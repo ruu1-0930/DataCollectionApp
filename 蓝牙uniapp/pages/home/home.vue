@@ -5,9 +5,11 @@
     <view class="foot-card">
       <view class="foot-bg"></view>
       <!-- 左脚点位 -->
-      <view v-for="(p, idx) in pointsPercent.left" :key="'l' + idx" class="dot" :style="{ left: p.x + '%', top: p.y + '%' }" />
+      <view v-for="(p, idx) in pointsPercent.left" :key="'l' + idx" class="dot"
+        :style="{ left: p.x + '%', top: p.y + '%', background: leftColors[idx] }">{{ leftVals[idx] }}</view>
       <!-- 右脚点位（镜像） -->
-      <view v-for="(p, idx) in rightPoints" :key="'r' + idx" class="dot" :style="{ left: p.x + '%', top: p.y + '%' }" />
+      <view v-for="(p, idx) in rightPoints" :key="'r' + idx" class="dot"
+        :style="{ left: p.x + '%', top: p.y + '%', background: rightColors[idx] }">{{ rightVals[idx] }}</view>
     </view>
 
     <view class="mh">实时参数</view>
@@ -24,26 +26,37 @@
 <script setup>
 import { reactive, computed } from 'vue'
 import { useBlueToothStore } from '@/store/modules/blueTooth'
+import { shade, mToCm } from '@/utils/footMetrics'
 
 const ble = useBlueToothStore()
 
-// 点位（百分比坐标）
+// 点位（百分比坐标），下标 = 压力传感器编号 p1..p9（对应足底点位图 1–9）
+// p1 脚趾 / p2 前掌内 / p3 前掌中 / p4 前掌外 / p5 足弓外 / p6 足弓内 / p7 中段 / p8 足跟上 / p9 足跟下
 const pointsPercent = reactive({
   left: [
     { x: 37, y: 8 },
-    { x: 22, y: 28 },
     { x: 37, y: 32 },
     { x: 29, y: 30 },
-    { x: 18, y: 45 },
+    { x: 22, y: 28 },
     { x: 34, y: 52 },
+    { x: 18, y: 45 },
     { x: 34, y: 64 },
-    { x: 29, y: 86 },
-    { x: 29, y: 78 }
+    { x: 29, y: 78 },
+    { x: 29, y: 86 }
   ]
 })
 
 // 右脚镜像
 const rightPoints = computed(() => pointsPercent.left.map((p) => ({ x: Number((100 - p.x).toFixed(1)), y: p.y })))
+
+// 压力数值（整数）：无实时帧时显示空字符串，避免满屏 0
+const leftVals = computed(() =>
+  ble.realtime.hasData ? ble.realtime.left.pressure.map((v) => Math.round(Number(v) || 0)) : pointsPercent.left.map(() => ''))
+const rightVals = computed(() =>
+  ble.realtime.hasData ? ble.realtime.right.pressure.map((v) => Math.round(Number(v) || 0)) : pointsPercent.left.map(() => ''))
+// 热力颜色（固定满量程 4093）
+const leftColors = computed(() => ble.realtime.left.pressure.map(shade))
+const rightColors = computed(() => ble.realtime.right.pressure.map(shade))
 
 // 显示用：数值保留两位；非数值/缺失显示 '-'
 const fmt = (v) => {
@@ -60,11 +73,11 @@ const mean = (a, b) => {
 const rt = computed(() => {
   const r = ble.realtime
   return {
-    left: { speed: fmt(r.left.speed), length: fmt(r.left.length), single: fmt(r.left.single), double: fmt(r.left.double) },
-    right: { speed: fmt(r.right.speed), length: fmt(r.right.length), single: fmt(r.right.single), double: fmt(r.right.double) },
+    left: { speed: fmt(r.left.speed), length: fmt(mToCm(r.left.length)), single: fmt(r.left.single), double: fmt(r.left.double) },
+    right: { speed: fmt(r.right.speed), length: fmt(mToCm(r.right.length)), single: fmt(r.right.single), double: fmt(r.right.double) },
     avg: {
       speed: mean(r.left.speed, r.right.speed),
-      length: mean(r.left.length, r.right.length),
+      length: mean(mToCm(r.left.length), mToCm(r.right.length)),
       leftSingle: mean(r.left.single, r.right.single),
       double: mean(r.left.double, r.right.double)
     }
@@ -96,43 +109,19 @@ const hasData = computed(() => ble.realtime.hasData)
 
 .dot {
   position: absolute;
-  width: 22rpx;
-  height: 22rpx;
+  width: 34rpx;
+  height: 34rpx;
   border-radius: 50%;
-  background: #60a5fa;
   transform: translate(-50%, -50%);
-  box-shadow: 0 0 0 10rpx rgba(96, 165, 250, 0.2);
-}
-
-.dot::after,
-.dot::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 100%;
-  height: 100%;
-  border-radius: 50%;
-  background: rgba(96, 165, 250, 0.35);
-  transform: translate(-50%, -50%) scale(1);
-  animation: ripple 2.2s ease-out infinite;
-}
-.dot::before {
-  animation-delay: 1.1s;
-}
-
-@keyframes ripple {
-  0% {
-    transform: translate(-50%, -50%) scale(1);
-    opacity: 0.6;
-  }
-  70% {
-    transform: translate(-50%, -50%) scale(2.6);
-    opacity: 0;
-  }
-  100% {
-    opacity: 0;
-  }
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16rpx;
+  font-weight: 700;
+  color: #fff;
+  /* 1px 白描边保证浅色背景上也看得清 */
+  text-shadow: 0 0 2rpx rgba(0, 0, 0, 0.55);
+  box-shadow: 0 0 0 4rpx rgba(96, 165, 250, 0.18);
 }
 
 .mh { @include ca-font; font-size: 30rpx; font-weight: 700; color: $ca-t1; margin: 24rpx 4rpx 20rpx; }
