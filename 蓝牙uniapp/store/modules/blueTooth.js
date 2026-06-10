@@ -24,6 +24,16 @@ const mapper = {
 
 const storage_device_key = '_deviceList_'
 
+// realtime 初始空态（断开/未采集时）：压力全 0、IMU/参数为 '-'
+function emptyRealtime() {
+  const foot = () => ({
+    pressure: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    imu: { ax: '-', ay: '-', az: '-', gx: '-', gy: '-', gz: '-' },
+    speed: '-', length: '-', single: '-', double: '-'
+  })
+  return { hasData: false, left: foot(), right: foot() }
+}
+
 export const useBlueToothStore = defineStore('blueToothStore', {
   state: () => {
     return {
@@ -56,11 +66,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       isScanning: false,
 
       // 最近一帧实时步态（仅供首页展示，不落库；落库走后端拆分）
-      realtime: {
-        hasData: false,
-        left: { speed: '-', length: '-', single: '-', double: '-' },
-        right: { speed: '-', length: '-', single: '-', double: '-' }
-      }
+      realtime: emptyRealtime()
     }
   },
   getters: {},
@@ -197,11 +203,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       this.bles_objs[device.device_code].isConnected = false
       this.bles_objs[device.device_code].ble.close()
       // 断开后清空首页实时显示，避免残留上一次的数据
-      this.realtime = {
-        hasData: false,
-        left: { speed: '-', length: '-', single: '-', double: '-' },
-        right: { speed: '-', length: '-', single: '-', double: '-' }
-      }
+      this.realtime = emptyRealtime()
       console.log(`${device.device_code} 断开连接`)
     },
 
@@ -385,11 +387,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
           // 已成功连过又收到失败回调 = 掉线/被断开：仅复位状态，绝不自动重连
           if (connected) {
             this.bles_objs[device.device_code].isConnected = false
-            this.realtime = {
-              hasData: false,
-              left: { speed: '-', length: '-', single: '-', double: '-' },
-              right: { speed: '-', length: '-', single: '-', double: '-' }
-            }
+            this.realtime = emptyRealtime()
             uni.hideLoading()
             clearTimeout(timer)
             return
