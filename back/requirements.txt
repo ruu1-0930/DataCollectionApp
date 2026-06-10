@@ -27,3 +27,6 @@ Werkzeug==2.3.7
 
 # 口令哈希（医护口令，禁止明文）
 bcrypt==4.1.2
+
+# 生产 WSGI 服务器（systemd 用 gunicorn 跑后端，见架构方案 §3.3）
+gunicorn>=21.2

@@ -24,6 +24,16 @@ const mapper = {
 
 const storage_device_key = '_deviceList_'
 
+// realtime 初始空态（断开/未采集时）：压力全 0、IMU/参数为 '-'
+function emptyRealtime() {
+  const foot = () => ({
+    pressure: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    imu: { ax: '-', ay: '-', az: '-', gx: '-', gy: '-', gz: '-' },
+    speed: '-', length: '-', single: '-', double: '-'
+  })
+  return { hasData: false, left: foot(), right: foot() }
+}
+
 export const useBlueToothStore = defineStore('blueToothStore', {
   state: () => {
     return {
@@ -48,24 +58,122 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         // }
       },
       // 设备列表
-      deviceList: []
+      deviceList: [],
+
+      // 新增设备：蓝牙扫描到的附近设备（按 MAC 去重，临时态）
+      discovered: [],
+      // 是否正在扫描
+      isScanning: false,
+
+      // 最近一帧实时步态（仅供首页展示，不落库；落库走后端拆分）
+      realtime: emptyRealtime()
     }
   },
   getters: {},
   actions: {
-    searchDevice() {
-      if (!this.isBluetoothOpen) {
-        uni.showToast({
-          title: '蓝牙未开启',
-          icon: 'none'
-        })
+    // 实时同步系统蓝牙开关状态（initBle 的监听只在“切换”时触发，启动前已开启的情况要主动查一次）
+    syncBluetoothState() {
+      // #ifdef APP-PLUS
+      try {
+        this.isBluetoothOpen = this.globalBle.isEnabled()
+      } catch (e) {
+        console.warn('读取蓝牙状态失败', e)
+      }
+      // #endif
+      return this.isBluetoothOpen
+    },
+
+    // 申请蓝牙扫描所需的 Android 运行时权限（旧代码从不扫描列表，故这些“危险权限”从未在运行时被授予）
+    // Android 12+ 需 BLUETOOTH_SCAN/CONNECT；Android 11- 扫描需 ACCESS_FINE_LOCATION，一次性都申请。
+    requestBlePermissions() {
+      return new Promise((resolve) => {
+        // #ifdef APP-PLUS
+        if (uni.getSystemInfoSync().platform !== 'android') {
+          resolve(true)
+          return
+        }
+        try {
+          plus.android.requestPermissions(
+            ['android.permission.BLUETOOTH_SCAN', 'android.permission.BLUETOOTH_CONNECT', 'android.permission.ACCESS_FINE_LOCATION'],
+            (res) => {
+              // 不同 Android 版本要求的权限不同，拿到任意扫描相关权限即放行
+              resolve((res.granted && res.granted.length > 0) || false)
+            },
+            (err) => {
+              console.warn('申请蓝牙权限失败', err)
+              resolve(false)
+            }
+          )
+        } catch (e) {
+          console.warn('requestPermissions 异常', e)
+          resolve(true) // 异常时不阻塞，交给扫描结果兜底
+        }
+        // #endif
+        // #ifndef APP-PLUS
+        resolve(true)
+        // #endif
+      })
+    },
+
+    // 扫描附近蓝牙设备（durationMs 后原生自动停止），结果按 MAC 去重存入 discovered
+    async scanNearbyDevices(durationMs = 6000) {
+      // 用原生实时状态判断，避免依赖只在“切换”时更新的 isBluetoothOpen 旧值
+      if (!this.syncBluetoothState()) {
+        uni.showToast({ title: '请先打开手机蓝牙', icon: 'none' })
         return
       }
-      this.globalBle.startScanBleDevice(5000, (res) => {
-        if (res.data.device?.alias?.includes('Right_Foot')) {
-          console.log('找到设备', res.data.device)
+
+      // Android 扫描必须先拿到运行时权限，否则系统静默返回 0 个结果
+      const granted = await this.requestBlePermissions()
+      if (!granted) {
+        this.isScanning = false
+        uni.showToast({ title: '需授予蓝牙/定位权限才能搜索设备', icon: 'none', duration: 2500 })
+        return
+      }
+
+      this.discovered = []
+      this.isScanning = true
+      const known = new Set(this.deviceList.map((d) => String(d.device_code).toUpperCase()))
+      this.globalBle.startScanBleDevice(durationMs, (res) => {
+        // 仅 type==0 是扫描结果帧，其余为错误/状态帧
+        if (res?.type !== 0) {
+          if (res?.type != null) console.log('扫描回调非结果帧', res.type, res.message)
+          return
         }
+        const d = res?.data?.device
+        const mac = d?.address
+        if (!mac) return // 无 MAC 不可连，跳过
+        const name = d.name || d.alias || res?.data?.scanRecord?.deviceName || ''
+        // 只展示有名字的设备（过滤海量无名广播），避免列表噪声
+        if (!name) return
+        const macU = String(mac).toUpperCase()
+        if (this.discovered.some((x) => x.address.toUpperCase() === macU)) return
+        this.discovered.push({
+          name,
+          address: mac,
+          rssi: res?.data?.rssi ?? null,
+          added: known.has(macU) // 是否已在设备列表
+        })
       })
+      // 原生扫描到时长后自停，这里同步收起“扫描中”态
+      setTimeout(() => { this.isScanning = false }, durationMs)
+    },
+
+    // 把扫描到的设备登记到后端（device_code = MAC），成功后刷新列表，返回是否成功
+    async addScannedDevice(dev) {
+      if (!dev?.address) return false
+      uni.showLoading({ title: '添加中', mask: true })
+      try {
+        await registerDeviceApi({ device_name: dev.name || dev.address, device_code: dev.address })
+        await this.getDevicesList()
+        uni.hideLoading()
+        uni.showToast({ title: '添加设备成功', icon: 'success' })
+        return true
+      } catch (e) {
+        uni.hideLoading()
+        uni.showToast({ title: '添加失败：请检查网络', icon: 'none' })
+        return false
+      }
     },
     initBle() {
       this.globalBle.onBtOpenStateListener((res) => {
@@ -94,6 +202,8 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       const device = this.deviceList.find((item) => item.id == id)
       this.bles_objs[device.device_code].isConnected = false
       this.bles_objs[device.device_code].ble.close()
+      // 断开后清空首页实时显示，避免残留上一次的数据
+      this.realtime = emptyRealtime()
       console.log(`${device.device_code} 断开连接`)
     },
 
@@ -124,20 +234,25 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         return
       }
 
-   const timer = setTimeout(() => {
+      // Android BLE 首次 connectGatt 偶发失败（GATT 133 等），允许自动重试一次
+      let retriesLeft = 1
+      // 是否已成功连上过：区分「首连失败重试」与「已连后掉线/手动断开」——后者绝不能自动重连
+      let connected = false
+      const timer = setTimeout(() => {
         uni.showToast({
           title: '连接超时,请检查设备是否开启',
           icon: 'none'
         })
         uni.hideLoading()
-        clearTimeout(timer)
-        return
       }, 10000)
 
-      currentBle.ble.connect(device.device_code, true, (res) => {
+      // autoConnect=false：点击即连这种直连场景更快更稳；true 只适合断线后台慢速重连，是首连必失败的主因
+      const tryConnect = () => {
+      currentBle.ble.connect(device.device_code, false, (res) => {
         console.log(`${device.device_code} 连接结果`, res)
         // type==0 表示连接成功 type==1
         if (res.type == 0) {
+          connected = true
           this.bles_objs[device.device_code].isConnected = true
 
           currentBle.ble.scanServices(async (resSevice) => {
@@ -145,13 +260,9 @@ export const useBlueToothStore = defineStore('blueToothStore', {
               console.log('setMtu', res)
             })
 
-            console.log('服务数据', resSevice)
-
-            // 获取服务数据
+            // 获取服务数据（自定义服务固定在 data[2]：含 NOTIFY 特征 4f93ccac）
             const resSeviceData = resSevice.data[2]
 
-            console.log('resSeviceData', resSeviceData)
-            
             // 设置服务uuid
             this.bles_objs[device.device_code].service_uuid = resSeviceData.uuid
             // 设置写特征值uuid  找到写特征值uuid
@@ -178,7 +289,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
 
               // 替换掉\n
               const dataArray = stringValue.split(',').map((item) => item.replace('\n', ''))
-              // console.log('拿到通知数据', dataArray)
 
               // 效果验证 长度40个字符串
               if (dataArray.length != 38) {
@@ -245,6 +355,36 @@ export const useBlueToothStore = defineStore('blueToothStore', {
               }
 
               // console.log('apiData', apiData)
+
+              // 每帧刷新首页实时显示（与是否落库无关：即使未选患者也能看到数据）
+              this.realtime = {
+                hasData: true,
+                left: {
+                  pressure: [
+                    apiData.lp1, apiData.lp2, apiData.lp3, apiData.lp4, apiData.lp5,
+                    apiData.lp6, apiData.lp7, apiData.lp8, apiData.lp9
+                  ],
+                  imu: { ax: apiData.ax, ay: apiData.ay, az: apiData.az,
+                         gx: apiData.gx, gy: apiData.gy, gz: apiData.gz },
+                  speed: apiData.left_speed,
+                  length: apiData.left_step_size,
+                  single: apiData.left_single_sp_time,
+                  double: apiData.left_double_sp_time
+                },
+                right: {
+                  pressure: [
+                    apiData.rp1, apiData.rp2, apiData.rp3, apiData.rp4, apiData.rp5,
+                    apiData.rp6, apiData.rp7, apiData.rp8, apiData.rp9
+                  ],
+                  imu: { ax: apiData.right_ax, ay: apiData.right_ay, az: apiData.right_az,
+                         gx: apiData.right_gx, gy: apiData.right_gy, gz: apiData.right_gz },
+                  speed: apiData.right_speed,
+                  length: apiData.right_step_size,
+                  single: apiData.right_single_sp_time,
+                  double: apiData.right_double_sp_time
+                }
+              }
+
               const ps = usePatientStoreWithOut()
               const patientId = ps.currentId
               if (!patientId) {
@@ -256,6 +396,21 @@ export const useBlueToothStore = defineStore('blueToothStore', {
             })
           })
         } else {
+          // 已成功连过又收到失败回调 = 掉线/被断开：仅复位状态，绝不自动重连
+          if (connected) {
+            this.bles_objs[device.device_code].isConnected = false
+            this.realtime = emptyRealtime()
+            uni.hideLoading()
+            clearTimeout(timer)
+            return
+          }
+          // 仅首连阶段才自动重试一次，避免把 Android 固有的偶发 GATT 失败直接抛给用户
+          if (retriesLeft > 0) {
+            retriesLeft--
+            console.warn(`${device.device_code} 连接失败(type:${res.type})，自动重试…`)
+            setTimeout(tryConnect, 600)
+            return
+          }
           uni.showToast({
             title: mapper[res.type] || '连接失败',
             icon: 'none'
@@ -264,6 +419,8 @@ export const useBlueToothStore = defineStore('blueToothStore', {
           clearTimeout(timer)
         }
       })
+      }
+      tryConnect()
     },
 
     sendMassge(data, device_code) {
@@ -334,7 +491,10 @@ export const useBlueToothStore = defineStore('blueToothStore', {
 
       Object.keys(this.bles_objs).forEach(async (device_code) => {
         const isConnected = this.bles_objs[device_code].isConnected
-        if (isConnected) {
+        // 仅当设备暴露了可写特征值时才下发频率/开关指令；
+        // 当前鞋垫的自定义 service 只有 NOTIFY、无 WRITE，写不进去且设备会自行裸流数据，
+        // 否则每 5s 都会刷一条「不支持写入」报错。
+        if (isConnected && this.bles_objs[device_code].write_characteristic_uuid) {
           // 判断档前的发送频率 跟 开关状态
           const device = this.deviceList.find((item) => item.device_code == device_code)
           await new Promise((resolve) => setTimeout(resolve, 1000))

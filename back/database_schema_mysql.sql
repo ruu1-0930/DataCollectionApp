@@ -61,7 +61,7 @@ CREATE TABLE patient_pii (
 --   foot=Col B；p1..p9=Col C-K（压力）；ax..gz=Col L-Q（IMU 10-15）；
 --   step_length/walking_speed/single_support_time/double_support_time=Col R-U（16-19）。
 -- 注：BLE 一帧仅含上述 38 个传感字段、不含设备时间戳，故 collected_at 实为「服务器接收/入库时刻」
---   （device.py 取 datetime.utcnow()），非设备原始 Col A 采样时刻；同一帧拆出的 L/R 两行共享该时刻用于配对。
+--   （device.py 取北京时间 UTC+8 的裸本地时间），非设备原始 Col A 采样时刻；同一帧拆出的 L/R 两行共享该时刻用于配对。
 --   若日后硬件改为上传 Col A，再把 collected_at 切到设备时刻。raw 仅增不改。
 CREATE TABLE device_raw_data (
   id INT AUTO_INCREMENT PRIMARY KEY,

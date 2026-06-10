@@ -21,7 +21,7 @@
     <!-- 设备列表 -->
     <CaCard title="设备列表">
       <view class="dev-actions">
-        <view class="dev-add" @tap="addDevice">+ 新增设备</view>
+        <view class="dev-add" @tap="openScanPopup">+ 新增设备</view>
       </view>
 
       <view v-if="blueToothStore.deviceList.length" class="dev-list">
@@ -52,10 +52,38 @@
       </view>
 
       <!-- 空状态 -->
-      <CaEmpty v-else icon="📡" title="暂无设备" desc="点击新增设备扫描二维码添加" />
+      <CaEmpty v-else icon="📡" title="暂无设备" desc="点「+ 新增设备」搜索附近蓝牙鞋垫添加" />
     </CaCard>
 
     <yfx-tooltip ref="tooltip"></yfx-tooltip>
+
+    <!-- 蓝牙搜索 · 新增设备 -->
+    <uni-popup ref="scanPopup" type="bottom" background-color="#fff">
+      <view class="scan-sheet">
+        <view class="scan-head">
+          <text class="scan-title">搜索附近蓝牙设备</text>
+          <text class="scan-refresh" @tap="startScan">{{ blueToothStore.isScanning ? '扫描中…' : '重新扫描' }}</text>
+        </view>
+        <view v-if="blueToothStore.isScanning && !blueToothStore.discovered.length" class="scan-tip">正在扫描，请确保鞋垫已开机…</view>
+        <view v-else-if="!blueToothStore.discovered.length" class="scan-tip">未发现设备。请确认鞋垫已开机并靠近手机后「重新扫描」。</view>
+        <scroll-view v-else scroll-y class="scan-list">
+          <view v-for="d in blueToothStore.discovered" :key="d.address" class="scan-cell">
+            <view class="scan-meta">
+              <text class="scan-name">{{ d.name }}</text>
+              <text class="scan-mac">{{ d.address }}{{ d.rssi != null ? ' · ' + d.rssi + 'dBm' : '' }}</text>
+            </view>
+            <text v-if="d.added" class="scan-added">已添加</text>
+            <view v-else class="scan-add-btn" @tap="onAddScanned(d)">添加</view>
+          </view>
+        </scroll-view>
+        <view class="scan-foot">
+          <view class="scan-foot-btn refresh" @tap="startScan">
+            {{ blueToothStore.isScanning ? '扫描中…' : '🔄 重新扫描' }}
+          </view>
+          <view class="scan-foot-btn" @tap="closeScan">关闭</view>
+        </view>
+      </view>
+    </uni-popup>
   </view>
 </template>
 
@@ -70,6 +98,7 @@ const op = useOperatorStoreWithOut()
 
 const tooltip = ref(null)
 const timer = ref(null)
+const scanPopup = ref(null)
 
 // 采集归属：医院 · 科室 · 医生
 const attrText = computed(() => {
@@ -90,7 +119,7 @@ const collectSub = computed(() => {
 })
 
 const getNoticeBarText = computed(() => {
-  return '如若需要连接设备，请点击新增设备，然后扫描设备二维码'
+  return '如需连接设备，请点「+ 新增设备」搜索附近蓝牙设备并添加'
 })
 
 onShow(() => {
@@ -161,22 +190,34 @@ const handleConnect = (type, id) => {
   }
 }
 
-const addDevice = () => {
+// 打开蓝牙搜索弹窗并立即扫描
+const openScanPopup = () => {
   // #ifdef H5
-  uni.showToast({ title: '暂不支持H5端', icon: 'none' })
+  uni.showToast({ title: '暂不支持 H5 端', icon: 'none' })
+  return
   // #endif
+  // 用原生实时状态判断（避免启动前已开启时旧标志位为 false）
+  if (!blueToothStore.syncBluetoothState()) {
+    uni.showToast({ title: '请先打开手机蓝牙', icon: 'none' })
+    return
+  }
+  scanPopup.value.open()
+  startScan()
+}
 
-  // #ifndef H5
-  uni.scanCode({
-    scanType: 'qrCode',
-    autoZoom: true,
-    autoDecodeCharset: true,
-    success: function (res) {
-      console.log('条码：' + res.result)
-      blueToothStore.addDevice(res.result)
-    }
-  })
-  // #endif
+const startScan = () => {
+  if (blueToothStore.isScanning) return
+  blueToothStore.scanNearbyDevices(6000)
+}
+
+const onAddScanned = async (d) => {
+  uni.vibrateShort()
+  const ok = await blueToothStore.addScannedDevice(d)
+  if (ok) d.added = true
+}
+
+const closeScan = () => {
+  scanPopup.value.close()
 }
 
 // 重新启用本机：清操作员信息并回到启用页
@@ -348,5 +389,101 @@ page {
 .dev-op.danger-o {
   color: $ca-danger;
   background: #fdeced;
+}
+
+/* 蓝牙搜索弹窗 */
+.scan-sheet {
+  @include ca-font;
+  padding: 28rpx 28rpx 40rpx;
+  border-top-left-radius: 24rpx;
+  border-top-right-radius: 24rpx;
+}
+.scan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20rpx;
+}
+.scan-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: $ca-t1;
+}
+.scan-refresh {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: $ca-primary;
+  background: $ca-primary-light;
+  padding: 10rpx 22rpx;
+  border-radius: $ca-radius-input;
+}
+.scan-tip {
+  font-size: 26rpx;
+  color: $ca-t2;
+  text-align: center;
+  padding: 60rpx 20rpx;
+}
+.scan-list {
+  max-height: 600rpx;
+}
+.scan-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22rpx 8rpx;
+  border-bottom: 1rpx solid $ca-border;
+}
+.scan-cell:last-child {
+  border-bottom: none;
+}
+.scan-meta {
+  flex: 1;
+  min-width: 0;
+}
+.scan-name {
+  display: block;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: $ca-t1;
+}
+.scan-mac {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: $ca-t2;
+}
+.scan-added {
+  font-size: 24rpx;
+  color: $ca-t3;
+  padding: 0 12rpx;
+}
+.scan-add-btn {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #fff;
+  background: $ca-primary;
+  padding: 12rpx 30rpx;
+  border-radius: $ca-radius-input;
+}
+.scan-foot {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 28rpx;
+}
+.scan-foot-btn {
+  flex: 1;
+  text-align: center;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: $ca-t2;
+  background: $ca-bg;
+  padding: 22rpx 0;
+  border-radius: $ca-radius-input;
+  border: 1rpx solid $ca-border;
+}
+.scan-foot-btn.refresh {
+  color: $ca-primary;
+  background: $ca-primary-light;
+  border-color: transparent;
 }
 </style>

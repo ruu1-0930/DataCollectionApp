@@ -13,7 +13,6 @@
           <view class="k" v-for="(k,i) in kpis" :key="i">
             <view class="kk">{{ k.label }}</view>
             <view class="kv">{{ k.value }}<text class="ks"> {{ k.unit }}</text></view>
-            <view :class="['kd', k.up ? 'up':'down']">{{ k.up ? '▲':'▼' }} {{ k.delta }}</view>
           </view>
         </view>
 
@@ -60,35 +59,89 @@ async function loadHistory() {
 }
 onShow(loadHistory)
 
-const kpis = computed(() => ([
-  { label: '平均步数', value: '6,820', unit: '步', up: true, delta: '8% 较上周' },
-  { label: '平均步速', value: '1.24', unit: 'm/s', up: true, delta: '3%' },
-  { label: '平均步长', value: '66', unit: 'cm', up: false, delta: '2%' },
-  { label: '双支撑时长', value: '0.19', unit: 's', up: true, delta: '1%' }
-]))
+// 数值平均：忽略非数值；全空返回 null
+const avg = (arr) => {
+  const nums = arr.filter((n) => typeof n === 'number' && !Number.isNaN(n))
+  return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null
+}
+const pad = (n) => (n < 10 ? '0' : '') + n
+const fmtTime = (ms) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}` }
+
+// 分段时间窗口 [start, end)（毫秒），相对当前时刻
+function rangeBounds(idx) {
+  const now = Date.now()
+  const sod = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime() }
+  const sow = (d) => { const x = new Date(sod(d)); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x.getTime() }
+  const weekStart = sow(now)
+  if (idx === 0) return [weekStart, now]                                 // 本周
+  if (idx === 1) return [weekStart - 7 * 864e5, weekStart]               // 上周
+  if (idx === 2) { const x = new Date(now); return [new Date(x.getFullYear(), x.getMonth(), 1).getTime(), now] } // 本月
+  const half = new Date(now); half.setMonth(half.getMonth() - 6); return [half.getTime(), now] // 近半年
+}
+
+// 当前分段内的帧（每帧拆为 L/R 两行）
+const framesInRange = computed(() => {
+  const [s, e] = rangeBounds(range.value)
+  return history.value.filter((h) => h.collectedAt != null && h.collectedAt >= s && h.collectedAt < e)
+})
+
+// KPI：分段内全部帧（左右合并）的均值；无数据显示 '-'
+const kpis = computed(() => {
+  const f = framesInRange.value
+  const speed = avg(f.map((x) => x.walkingSpeed))
+  const len = avg(f.map((x) => x.stepLength))
+  const single = avg(f.map((x) => x.singleSupportTime))
+  const double = avg(f.map((x) => x.doubleSupportTime))
+  return [
+    { label: '平均步速', value: speed == null ? '-' : speed.toFixed(2), unit: 'm/s' },
+    { label: '平均步长', value: len == null ? '-' : len.toFixed(1), unit: 'cm' },
+    { label: '平均单支撑', value: single == null ? '-' : single.toFixed(2), unit: 's' },
+    { label: '平均双支撑', value: double == null ? '-' : double.toFixed(2), unit: 's' }
+  ]
+})
 
 const lineOpts = { color: ['#2F6DF6'], padding: [10, 10, 0, 10], legend: { show: false },
   xAxis: { disableGrid: true }, yAxis: { gridType: 'dash' },
   extra: { line: { type: 'curve', width: 2 } } }
-const lineData = ref({
-  categories: ['一', '二', '三', '四', '五', '六', '日'],
-  series: [{ name: '步速', data: [1.1, 1.18, 1.15, 1.27, 1.22, 1.33, 1.3] }]
+
+// 步速趋势：同帧 L/R 共享 collectedAt，按时间分组取左右平均，取最近 20 帧
+const lineData = computed(() => {
+  const groups = new Map()
+  for (const x of framesInRange.value) {
+    if (x.collectedAt == null || typeof x.walkingSpeed !== 'number') continue
+    if (!groups.has(x.collectedAt)) groups.set(x.collectedAt, [])
+    groups.get(x.collectedAt).push(x.walkingSpeed)
+  }
+  const sorted = [...groups.entries()].sort((a, b) => a[0] - b[0]).slice(-20)
+  return {
+    categories: sorted.map(([t]) => fmtTime(t)),
+    series: [{ name: '步速', data: sorted.map(([, v]) => Number(avg(v).toFixed(2))) }]
+  }
 })
 
-const barOpts = getBarOpts({ legend: { show: true } })
-const pressureData = ref({
-  categories: ['本周', '上周', '本月', '半年'],
-  series: [
-    { name: '左', data: [70, 58, 50, 80], color: '#2F6DF6' },
-    { name: '右', data: [64, 62, 46, 74], color: '#15A05A' }
-  ]
+const barOpts = getBarOpts({ legend: { show: false } })
+
+// 左右脚压力对比：各脚「9 路压力之和」的均值
+const pressureData = computed(() => {
+  const f = framesInRange.value
+  const sum = (p) => (Array.isArray(p) ? p.reduce((a, b) => a + (Number(b) || 0), 0) : 0)
+  const L = avg(f.filter((x) => x.foot === 'L').map((x) => sum(x.pressure)))
+  const R = avg(f.filter((x) => x.foot === 'R').map((x) => sum(x.pressure)))
+  return {
+    categories: ['左脚', '右脚'],
+    series: [{ name: '平均总压力', data: [L == null ? 0 : Number(L.toFixed(1)), R == null ? 0 : Number(R.toFixed(1))] }]
+  }
 })
-const singleData = ref({
-  categories: ['本周', '上周', '本月'],
-  series: [
-    { name: '左', data: [0.6, 0.52, 0.44], color: '#2F6DF6' },
-    { name: '右', data: [0.55, 0.5, 0.48], color: '#15A05A' }
-  ]
+
+// 单支撑时间：左右脚均值对比
+const singleData = computed(() => {
+  const f = framesInRange.value
+  const L = avg(f.filter((x) => x.foot === 'L').map((x) => x.singleSupportTime))
+  const R = avg(f.filter((x) => x.foot === 'R').map((x) => x.singleSupportTime))
+  return {
+    categories: ['左脚', '右脚'],
+    series: [{ name: '单支撑时间', data: [L == null ? 0 : Number(L.toFixed(2)), R == null ? 0 : Number(R.toFixed(2))] }]
+  }
 })
 </script>
 
@@ -103,7 +156,4 @@ const singleData = ref({
 .kk { font-size: 23rpx; color: $ca-t2; }
 .kv { font-size: 42rpx; font-weight: 700; color: $ca-t1; margin-top: 6rpx; }
 .ks { font-size: 22rpx; color: $ca-t3; }
-.kd { font-size: 22rpx; margin-top: 8rpx; font-weight: 600; }
-.kd.up { color: $ca-success; }
-.kd.down { color: $ca-danger; }
 </style>
