@@ -55,8 +55,9 @@
   - **已交付**：SCSS 设计令牌（`styles/tokens.scss` + `uni.scss`）；纯逻辑 `utils/patient.js` + vitest（12 测试全过）；本地存储 `utils/clinicStorage.js`；`operatorStore`/`patientStore`；基础组件 `components/base/Ca*.vue`（CaInput/CaCard/CaEmpty/CaMetric/CaStatusStrip/CaPatientBar）；启动网关（`App.vue` onLaunch）+ 路由（`pages.json`）；启用/解锁页（`pages/setup/*`）、患者选择/新建页（`pages/patient/*`）；首页实时区改版（**足底压力图保持原实现不变**）；数据分析页重做；我的页改造为「操作员资料 + 设备管理」（移除 App 登录态与采样频率/开关控制）。
   - **顺带清理**：删除 `login`/`register`/`profile` 及 `*copy.vue` 死文件；`request.js`/`user.js` 解除旧登录模型副作用（无 token 请求静默取消，不再 `uni.clearStorage()`/跳登录页，避免误删本地临床数据）。
   - **仍待办（真机验证）**：HBuilderX 真机跑全流程回归（蓝牙连接/采集态需真机；「新增设备」已由扫码改蓝牙搜索附近设备），见计划 Task 15 手动清单；遗留 `pages/index/index` 蓝牙测试页未删（已派后续任务）。
+  - **🆕 首页足底压力热力图 + IMU 实时显示（代码完成，2026-06-10）**：把每帧 38 字段里此前没可视化的 9 路压力与 6 轴 IMU 画到首页。足图 9 个点位按硬件 schema `p1..p9` 重排（下标=传感器号），按 ADC 压力着色（**固定满量程 `PMAX=4093`**，浅蓝→深蓝，跨帧/跨脚绝对可比）并把整数 ADC 值叠在点上；新增可折叠「IMU 原始数据」卡（左右脚各 加速度/角速度 6 轴，2 位小数）；实时参数里步长由设备发的米改为 **×100 显示 cm**。着色/换算抽成纯函数 `utils/footMetrics.js`（`shade`/`mToCm`/`PMAX`）+ vitest（8 用例，全套 30 全绿）；store `realtime` 扩出每脚 `pressure[9]`+`imu`（`emptyRealtime()` 工厂统一复位）。改动文件：`store/modules/blueTooth.js`、`pages/home/home.vue`、`utils/footMetrics.js`（新）。**后端零改动**（38 字段早已落库，本次只是把已有字段画出来）。spec/plan：`docs/superpowers/{specs,plans}/2026-06-10-home-pressure-heatmap-imu*.md`。**待真机验证**：连接采集时足图随按压变色显数、IMU 卡展开见 6 轴、步长 cm/步速 m/s、断开归零走空态。
 - **核心模型变更**：取消 App 账号登录；改为**设备级一次性启用（医院/科室/医生/联系方式 + 自设口令）→ 解锁 → 选/建患者 → 当前患者上下文**。采集数据带「医院/科室/医生 + 患者编号」；患者无账号、无密码，系统自动派假名 `subject_id`（如 `#00427`），导出只用编号。
-- **明确保留**：首页足底压力图沿用原实现（`foot.png` + 蓝点 ripple），不替换。
+- **明确保留**：首页足底压力图底图沿用原实现（`foot.png`）。注：2026-06-10 把原静态蓝点 ripple 升级为压力热力图 + 数字（见上方「已交付」🆕 条），点位坐标不变、底图不变。
 - **范围边界**：本线只做**视觉 + 交互流程**（用示意数据/空态）。**真实数据接入 + 后端模型改造**（操作员/患者表、`subject_id`、PII 与传感器分表、采集归属、按患者历史只读 API、去标识化导出）划为**后续计划**，与阶段 1/3 合并实现。
 - **后端依赖提醒**：现后端 user 表/登录模型与新「操作员+患者」模型不匹配，前端先行、接口未就绪处走空态；落地真实数据时需同步改 `back/` 与 `database_schema_mysql.sql`。
 
