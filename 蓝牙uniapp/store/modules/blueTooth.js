@@ -360,12 +360,24 @@ export const useBlueToothStore = defineStore('blueToothStore', {
               this.realtime = {
                 hasData: true,
                 left: {
+                  pressure: [
+                    apiData.lp1, apiData.lp2, apiData.lp3, apiData.lp4, apiData.lp5,
+                    apiData.lp6, apiData.lp7, apiData.lp8, apiData.lp9
+                  ],
+                  imu: { ax: apiData.ax, ay: apiData.ay, az: apiData.az,
+                         gx: apiData.gx, gy: apiData.gy, gz: apiData.gz },
                   speed: apiData.left_speed,
                   length: apiData.left_step_size,
                   single: apiData.left_single_sp_time,
                   double: apiData.left_double_sp_time
                 },
                 right: {
+                  pressure: [
+                    apiData.rp1, apiData.rp2, apiData.rp3, apiData.rp4, apiData.rp5,
+                    apiData.rp6, apiData.rp7, apiData.rp8, apiData.rp9
+                  ],
+                  imu: { ax: apiData.right_ax, ay: apiData.right_ay, az: apiData.right_az,
+                         gx: apiData.right_gx, gy: apiData.right_gy, gz: apiData.right_gz },
                   speed: apiData.right_speed,
                   length: apiData.right_step_size,
                   single: apiData.right_single_sp_time,
