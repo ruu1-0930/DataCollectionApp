@@ -46,8 +46,8 @@ const instance = new Request({
   dataType: 'json',
   // 启用IPv4优先解析
   firstIpv4: true,
-  // 禁用SSL验证（仅用于测试环境）
-  sslVerify: false,
+  // 校验 SSL 证书（生产 HTTPS：api.sarcopenianus.com 已配可信证书）
+  sslVerify: true,
   // // 自定义params 处理函数
   // paramsSerializer: null,
   // // #ifndef MP-ALIPAY

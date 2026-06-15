@@ -28,8 +28,9 @@
 ## 2. 当前优先级（按架构方案的阶段推进）
 
 0. **🔴 进行中 — 迁移到自有云**：现有 ECS/数据库**均不在我方名下**（随时可能停机），迁到自有阿里云 **ECS + RDS**（同 VPC、RDS 不开公网）。**当前任务，先于阶段 1。** 因**尚未开始采集，无历史数据需迁移**，成本最低；迁移顺带完成阶段 1 的 HTTPS、收回 DB 公网、密钥/口令入环境变量（最后一项已完成）。逐步操作见 [迁移操作清单.md](迁移操作清单.md)；背景见架构方案阶段 0.5 与 FAQ 10.2。
-   - **已完成**：ECS+RDS 开通、建库导 schema、gunicorn+systemd+nginx 部署跑通（公网 IP `118.31.39.47`）；三端地址改到新服务器（option A：先 `http://IP`）；清理上一个开发者「捡漏/短剧」模板残留。
-   - **待办**：HBuilderX 重打包 App；域名备案+HTTPS（nginx 切 443、App 端 `sslVerify` 翻 `true`）；关 RDS 公网、复查安全组、下线旧机器。
+   - **已完成**：ECS+RDS 开通、建库导 schema、gunicorn+systemd+nginx 部署跑通（公网 IP `118.31.39.47`）；三端地址改到新服务器；清理上一个开发者「捡漏/短剧」模板残留。
+   - ✅ **域名 + HTTPS 已上线（2026-06-15）**：域名 `api.sarcopenianus.com`（备案通过，A 记录 → `118.31.39.47`），阿里云免费 DV 证书（DigiCert，有效期 **2026-06-15→09-12，3 个月，到期前需重签替换**）。nginx 切 443（80→443 跳转），证书在 ECS `/etc/nginx/ssl/`（私钥 chmod 600，**不入 git**），安全组放行 443。公网 `https://api.sarcopenianus.com` 证书可信、链路 `nginx(443)→gunicorn(5000)→Flask` 验证通过。三端地址全部切到 https：`蓝牙uniapp/config/index.js`、`utils/request.js`(`sslVerify:true`)、`admin/.env`(4 处)、`admin/vite.config.js`(代理 target)、`admin/src/config/index.js`。配置模板见 `deploy/nginx-lanya.conf`。
+   - **待办**：**HBuilderX 重打包 App**（https 地址打进 apk 才生效）+ 重新部署 admin；关 RDS 公网、复查安全组（5000 不对公网/22 仅对己）、下线旧机器；证书到期前续签。
 1. **🟠 阶段 1 — 止血（部分完成）**：
    - ✅ **后端净重设（scope A，已完成）**：六表临床模型（clinicians/devices/patients/patient_pii/device_raw_data/device_transformed_data）+ 医护口令认证（bcrypt + JWT）+ 采集归属 clinician+patient+device + 按患者历史只读 API。子 agent 驱动 TDD，34 测试全绿。见 `back/` 与 `database_schema_mysql.sql`。
    - ✅ **App 端接入新接口（代码完成，scope A）**：分支 `feature/frontend-backend-alignment`，子 agent 驱动 12 任务。`utils/terminal.js`（terminal_code）、`api/{clinician,patient,device}.js` 薄封装、`utils/apiShape.js`（后端↔前端形状映射）、`request.js`（token 走 `auth.getToken()`「Bearer xxx」整串 + 401 静默重登）、`operatorStore.enable/refreshToken`（启用即 enable→发 token）、`patientStore` 改后端发 `id/subject_id`、患者新建/选择页接 `POST/GET /patients`、采集上传补 `patient_id` 且无当前患者禁采、数据页按 `/patients/<id>/data` 拉历史、删除作废 `api/user.js` 与旧登录 `store/modules/user.js`。纯函数 vitest 22 测试全绿。对齐 spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-07-frontend-backend-alignment.md`。
