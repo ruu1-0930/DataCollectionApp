@@ -1,6 +1,6 @@
 export const tabbarHeight = 135;
 // export const baseURL = '';
-export const baseURL = 'http://118.31.39.47';
+export const baseURL = 'https://api.sarcopenianus.com';
 export const successCode = [200, 0, 1];
 export const tokenName = ['Token'];
 export const requestTimeout = 10000;

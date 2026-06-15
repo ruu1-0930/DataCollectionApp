@@ -37,12 +37,12 @@ export default defineConfig(configEnv => {
             // // 监听所有地址
             proxy: {
                 '/api': {
-                    target: 'http://118.31.39.47',
+                    target: 'https://api.sarcopenianus.com',
                     changeOrigin: true,
                     rewrite: path => path.replace(/^\/api/, ''),
                 },
                 '/file': {
-                    target: 'http://118.31.39.47',
+                    target: 'https://api.sarcopenianus.com',
                     changeOrigin: true,
                     rewrite: path => path.replace(/^\/file/, ''),
                 },
