@@ -19,7 +19,9 @@
 | 采集端 App | `蓝牙uniapp/` | uni-app + Vue3 + Pinia + UTS 原生蓝牙 | 连鞋垫、解析传感器、上传、设备管理 |
 | 云后端 | `back/` | Flask + SQLAlchemy + PyJWT | 鉴权、设备/数据接口、SVM 推理 |
 | 数据库 | （远程 MySQL） | MySQL 5.7+ | 用户/设备/原始数据/分析数据/周计划 |
-| 管理台 | `admin/` | Vue3 + Vite + UnoCSS | 管理员后台 |
+| ~~管理台~~ | ~~`admin/`~~ | Vue3 + Vite + UnoCSS | **🚫 已弃用**（见下） |
+
+> **`admin/` 已弃用（2026-06-15）**：当前临床流程为 **App-only**（操作员+患者均在采集端 App 上完成），管理台未启用、未部署（`deploy/` 只有后端，nginx 只反代 Flask API，无 admin 托管）。代码暂留仓库未删，**不参与运行、不需维护**；后续如确认彻底不用可整目录移除。改动无需顾及 admin。
 
 环境要求：Python 3.7+、Node.js 14+、MySQL 5.7+。
 
@@ -30,7 +32,7 @@
 0. **🔴 进行中 — 迁移到自有云**：现有 ECS/数据库**均不在我方名下**（随时可能停机），迁到自有阿里云 **ECS + RDS**（同 VPC、RDS 不开公网）。**当前任务，先于阶段 1。** 因**尚未开始采集，无历史数据需迁移**，成本最低；迁移顺带完成阶段 1 的 HTTPS、收回 DB 公网、密钥/口令入环境变量（最后一项已完成）。逐步操作见 [迁移操作清单.md](迁移操作清单.md)；背景见架构方案阶段 0.5 与 FAQ 10.2。
    - **已完成**：ECS+RDS 开通、建库导 schema、gunicorn+systemd+nginx 部署跑通（公网 IP `118.31.39.47`）；三端地址改到新服务器；清理上一个开发者「捡漏/短剧」模板残留。
    - ✅ **域名 + HTTPS 已上线（2026-06-15）**：域名 `api.sarcopenianus.com`（备案通过，A 记录 → `118.31.39.47`），阿里云免费 DV 证书（DigiCert，有效期 **2026-06-15→09-12，3 个月，到期前需重签替换**）。nginx 切 443（80→443 跳转），证书在 ECS `/etc/nginx/ssl/`（私钥 chmod 600，**不入 git**），安全组放行 443。公网 `https://api.sarcopenianus.com` 证书可信、链路 `nginx(443)→gunicorn(5000)→Flask` 验证通过。三端地址全部切到 https：`蓝牙uniapp/config/index.js`、`utils/request.js`(`sslVerify:true`)、`admin/.env`(4 处)、`admin/vite.config.js`(代理 target)、`admin/src/config/index.js`。配置模板见 `deploy/nginx-lanya.conf`。
-   - **待办**：**HBuilderX 重打包 App**（https 地址打进 apk 才生效）+ 重新部署 admin；关 RDS 公网、复查安全组（5000 不对公网/22 仅对己）、下线旧机器；证书到期前续签。
+   - **待办**：**HBuilderX 重打包 App**（https 地址打进 apk 才生效）；关 RDS 公网、复查安全组（5000 不对公网/22 仅对己）、下线旧机器；证书到期前续签。（admin 已弃用，无需部署）
 1. **🟠 阶段 1 — 止血（部分完成）**：
    - ✅ **后端净重设（scope A，已完成）**：六表临床模型（clinicians/devices/patients/patient_pii/device_raw_data/device_transformed_data）+ 医护口令认证（bcrypt + JWT）+ 采集归属 clinician+patient+device + 按患者历史只读 API。子 agent 驱动 TDD，34 测试全绿。见 `back/` 与 `database_schema_mysql.sql`。
    - ✅ **App 端接入新接口（代码完成，scope A）**：分支 `feature/frontend-backend-alignment`，子 agent 驱动 12 任务。`utils/terminal.js`（terminal_code）、`api/{clinician,patient,device}.js` 薄封装、`utils/apiShape.js`（后端↔前端形状映射）、`request.js`（token 走 `auth.getToken()`「Bearer xxx」整串 + 401 静默重登）、`operatorStore.enable/refreshToken`（启用即 enable→发 token）、`patientStore` 改后端发 `id/subject_id`、患者新建/选择页接 `POST/GET /patients`、采集上传补 `patient_id` 且无当前患者禁采、数据页按 `/patients/<id>/data` 拉历史、删除作废 `api/user.js` 与旧登录 `store/modules/user.js`。纯函数 vitest 22 测试全绿。对齐 spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-07-frontend-backend-alignment.md`。
@@ -107,11 +109,7 @@ cd 蓝牙uniapp
 # 修改 config/index.js 的 baseURL 指向你的后端
 ```
 
-**管理台**
-```bash
-cd admin
-npm install && npm run dev
-```
+**管理台**：🚫 已弃用，不再运行/部署（见第 1 节说明）。
 
 详细步骤见 `/README.md`。
 
@@ -127,5 +125,5 @@ npm install && npm run dev
 - 设备与上传（蓝牙注册鞋垫 + 上传原始数据带 `patient_id`，归属 clinician+patient+device）：`back/api/device.py`
 - SVM 推理（已抽出独立模块，`analyze()`；待异步解耦）：`back/api/analysis.py`
 - 配置（DB 串与 `SECRET_KEY` 已改为读环境变量，模板见 `back/.env.example`）：`back/config.py`
-- 后端地址（`baseURL`）：采集端 `蓝牙uniapp/config/index.js`；**管理台改 `admin/.env` 的 `VITE_BASE_URL`/`VITE_BASE_URL_PRO`（实际生效），`admin/src/config/index.js` 无人 import 是死配置**
+- 后端地址（`baseURL`）：采集端 `蓝牙uniapp/config/index.js`（当前 `https://api.sarcopenianus.com`）。（管理台 admin 已弃用，其地址配置不再维护）
 - 数据表结构：`back/database_schema_mysql.sql`（唯一权威；旧 SQLite 版 `database_schema.sql` 已删）
