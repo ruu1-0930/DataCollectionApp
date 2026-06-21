@@ -302,20 +302,24 @@ Expected：`BUILD SUCCESSFUL`，产出 `app/build/outputs/apk/debug/app-debug.ap
 
 ## Phase 1 — Vendored 蓝牙引擎
 
-### Task 1.1: 复制 fastble Java 源码并编译通过
+### Task 1.1: 引入开源 FastBle 源码（vendored）并编译通过 ✅（已完成 2026-06-18, commit 0523b2d）
+
+> **⚠️ 执行修正（2026-06-18，已落实）**：原计划「复制旧工程 `蓝牙uniapp/uni_modules/android-ble/.../com/clj/fastble/**`」**不可行**——该插件整树（含 fastble `.java` 与 `BleHelper.kt`、`ByteUtil.java`、`Result.java`）均为 **DCloud 加密产物**（磁盘上是高熵二进制，35 文件 0 个可读 `package` 行），HBuilderX 仅在其打包时解密。改为 **vendoring 上游开源 FastBle**（`github.com/Jasonchenlijian/FastBle`，Apache-2.0，与该付费插件包装的是同一个库）。用户已确认走此路（vendored 源码，便于后续开发）。
 
 **Files:**
-- Create: `android-native/app/src/main/java/com/clj/fastble/**`（整树）
-- Copy: `android-native/app/src/main/java/com/clj/fastble/`（来自 `蓝牙uniapp/uni_modules/android-ble/utssdk/app-android/com/clj/fastble/`）
-- Copy: `ByteUtil.java`、`Result.java`（同源目录）到对应包
+- Create: `android-native/app/src/main/java/com/clj/fastble/**`（来自上游 FastBle 源码，32 个 `.java`）
+- Create: `android-native/app/src/main/java/com/clj/fastble/LICENSE`（上游 Apache-2.0）
 
-- [ ] **Step 1: 原样复制源码**
+- [x] **Step 1: 取上游源码并复制**
 
-把旧工程 `蓝牙uniapp/uni_modules/android-ble/utssdk/app-android/com/clj/fastble/**` 全部文件复制到 `app/src/main/java/com/clj/fastble/`（保持包结构）。同时复制 `ByteUtil.java`、`HexUtil.java`（已在 utils/ 内）。**不要复制** `index.uts`、`BleHelper.kt`、`config.json`、`AndroidManifest.xml`（这些是加密壳/插件元数据）。
+下载上游（`v2.4.0` tag 404，用 `master`，即最新发布代码）：
+`curl -sL -o /tmp/fbm.tar.gz "https://codeload.github.com/Jasonchenlijian/FastBle/tar.gz/refs/heads/master"` → 解压。
+把 `FastBleLib/src/main/java/com/clj/fastble/**`（32 文件：root `BleManager.java` + `bluetooth/ callback/ data/ exception/ scan/ utils/`）整树复制到 `app/src/main/java/com/clj/fastble/`，保持包结构。复制上游 `LICENSE` 到同目录。
+**不要**复制旧工程加密文件，也**不要** `entity/*`、`NotificationCallback`（上游无、本工程不需要——我们自写 `BleRepository` 只调 fastble 公共 API）。
 
-- [ ] **Step 2: 修正编译依赖**
+- [x] **Step 2: 编译依赖核对**
 
-fastble 仅依赖 Android SDK（`android.bluetooth.*`）。若有 `import` 指向 uts/插件运行时（如 `io.dcloud`/`uts`），定位后删除相关无用类或方法（这些是 UTS 桥用，不会被原生调用）。逐个编译错误处理。
+上游 fastble 自包含：仅 `android.*`/`java.*`/`androidx.*`/内部 `com.clj.fastble.*` 导入，无第三方依赖。逐字编译通过，仅有 `startLeScan` 等旧 BLE API 的 deprecation 警告（minSdk 26 仍可用，无需处理）。无任何源码改动。
 
 - [ ] **Step 3: 编译验证**
 
