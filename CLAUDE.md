@@ -19,6 +19,7 @@
 | 采集端 App | `蓝牙uniapp/` | uni-app + Vue3 + Pinia + UTS 原生蓝牙 | 连鞋垫、解析传感器、上传、设备管理 |
 | 云后端 | `back/` | Flask + SQLAlchemy + PyJWT | 鉴权、设备/数据接口、SVM 推理 |
 | 数据库 | （远程 MySQL） | MySQL 5.7+ | 用户/设备/原始数据/分析数据/周计划 |
+| 官网展示页 | `landing/` | 纯静态 HTML/CSS/原生 JS | 面向医生推广（根域 `sarcopenianus.com`）+ 留资表单 |
 | ~~管理台~~ | ~~`admin/`~~ | Vue3 + Vite + UnoCSS | **🚫 已弃用**（见下） |
 
 > **`admin/` 已弃用（2026-06-15）**：当前临床流程为 **App-only**（操作员+患者均在采集端 App 上完成），管理台未启用、未部署（`deploy/` 只有后端，nginx 只反代 Flask API，无 admin 托管）。代码暂留仓库未删，**不参与运行、不需维护**；后续如确认彻底不用可整目录移除。改动无需顾及 admin。
@@ -41,6 +42,16 @@
      - ✅ **已真机验证**：启用本机（注册医护）、选/建患者——数据已确认落 RDS（`clinicians`/`patients`/`patient_pii` 可查到，归属链 `clinician_id` 一致）；新增设备已由**扫码改为蓝牙搜索附近设备**（修复了运行时权限未申请导致扫不到的问题，见 `store/modules/blueTooth.js` 的 `requestBlePermissions`/`syncBluetoothState`）。
      - ⏳ **待验**：连接鞋垫 → 采集 → 上传落库 + 归属（查 `device_raw_data` 每帧 L/R 两行 + `device_transformed_data` T1-T5 + `patients.last_collected_at`）、按患者查历史（数据页）。store/页面/蓝牙/网络无法 vitest mock，见 plan Task 12 手动清单。
      - HTTPS/密钥/收回公网随迁移完成。
+### 2.2 并行线 — 官网展示页（面向医生推广，代码完成）
+
+- **目标**：给根域 `sarcopenianus.com` 做一个 Apple 式简约高级单页展示页，向医生推广步态采集系统；含系统/能力详解、未来路线、留资/预约演示表单、科研合作联系入口。
+- **状态**：✅ 代码完成（视觉稿经用户确认；浅色临床高级风 + 单一科技蓝 `#2b6cff`）。
+- **前端（新）**：`landing/{index.html,styles.css,main.js}` —— 纯静态、无构建、滚动渐入、CSS/SVG 足压热力图手机框示意；留资表单 `fetch` 提交（本地 localhost 走 `127.0.0.1:5000`，线上走 `https://api.sarcopenianus.com`）。
+- **后端（新/改）**：留资接口 `back/api/lead.py`（公开 `POST /leads` + 蜜罐反垃圾；受保护 `GET /leads` 复用 `token_required`），`Lead` 模型（`models/models.py`，`leads` 表，非患者 PII、无外键、与临床数据隔离），`config.py` 注册 `lead_bp`，schema 同步 `database_schema_mysql.sql` + 迁移 `migrations/001_leads.sql`，测试 `tests/test_lead.py`。
+- **部署（新）**：`deploy/nginx-site.conf`（根域 + www 静态托管，与 `nginx-lanya.conf` 并存）。**待办**：根域/www 的 DNS 解析 + HTTPS 证书（现 DV 证书只签了 `api.` 子域）；landing 部署到 ECS `/opt/lanya/landing/`；确认备案覆盖根域。
+- **范围边界**：截图/图表用示意素材（占位），不接真实患者数据；不引前端框架；中文为主。
+- **未来路线（展示页 #road 已写入）**：可靠采集 → 科研分析侧 → 更强模型 → **AI 智能体辅助诊断（引入智能体，综合步态数据与多科室检查报告，输出结构化评估与诊断建议，辅助医生决策，非替代诊断）** → 数字生物标志物平台愿景。详见云迁移 memory 的 agent 功能方向。
+
 2. 🟠 阶段 2 — 可靠采集（批量上传 + 离线重传）
 3. 🟠 阶段 3 — 实验室分析侧（科研只读 API + 去标识化导出）
 4. 🟡 阶段 4 — 采集与分析解耦（SVM 异步化）
@@ -124,6 +135,9 @@ cd 蓝牙uniapp
 - 患者与按患者历史（CRUD + `subject_id` + 分页/时间范围只读）：`back/api/patient.py`
 - 设备与上传（蓝牙注册鞋垫 + 上传原始数据带 `patient_id`，归属 clinician+patient+device）：`back/api/device.py`
 - SVM 推理（已抽出独立模块，`analyze()`；待异步解耦）：`back/api/analysis.py`
+- 官网留资接口（公开 `POST /leads` + 蜜罐，受保护 `GET /leads`）：`back/api/lead.py`；`Lead` 模型：`back/models/models.py`
+- 官网展示页（纯静态）：`landing/`；nginx 根域托管模板：`deploy/nginx-site.conf`
 - 配置（DB 串与 `SECRET_KEY` 已改为读环境变量，模板见 `back/.env.example`）：`back/config.py`
 - 后端地址（`baseURL`）：采集端 `蓝牙uniapp/config/index.js`（当前 `https://api.sarcopenianus.com`）。（管理台 admin 已弃用，其地址配置不再维护）
 - 数据表结构：`back/database_schema_mysql.sql`（唯一权威；旧 SQLite 版 `database_schema.sql` 已删）
+- 数据查询门户（Metabase 只读 BI，公网 `https://data.sarcopenianus.com`）：部署资产 `deploy/nginx-data.conf`、`deploy/metabase/{docker-compose.yml,.env.example,README.md}`；设计/计划 `docs/superpowers/{specs,plans}/2026-06-24-metabase-data-query-portal*.md`。两个只读数据库账号 `mb_ro_full`(含PII)/`mb_ro_deid`(脱敏)，元数据库 `metabase`。采集端 App 与 back/ 零改动。
