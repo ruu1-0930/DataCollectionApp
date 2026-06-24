@@ -20,7 +20,7 @@
 | 议题 | 结论 |
 |---|---|
 | 使用对象 | A 内部团队（可看全部含 PII）+ B 少数同学/科研同伴（只读、看不到 PII） |
-| 查询形态 | C 图形化查询 + 管理员专用只读 SQL 编辑器，两者均只读 |
+| 查询形态 | C 图形化查询 + 只读 SQL 编辑器（管理员与分析员都可用）；两者均只读 |
 | 访问方式 | 公网子域 + HTTPS + 登录 |
 | 选型 | 现成 BI：**Metabase**（开源），而非自研网页 SQL 控制台 |
 | 运行方式 | ECS 上 **Docker** 容器运行 |
@@ -91,16 +91,17 @@ FLUSH PRIVILEGES;
 Metabase 内配置 **两个数据源 + 两个用户组**：
 
 - 数据源「Lanya（含PII）」→ 连 `mb_ro_full`；数据源「Lanya（脱敏）」→ 连 `mb_ro_deid`。
-- **管理员组**：仅该组可访问「含PII」数据源；开放原生 SQL 编辑器。
-- **分析员组**：仅可访问「脱敏」数据源；在数据权限里关闭原生 SQL（只能图形化查询）。
+- **管理员组**：可访问「含PII」数据源；开放原生 SQL 编辑器。
+- **分析员组**：仅可访问「脱敏」数据源；**同样开放原生 SQL 编辑器**（应用户要求）。因其数据源连的是 `mb_ro_deid`，即便写 `SELECT * FROM patient_pii` 也会在数据库层被拒，PII 仍不可达。
 
-**双重锁**：即便 Metabase 权限误配，`mb_ro_deid` 在数据库层面也 `SELECT` 不到 `patient_pii`；即便任一只读口令泄露，账号也只读，无法改/删临床数据（守住 raw append-only 红线）。
+**PII 隔离靠数据库授权这层兜底（最可靠的一层）**：分析员能写 SQL，但脱敏只读账号 `mb_ro_deid` 物理上 `SELECT` 不到 `patient_pii`，与 Metabase 的数据源/分组配置无关——配置即便误设也挡得住。**只读兜底**：所有账号均只读，任何人无法改/删临床数据（守住 raw append-only 红线）。
 
 ## 安全要点
 
 - **传输**：全程 HTTPS，nginx 80→443 跳转。需为 `data.sarcopenianus.com` 配 DNS A 记录（→ `118.31.39.47`）+ 证书。现有阿里云免费 DV 证书只签了 `api.` 子域，需为 `data.` 子域加签 SAN 或单独签一张（同 3 个月续期节奏）。
 - **口令/密钥**：3 个数据库账号口令、Metabase 管理员口令一律强口令；数据库口令存于 Metabase 配置（落在 `metabase` 库），**不进 git**。容器启动用的环境变量写在 ECS 上的 `docker run`/compose 文件或 systemd unit，含口令的文件 `chmod 600`、不入库。
-- **入口加固**：依赖 Metabase 自带登录失败限流与会话管理；管理员强口令。可选：nginx 对 `data.` 子域加 IP 白名单（你们出口 IP 固定时）。
+- **入口加固**：依赖 Metabase 自带登录失败限流与会话管理；管理员强口令。
+- **IP 白名单（后续启用）**：nginx 子域配置内预留 `allow/deny` 白名单块（初期注释/放开公网登录），待拿到你们固定出口 IP 后取消注释、收紧到白名单。
 - **RDS**：维持不开公网；安全组 3306 仅对 ECS 内网。
 - **审计**：Metabase 自带查询历史/登录日志，满足基本审计。
 
@@ -119,13 +120,13 @@ Metabase 内配置 **两个数据源 + 两个用户组**：
 4. `docker run` 起 Metabase：环境变量 `MB_DB_TYPE=mysql`、`MB_DB_DBNAME=metabase`、`MB_DB_HOST=<RDS内网>`、`MB_DB_USER=metabase_app`、`MB_DB_PASS=...`，端口映射 `127.0.0.1:3000:3000`，加 `--memory`/`JAVA_OPTS`，`--restart=unless-stopped`。
 5. nginx 新增 `data.sarcopenianus.com` server 块反代 `127.0.0.1:3000` + HTTPS；配置文件模板放 `deploy/`（如 `deploy/nginx-data.conf`）。
 6. DNS A 记录 + 证书（加签/单签）。
-7. Metabase 初始化向导：建管理员 → 加两个数据源 → 建两个用户组 → 配数据权限（分析员仅脱敏源、禁原生 SQL）→ 建/邀同学账号入分析员组。
+7. Metabase 初始化向导：建管理员 → 加两个数据源 → 建两个用户组 → 配数据权限（分析员仅脱敏源、可用原生 SQL）→ 建/邀同学账号入分析员组。
 8. 验收（见下）。
 
 ## 验收标准
 
 - 管理员登录：能看到「含PII」数据源、能用 SQL 编辑器、能查到 `patient_pii` 字段、能导 CSV。
-- 分析员登录：只看到「脱敏」数据源、**无 SQL 编辑器入口**、查询界面**找不到也查不到 `patient_pii`**、能对 `device_raw_data` 等做图形化查询并导 CSV。
+- 分析员登录：只看到「脱敏」数据源、**有只读 SQL 编辑器**，但对 `patient_pii` 的查询被数据库拒绝（写 `SELECT * FROM patient_pii` 报无权限）、能对 `device_raw_data` 等做图形化查询并导 CSV。
 - 用脱敏账号直接对 `patient_pii` 发 `SELECT` → 数据库层报无权限（双重锁验证）。
 - 任一账号尝试 `UPDATE/DELETE/INSERT` → 失败（只读验证）。
 - 公网 `https://data.sarcopenianus.com` 证书可信、HTTP 自动跳 HTTPS；RDS 仍无公网。
