@@ -1,0 +1,28 @@
+# Metabase 只读 BI 门户。元数据存 RDS 的 metabase 库（无状态容器，升级=换镜像）。
+# 只绑 127.0.0.1:3000，对外由 nginx(deploy/nginx-data.conf) 加 HTTPS。
+# 4GiB ECS：限堆 1g + 容器内存 1536m；另需 ECS 上 2-4G swap（见 README）。
+services:
+  metabase:
+    image: metabase/metabase:latest   # 建议改为 hub 上当前稳定 tag 固定版本
+    container_name: metabase
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
+    environment:
+      MB_DB_TYPE: mysql
+      MB_DB_DBNAME: metabase
+      MB_DB_PORT: "3306"
+      MB_DB_HOST: ${RDS_HOST}
+      MB_DB_USER: metabase_app
+      MB_DB_PASS: ${MB_APP_DB_PASS}
+      JAVA_TIMEZONE: Asia/Shanghai
+      JAVA_OPTS: "-Xmx1g"
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
