@@ -135,7 +135,16 @@ mysql -h "$RDS_HOST" -u mb_ro_full -p lanya -e "SELECT COUNT(*) FROM patient_pii
 ```
 浏览器：用分析员账号登录 → 只见「脱敏」源、有 SQL 编辑器但 `SELECT * FROM patient_pii` 报无权限、能图形化查 `device_raw_data` 并导 CSV；用管理员账号登录 → 能见「含PII」源、能查到 PII 字段。
 
+## 常见问题（首次部署实测踩过的坑）
+1. **加 Docker 后 `mysql` 连 RDS 报 `(113) No route to host`**：Docker 默认网桥 `docker0=172.17.0.0/16` 跟 RDS 内网 IP（如 `172.17.x.x`）撞了，路由被网桥劫走。修：在 `/etc/docker/daemon.json` 把网桥和地址池挪到 `10.x` 段——
+   ```json
+   { "registry-mirrors": ["..."], "bip": "10.222.0.1/24", "default-address-pools": [{ "base": "10.223.0.0/16", "size": 24 }] }
+   ```
+   `sudo systemctl restart docker` 后 `ip -br addr show docker0` 应变 `10.222.x`。已建的旧网络要 `docker compose down && docker network rm metabase_default` 再 `up` 才会用新网段。
+2. **容器日志 `Unable to connect to Metabase mysql DB` / c3p0 `checkout timed out`**：多半不是网络，是 **`.env` 的 `MB_APP_DB_PASS` 和 RDS 里 `metabase_app` 的真实口令不一致**（认证失败被连接池包装成超时）。用 `ALTER USER 'metabase_app'@'%' IDENTIFIED BY '...'` 把两边对齐。验证：`sudo docker run --rm --network metabase_default mysql:8 mysql -h<RDS> -umetabase_app -p<口令> metabase -e "SELECT 1;"`。
+3. **迁移卡 `v49.00-059` 报 `Invalid default value for 'updated_at'`**：RDS `sql_mode` 含 `NO_ZERO_DATE,NO_ZERO_IN_DATE`，Metabase 统一时间列类型时被拒。修：阿里云 RDS 控制台 → 参数设置 → `sql_mode` 去掉这两项（动态生效，无需重启实例；保留 `STRICT_TRANS_TABLES`/`ONLY_FULL_GROUP_BY`，对 `lanya` 只放宽不收紧）。改完 `DROP DATABASE metabase; CREATE DATABASE metabase CHARACTER SET utf8mb4;` 清掉半成品表，再 `docker compose down && up`。
+
 ## 维护
-- 升级：`cd /opt/lanya/metabase && sudo docker compose pull && sudo docker compose up -d`（配置在 RDS 不丢）。
+- 升级：`cd /opt/DataCollectionApp/deploy/metabase && sudo docker compose pull && sudo docker compose up -d`（配置在 RDS 不丢）。
 - 证书：同 api 那张，3 个月到期前重签替换 `/etc/nginx/ssl/data.*` 并 `nginx -t && systemctl reload nginx`。
 - 内存：`free -h`、`docker stats metabase` 观察；如吃紧把 `JAVA_OPTS` 降到 `-Xmx768m`。
