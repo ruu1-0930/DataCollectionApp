@@ -118,6 +118,114 @@ def _create_other_clinician_auth(client):
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_session_filters_include_canonical_start_boundaries(client):
+    starts = [
+        _BASE_TIME,
+        _BASE_TIME + timedelta(minutes=1),
+        _BASE_TIME + timedelta(minutes=2),
+    ]
+    auth, patient_id, session_ids = _setup_sessions(client, starts)
+
+    response = client.get(
+        f"/patients/{patient_id}/gait/sessions",
+        headers=auth,
+        query_string={"start": starts[1].isoformat(), "end": starts[2].isoformat()},
+    )
+    assert response.status_code == 200
+    sessions = response.get_json()["data"]["sessions"]
+
+    assert [session["session_id"] for session in sessions] == [session_ids[2], session_ids[1]]
+
+
+def test_session_filter_keeps_cross_boundary_session_canonical_and_accessible(client):
+    session_start = _BASE_TIME
+    session_continuation = session_start + timedelta(seconds=20)
+    later_session_start = session_start + timedelta(minutes=2)
+    auth, patient_id, _ = _setup_sessions(
+        client,
+        [session_start, session_continuation, later_session_start],
+    )
+    canonical_id = _session_id(patient_id, session_start)
+
+    response = client.get(
+        f"/patients/{patient_id}/gait/sessions",
+        headers=auth,
+        query_string={"start": session_start.isoformat(), "end": session_start.isoformat()},
+    )
+    assert response.status_code == 200
+    sessions = response.get_json()["data"]["sessions"]
+
+    assert [session["session_id"] for session in sessions] == [canonical_id]
+    assert sessions[0]["frame_count"] == 2
+    assert client.get(
+        f"/patients/{patient_id}/gait/sessions/{canonical_id}",
+        headers=auth,
+    ).status_code == 200
+    frames = client.get(
+        f"/patients/{patient_id}/gait/sessions/{canonical_id}/frames",
+        headers=auth,
+    ).get_json()["data"]
+    assert frames["total"] == 2
+
+
+def test_session_filter_does_not_create_suffix_session_when_start_is_inside_session(client):
+    session_start = _BASE_TIME
+    session_continuation = session_start + timedelta(seconds=20)
+    later_session_start = session_start + timedelta(minutes=2)
+    auth, patient_id, _ = _setup_sessions(
+        client,
+        [session_start, session_continuation, later_session_start],
+    )
+    later_session_id = _session_id(patient_id, later_session_start)
+
+    response = client.get(
+        f"/patients/{patient_id}/gait/sessions",
+        headers=auth,
+        query_string={
+            "start": (session_start + timedelta(seconds=10)).isoformat(),
+            "end": later_session_start.isoformat(),
+        },
+    )
+    assert response.status_code == 200
+
+    assert [session["session_id"] for session in response.get_json()["data"]["sessions"]] == [
+        later_session_id
+    ]
+
+
+@pytest.mark.parametrize(
+    "query_string",
+    [
+        {"start": "not-an-iso-datetime"},
+        {"start": "2026-07-12T09:42:03Z"},
+        {"end": "2026-07-12T17:42:03+08:00"},
+    ],
+)
+def test_session_filters_reject_malformed_or_timezone_aware_datetimes(client, query_string):
+    auth, patient_id, _ = _setup_session(client)
+
+    response = client.get(
+        f"/patients/{patient_id}/gait/sessions",
+        headers=auth,
+        query_string=query_string,
+    )
+    assert response.status_code == 422
+
+
+def test_session_filters_reject_reversed_datetime_range(client):
+    auth, patient_id, _ = _setup_session(client)
+
+    response = client.get(
+        f"/patients/{patient_id}/gait/sessions",
+        headers=auth,
+        query_string={
+            "start": (_BASE_TIME + timedelta(minutes=1)).isoformat(),
+            "end": _BASE_TIME.isoformat(),
+        },
+    )
+    assert response.status_code == 422
+
+
 def test_sessions_return_stable_ids_newest_first(client):
     older_start = _BASE_TIME
     newer_start = _BASE_TIME + timedelta(minutes=1)

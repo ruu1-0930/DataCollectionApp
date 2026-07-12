@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, g, jsonify, request
 
-from config import db
 from models.models import DeviceRawData, Patient
 from services.gait_analysis import (
     aggregate_session,
@@ -36,19 +35,9 @@ def _owned_patient_or_resp(patient_id):
     return patient, None
 
 
-def _fetch_rows(patient_id, limit_to_session_window=False):
+def _fetch_rows(patient_id):
     """Load raw per-foot values only; transformed model outputs never enter the DTO."""
     query = DeviceRawData.query.filter_by(patient_id=patient_id)
-    if limit_to_session_window:
-        start = request.args.get("start")
-        end = request.args.get("end")
-        query = query.filter(
-            DeviceRawData.collected_at >= (
-                start if start else datetime.now() - timedelta(days=_SESSION_WINDOW_DAYS)
-            )
-        )
-        if end:
-            query = query.filter(DeviceRawData.collected_at <= end)
 
     rows = []
     for raw in query.order_by(DeviceRawData.collected_at.asc()).all():
@@ -105,6 +94,39 @@ def _session_records(rows, patient_id):
         history.append(summary)
         records.append((session, summary))
     return records
+
+
+def _parse_naive_datetime(value):
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise ValueError("时间必须是 ISO-8601 naive datetime")
+    if parsed.tzinfo is not None:
+        raise ValueError("时间不能包含时区")
+    return parsed
+
+
+def _session_filter_bounds_or_resp():
+    start_value = request.args.get("start") or None
+    end_value = request.args.get("end") or None
+    try:
+        start = _parse_naive_datetime(start_value) if start_value else None
+        end = _parse_naive_datetime(end_value) if end_value else None
+    except ValueError as error:
+        return None, None, (jsonify(Response.error(422, str(error))), 422)
+    if start is not None and end is not None and end < start:
+        return None, None, (jsonify(Response.error(422, "end 不能早于 start")), 422)
+    return start, end, None
+
+
+def _filter_session_records(records, start, end):
+    effective_start = start or datetime.now() - timedelta(days=_SESSION_WINDOW_DAYS)
+    return [
+        record
+        for record in records
+        if record[0]["start"] >= effective_start
+        and (end is None or record[0]["start"] <= end)
+    ]
 
 
 def _public_summary(summary):
@@ -179,7 +201,12 @@ def list_gait_sessions(patient_id):
     if error:
         return error
 
-    records = _session_records(_fetch_rows(patient_id, limit_to_session_window=True), patient_id)
+    start, end, error = _session_filter_bounds_or_resp()
+    if error:
+        return error
+
+    records = _session_records(_fetch_rows(patient_id), patient_id)
+    records = _filter_session_records(records, start, end)
     summaries = [_public_summary(summary) for _, summary in reversed(records)]
     return jsonify(Response.success(data={"total": len(summaries), "sessions": summaries}))
 
