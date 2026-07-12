@@ -149,6 +149,13 @@ def test_quality_is_complete_only_for_fully_paired_complete_firmware_data():
     assert session_data_quality([paired_frame(walking_speed=None)])["status"] == "usable"
 
 
+def test_quality_is_usable_at_exactly_eighty_percent_paired_frames():
+    frames = [paired_frame() for _ in range(4)] + [left_only_frame()]
+    quality = session_data_quality(frames)
+    assert quality["paired_frame_rate_pct"] == 80.0
+    assert quality["status"] == "usable"
+
+
 # ---------- build_session_flags ----------
 
 
@@ -196,3 +203,18 @@ def test_history_reports_insufficient_when_no_prior_values_exist():
     flags = build_session_flags(metric_fixture(), [])
     speed = next(flag for flag in flags if flag["metric_key"] == "walking_speed_mps")
     assert speed["history"] == {"median": None, "delta_abs": None, "reason": "history_insufficient"}
+
+
+def test_history_ignores_summaries_without_explicit_quality_status():
+    history = [
+        {"metrics": metric_fixture(walking_speed_mps=0.2)},
+        {"data_quality": {}, "metrics": metric_fixture(walking_speed_mps=0.4)},
+        {
+            "data_quality": {"status": "complete"},
+            "metrics": metric_fixture(walking_speed_mps=1.2),
+        },
+    ]
+    flags = build_session_flags(metric_fixture(walking_speed_mps=0.92), history)
+    speed = next(flag for flag in flags if flag["metric_key"] == "walking_speed_mps")
+    assert speed["history"]["median"] == 1.2
+    assert speed["history"]["delta_abs"] == pytest.approx(-0.28)

@@ -262,7 +262,8 @@ def _history_for_metric(history_baseline, metric_key, current_value):
     eligible_summaries = [
         summary
         for summary in (history_baseline or [])
-        if summary.get("data_quality", {}).get("status") != "limited"
+        if (status := summary.get("data_quality", {}).get("status")) is not None
+        and status != "limited"
     ][-5:]
     prior_values = [
         value

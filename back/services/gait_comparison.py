@@ -21,11 +21,17 @@ def compare_session_summaries(summaries, session_ids):
     if len(set(session_ids)) != len(session_ids):
         raise ValueError("session_ids must be unique")
 
+    summary_ids = [summary.get("session_id") for summary in summaries]
+    if len(set(summary_ids)) != len(summary_ids):
+        raise ValueError("summary session_ids must be unique")
+
     summaries_by_id = {summary.get("session_id"): summary for summary in summaries}
     missing_ids = [session_id for session_id in session_ids if session_id not in summaries_by_id]
     if missing_ids:
         raise ValueError(f"missing requested session summaries: {missing_ids}")
     selected = [summaries_by_id[session_id] for session_id in session_ids]
+    if len({summary.get("patient_id") for summary in selected}) != 1:
+        raise ValueError("selected summaries must belong to the same patient")
 
     metrics = {}
     for metric_key in CANONICAL_METRIC_KEYS:
