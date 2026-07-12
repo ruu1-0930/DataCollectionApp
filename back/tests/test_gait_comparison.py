@@ -41,6 +41,28 @@ def test_compare_rejects_summaries_from_different_patients():
         compare_session_summaries(summaries, ["S1", "S2"])
 
 
+def test_compare_rejects_when_all_patient_ids_are_missing():
+    summaries = [summary("S1", 0.8), summary("S2", 0.9)]
+    for item in summaries:
+        item.pop("patient_id")
+    with pytest.raises(ValueError, match="patient_id"):
+        compare_session_summaries(summaries, ["S1", "S2"])
+
+
+def test_compare_rejects_when_any_patient_id_is_missing():
+    summaries = [summary("S1", 0.8), summary("S2", 0.9)]
+    summaries[1].pop("patient_id")
+    with pytest.raises(ValueError, match="patient_id"):
+        compare_session_summaries(summaries, ["S1", "S2"])
+
+
+@pytest.mark.parametrize("patient_id", [None, "", "   "])
+def test_compare_rejects_empty_patient_id(patient_id):
+    summaries = [summary("S1", 0.8), summary("S2", 0.9, patient_id)]
+    with pytest.raises(ValueError, match="patient_id"):
+        compare_session_summaries(summaries, ["S1", "S2"])
+
+
 def test_compare_rejects_missing_requested_session_id():
     with pytest.raises(ValueError, match="missing requested session"):
         compare_session_summaries([summary("S1", 0.8)], ["S1", "S2"])

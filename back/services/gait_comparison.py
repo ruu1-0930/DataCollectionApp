@@ -30,7 +30,14 @@ def compare_session_summaries(summaries, session_ids):
     if missing_ids:
         raise ValueError(f"missing requested session summaries: {missing_ids}")
     selected = [summaries_by_id[session_id] for session_id in session_ids]
-    if len({summary.get("patient_id") for summary in selected}) != 1:
+    patient_ids = [summary.get("patient_id") for summary in selected]
+    if any(
+        patient_id is None
+        or (isinstance(patient_id, str) and not patient_id.strip())
+        for patient_id in patient_ids
+    ):
+        raise ValueError("selected summaries require a non-empty patient_id")
+    if len(set(patient_ids)) != 1:
         raise ValueError("selected summaries must belong to the same patient")
 
     metrics = {}
