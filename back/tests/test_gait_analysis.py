@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from services.gait_analysis import (
+    _ratio_series,
     aggregate_session,
     build_session_flags,
     segment_sessions,
@@ -93,6 +94,26 @@ def test_derived_metric_discloses_formula():
     cadence = out["metrics"]["cadence_spm"]
     assert cadence["source"] == "derived"
     assert cadence["formula"] == "walking_speed_mps / step_length_m * 60"
+
+
+def test_stride_time_cv_discloses_stride_time_formula():
+    out = aggregate_session([paired_frame(step_length=0.58, walking_speed=0.92)])
+    stride_time_cv = out["metrics"]["stride_time_cv_pct"]
+    assert stride_time_cv["formula"] == (
+        "std(2 * step_length_m / walking_speed_mps) / "
+        "mean(2 * step_length_m / walking_speed_mps) * 100"
+    )
+
+
+def test_ratio_series_supports_stride_time_factor_two():
+    frames = [paired_frame(step_length=0.6, walking_speed=1.2)]
+    values = _ratio_series(
+        frames,
+        "step_length",
+        "walking_speed",
+        multiplier=2,
+    )
+    assert values == pytest.approx([1.0])
 
 
 def test_all_canonical_metrics_have_auditable_shape():

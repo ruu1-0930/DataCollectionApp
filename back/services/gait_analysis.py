@@ -34,7 +34,7 @@ DERIVED_METRICS = {
     },
     "stride_time_cv_pct": {
         "unit": "%",
-        "formula": "std(step_length_m / walking_speed_mps) / mean(step_length_m / walking_speed_mps) * 100",
+        "formula": "std(2 * step_length_m / walking_speed_mps) / mean(2 * step_length_m / walking_speed_mps) * 100",
     },
     "double_support_ratio_pct": {
         "unit": "%",
@@ -188,7 +188,12 @@ def aggregate_session(frames):
         DERIVED_METRICS["step_length_asymmetry_pct"]["formula"],
     )
 
-    stride_time_values = _ratio_series(frames, "step_length", "walking_speed")
+    stride_time_values = _ratio_series(
+        frames,
+        "step_length",
+        "walking_speed",
+        multiplier=2,
+    )
     stride_time_stats = _statistics(stride_time_values)
     stride_time_cv = stride_time_stats["cv_pct"]
     metrics["stride_time_cv_pct"] = _metric(
