@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import math
 
 import pytest
 
@@ -152,6 +153,25 @@ def test_aggregate_never_imputes_missing_firmware_values():
     assert speed["statistics"]["n"] == 0
 
 
+@pytest.mark.parametrize("unavailable", [None, math.nan, math.inf, -math.inf])
+def test_aggregate_treats_non_finite_firmware_values_as_missing(unavailable):
+    out = aggregate_session([paired_frame(walking_speed=unavailable)])
+
+    speed = out["metrics"]["walking_speed_mps"]
+    cadence = out["metrics"]["cadence_spm"]
+    assert speed["value"] is None
+    assert speed["left_value"] is None
+    assert speed["right_value"] is None
+    assert speed["statistics"] == {
+        "mean": None,
+        "median": None,
+        "std": None,
+        "cv_pct": None,
+        "n": 0,
+    }
+    assert cadence["value"] is None
+
+
 # ---------- session_data_quality ----------
 
 
@@ -174,6 +194,14 @@ def test_quality_is_usable_at_exactly_eighty_percent_paired_frames():
     frames = [paired_frame() for _ in range(4)] + [left_only_frame()]
     quality = session_data_quality(frames)
     assert quality["paired_frame_rate_pct"] == 80.0
+    assert quality["status"] == "usable"
+
+
+@pytest.mark.parametrize("unavailable", [None, math.nan, math.inf, -math.inf])
+def test_quality_counts_non_finite_firmware_values_as_missing(unavailable):
+    quality = session_data_quality([paired_frame(walking_speed=unavailable)])
+
+    assert quality["missing_required_values"] == 2
     assert quality["status"] == "usable"
 
 
@@ -218,12 +246,19 @@ def test_history_baseline_uses_non_limited_prior_summaries_and_median():
     speed = next(flag for flag in flags if flag["metric_key"] == "walking_speed_mps")
     assert speed["history"]["median"] == 1.0
     assert speed["history"]["delta_abs"] == pytest.approx(-0.08)
+    assert speed["history"]["delta_pct"] == pytest.approx(-8.0)
+    assert speed["history"]["reason"] is None
 
 
 def test_history_reports_insufficient_when_no_prior_values_exist():
     flags = build_session_flags(metric_fixture(), [])
     speed = next(flag for flag in flags if flag["metric_key"] == "walking_speed_mps")
-    assert speed["history"] == {"median": None, "delta_abs": None, "reason": "history_insufficient"}
+    assert speed["history"] == {
+        "median": None,
+        "delta_abs": None,
+        "delta_pct": None,
+        "reason": "history_insufficient",
+    }
 
 
 def test_history_ignores_summaries_without_explicit_quality_status():
@@ -239,3 +274,54 @@ def test_history_ignores_summaries_without_explicit_quality_status():
     speed = next(flag for flag in flags if flag["metric_key"] == "walking_speed_mps")
     assert speed["history"]["median"] == 1.2
     assert speed["history"]["delta_abs"] == pytest.approx(-0.28)
+
+
+def test_history_ignores_non_finite_prior_values():
+    history = [
+        {
+            "data_quality": {"status": "complete"},
+            "metrics": metric_fixture(walking_speed_mps=math.nan),
+        },
+        {
+            "data_quality": {"status": "usable"},
+            "metrics": metric_fixture(walking_speed_mps=math.inf),
+        },
+        {
+            "data_quality": {"status": "complete"},
+            "metrics": metric_fixture(walking_speed_mps=1.0),
+        },
+    ]
+
+    flags = build_session_flags(metric_fixture(walking_speed_mps=1.2), history)
+    speed = next(flag for flag in flags if flag["metric_key"] == "walking_speed_mps")
+    assert speed["history"]["median"] == 1.0
+    assert speed["history"]["delta_abs"] == pytest.approx(0.2)
+    assert speed["history"]["delta_pct"] == pytest.approx(20.0)
+
+
+def test_history_percentage_change_reports_zero_baseline_reason():
+    history = [
+        {
+            "data_quality": {"status": "complete"},
+            "metrics": metric_fixture(walking_speed_mps=0.0),
+        }
+    ]
+
+    flags = build_session_flags(metric_fixture(walking_speed_mps=1.2), history)
+    speed = next(flag for flag in flags if flag["metric_key"] == "walking_speed_mps")
+    assert speed["history"] == {
+        "median": 0.0,
+        "delta_abs": 1.2,
+        "delta_pct": None,
+        "reason": "baseline_zero",
+    }
+
+
+@pytest.mark.parametrize("unavailable", [None, math.nan, math.inf, -math.inf])
+def test_flags_mark_unavailable_firmware_metrics_unknown(unavailable):
+    flags = build_session_flags(metric_fixture(step_length_m=unavailable))
+    step_length = next(flag for flag in flags if flag["metric_key"] == "step_length_m")
+
+    assert step_length["value"] is None
+    assert step_length["status"] == "unknown"
+    assert step_length["history"]["delta_pct"] is None

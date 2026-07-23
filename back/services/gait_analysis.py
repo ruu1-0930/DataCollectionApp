@@ -1,5 +1,6 @@
 """Pure functions for auditable gait-session aggregation."""
 
+import math
 import statistics
 
 from services.gait_thresholds import CLINICAL_REFERENCE_RULE, EXPLORATORY_FLAG_RULES
@@ -45,6 +46,15 @@ DERIVED_METRICS = {
 REQUIRED_FIRMWARE_FIELDS = tuple(spec["field"] for spec in FIRMWARE_METRICS.values())
 
 
+def _finite_or_none(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return value if math.isfinite(value) else None
+    except TypeError:
+        return None
+
+
 def segment_sessions(rows, gap_seconds=30):
     """Group ordered device rows into timestamp-paired left/right frames."""
     if not rows:
@@ -83,9 +93,10 @@ def _build_session(index, rows):
 
 def _frame_value(frame, field):
     values = [
-        frame[foot][field]
+        value
         for foot in ("L", "R")
         if frame.get(foot) is not None and frame[foot].get(field) is not None
+        if (value := _finite_or_none(frame[foot][field])) is not None
     ]
     return statistics.fmean(values) if values else None
 
@@ -96,14 +107,16 @@ def _frame_series(frames, field):
 
 def _side_mean(frames, foot, field):
     values = [
-        frame[foot][field]
+        value
         for frame in frames
         if frame.get(foot) is not None and frame[foot].get(field) is not None
+        if (value := _finite_or_none(frame[foot][field])) is not None
     ]
     return statistics.fmean(values) if values else None
 
 
 def _statistics(values):
+    values = [value for item in values if (value := _finite_or_none(item)) is not None]
     if not values:
         return {"mean": None, "median": None, "std": None, "cv_pct": None, "n": 0}
 
@@ -222,9 +235,12 @@ def aggregate_session(frames):
 
 
 def _safe_ratio(numerator, denominator, multiplier=1):
-    if numerator is None or denominator in (None, 0):
+    numerator = _finite_or_none(numerator)
+    denominator = _finite_or_none(denominator)
+    multiplier = _finite_or_none(multiplier)
+    if numerator is None or denominator in (None, 0) or multiplier is None:
         return None
-    return numerator / denominator * multiplier
+    return _finite_or_none(numerator / denominator * multiplier)
 
 
 def session_data_quality(frames):
@@ -238,7 +254,7 @@ def session_data_quality(frames):
         for foot in ("L", "R"):
             row = frame.get(foot)
             for field in REQUIRED_FIRMWARE_FIELDS:
-                if row is None or row.get(field) is None:
+                if row is None or _finite_or_none(row.get(field)) is None:
                     missing_required_values += 1
 
     paired_frame_rate = paired_frames / total_frames * 100 if total_frames else 0.0
@@ -260,7 +276,7 @@ def session_data_quality(frames):
 
 def _metric_value(metrics, metric_key):
     metric = metrics.get(metric_key)
-    return metric.get("value") if isinstance(metric, dict) else None
+    return _finite_or_none(metric.get("value")) if isinstance(metric, dict) else None
 
 
 def _history_for_metric(history_baseline, metric_key, current_value):
@@ -276,12 +292,35 @@ def _history_for_metric(history_baseline, metric_key, current_value):
         if (value := _metric_value(summary.get("metrics", {}), metric_key)) is not None
     ]
     if not prior_values:
-        return {"median": None, "delta_abs": None, "reason": "history_insufficient"}
+        return {
+            "median": None,
+            "delta_abs": None,
+            "delta_pct": None,
+            "reason": "history_insufficient",
+        }
 
     median = statistics.median(prior_values)
+    current_value = _finite_or_none(current_value)
+    if current_value is None:
+        return {
+            "median": median,
+            "delta_abs": None,
+            "delta_pct": None,
+            "reason": "current_unavailable",
+        }
+
+    delta_abs = current_value - median
+    if median == 0:
+        return {
+            "median": median,
+            "delta_abs": delta_abs,
+            "delta_pct": None,
+            "reason": "baseline_zero",
+        }
     return {
         "median": median,
-        "delta_abs": current_value - median if current_value is not None else None,
+        "delta_abs": delta_abs,
+        "delta_pct": delta_abs / median * 100,
         "reason": None,
     }
 
@@ -318,6 +357,12 @@ def build_session_flags(metrics, history_baseline=None):
         elif metric_key in EXPLORATORY_FLAG_RULES:
             status, message = _exploratory_flag(metric_key, value)
             evidence_level = "exploratory"
+        elif value is None:
+            status, message, evidence_level = (
+                "unknown",
+                "数据缺失",
+                "firmware_measurement",
+            )
         else:
             status, message, evidence_level = "normal", "仅作固件测量记录", "firmware_measurement"
 

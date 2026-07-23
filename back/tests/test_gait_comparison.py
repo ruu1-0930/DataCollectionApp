@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from services.gait_comparison import compare_session_summaries
@@ -11,6 +13,7 @@ def summary(session_id, speed, patient_id="P1"):
             "walking_speed_mps": {"value": speed, "unit": "m/s"},
             "step_length_m": {"value": 0.6, "unit": "m"},
         },
+        "data_quality": {"status": "complete"},
     }
 
 
@@ -33,6 +36,75 @@ def test_compare_keeps_missing_values_missing():
     out = compare_session_summaries([summary("S1", 0.8), summary("S2", None)], ["S1", "S2"])
     assert out["metrics"]["walking_speed_mps"][1]["value"] is None
     assert out["metrics"]["walking_speed_mps"][1]["delta_abs"] is None
+    assert out["metrics"]["walking_speed_mps"][1]["reason"] == "value_unavailable"
+
+
+@pytest.mark.parametrize("unavailable", [None, math.nan, math.inf, -math.inf])
+def test_compare_treats_non_finite_values_as_unavailable(unavailable):
+    out = compare_session_summaries(
+        [summary("S1", 0.8), summary("S2", unavailable)],
+        ["S1", "S2"],
+    )
+
+    row = out["metrics"]["walking_speed_mps"][1]
+    assert row["value"] is None
+    assert row["delta_abs"] is None
+    assert row["delta_pct"] is None
+    assert row["reason"] == "value_unavailable"
+
+
+def test_compare_percentage_change_reports_zero_baseline_reason():
+    out = compare_session_summaries(
+        [summary("S1", 0.0), summary("S2", 0.8)],
+        ["S1", "S2"],
+    )
+
+    rows = out["metrics"]["walking_speed_mps"]
+    assert rows[0]["delta_abs"] == 0.0
+    assert rows[0]["delta_pct"] is None
+    assert rows[0]["reason"] == "baseline_zero"
+    assert rows[1]["delta_abs"] == pytest.approx(0.8)
+    assert rows[1]["delta_pct"] is None
+    assert rows[1]["reason"] == "baseline_zero"
+
+
+def test_compare_returns_separate_recent_five_valid_history_medians():
+    summaries = [
+        summary("S1", 0.5),
+        summary("S2", 99.0),
+        summary("S3", 0.0),
+        summary("S4", math.nan),
+        summary("S5", 0.8),
+        summary("S6", 1.0),
+        summary("S7", 1.2),
+        summary("S8", 1.4),
+        summary("S9", 1.6),
+    ]
+    summaries[1]["data_quality"]["status"] = "limited"
+
+    out = compare_session_summaries(summaries, ["S1", "S2"])
+
+    assert out["history_baselines"]["walking_speed_mps"] == {
+        "median": 1.2,
+        "reason": None,
+    }
+    assert out["metrics"]["walking_speed_mps"][0]["delta_abs"] == 0.0
+
+
+def test_compare_history_baseline_excludes_zero_missing_and_non_finite_values():
+    summaries = [
+        summary("S1", None),
+        summary("S2", 0.0),
+        summary("S3", math.nan),
+        summary("S4", math.inf),
+    ]
+
+    out = compare_session_summaries(summaries, ["S1", "S2"])
+
+    assert out["history_baselines"]["walking_speed_mps"] == {
+        "median": None,
+        "reason": "history_insufficient",
+    }
 
 
 def test_compare_rejects_summaries_from_different_patients():

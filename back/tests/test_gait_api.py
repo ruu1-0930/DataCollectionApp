@@ -1,10 +1,12 @@
 """Integration tests for the stable gait data workbench API."""
 
 import json
+import math
 import re
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy import event
 
 from config import db
 from models.models import DeviceRawData
@@ -135,6 +137,27 @@ def test_session_filters_include_canonical_start_boundaries(client):
     sessions = response.get_json()["data"]["sessions"]
 
     assert [session["session_id"] for session in sessions] == [session_ids[2], session_ids[1]]
+
+
+def test_date_only_end_includes_entire_day_and_excludes_next_midnight(client):
+    morning = datetime(2026, 7, 12, 9, 0)
+    evening = datetime(2026, 7, 12, 23, 59)
+    next_midnight = datetime(2026, 7, 13, 0, 0)
+    auth, patient_id, session_ids = _setup_sessions(
+        client,
+        [morning, evening, next_midnight],
+    )
+
+    response = client.get(
+        f"/patients/{patient_id}/gait/sessions",
+        headers=auth,
+        query_string={"start": "2026-07-12", "end": "2026-07-12"},
+    )
+
+    assert response.status_code == 200
+    assert [
+        session["session_id"] for session in response.get_json()["data"]["sessions"]
+    ] == [session_ids[1], session_ids[0]]
 
 
 def test_session_filter_keeps_cross_boundary_session_canonical_and_accessible(client):
@@ -295,6 +318,113 @@ def test_frames_use_default_and_capped_page_sizes(client):
     assert capped_response.get_json()["data"]["page_size"] == 500
 
 
+def test_frames_page_does_not_load_entire_session_as_raw_models(client):
+    auth, patient_id, session_id = _setup_session(client, frames=20)
+    db.session.expunge_all()
+    loaded_raw_ids = []
+
+    def record_load(raw, _context):
+        loaded_raw_ids.append(raw.id)
+
+    event.listen(DeviceRawData, "load", record_load)
+    try:
+        response = client.get(
+            f"/patients/{patient_id}/gait/sessions/{session_id}/frames",
+            headers=auth,
+            query_string={"page": 2, "page_size": 3},
+        )
+    finally:
+        event.remove(DeviceRawData, "load", record_load)
+
+    assert response.status_code == 200
+    data = response.get_json()["data"]
+    assert data["total"] == 20
+    assert len(data["items"]) == 3
+    assert len(loaded_raw_ids) <= 6
+
+
+def test_session_list_queries_only_aggregation_columns(client):
+    auth, patient_id, _ = _setup_session(client, frames=3)
+    statements = []
+
+    def record_sql(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "device_raw_data" in statement:
+            statements.append(statement.lower())
+
+    event.listen(db.engine, "before_cursor_execute", record_sql)
+    try:
+        response = client.get(f"/patients/{patient_id}/gait/sessions", headers=auth)
+    finally:
+        event.remove(db.engine, "before_cursor_execute", record_sql)
+
+    assert response.status_code == 200
+    assert statements
+    assert all("device_raw_data.p1" not in statement for statement in statements)
+    assert all("device_raw_data.ax" not in statement for statement in statements)
+
+
+def test_target_session_detail_does_not_load_other_session_raw_models(client):
+    starts = [
+        *[_BASE_TIME + timedelta(seconds=index) for index in range(4)],
+        *[_BASE_TIME + timedelta(minutes=2, seconds=index) for index in range(4)],
+    ]
+    auth, patient_id, session_ids = _setup_sessions(client, starts)
+    db.session.expunge_all()
+    loaded_raw_ids = []
+
+    def record_load(raw, _context):
+        loaded_raw_ids.append(raw.id)
+
+    event.listen(DeviceRawData, "load", record_load)
+    try:
+        response = client.get(
+            f"/patients/{patient_id}/gait/sessions/{session_ids[0]}",
+            headers=auth,
+        )
+    finally:
+        event.remove(DeviceRawData, "load", record_load)
+
+    assert response.status_code == 200
+    assert response.get_json()["data"]["frame_count"] == 4
+    assert len(loaded_raw_ids) <= 8
+
+
+def test_non_finite_raw_values_return_null_without_json_failure(client):
+    auth, patient_id, session_id = _setup_session(client)
+    rows = DeviceRawData.query.filter_by(patient_id=patient_id).all()
+    for raw in rows:
+        raw.walking_speed = math.inf
+        raw.p1 = math.inf
+        raw.ax = -math.inf
+    db.session.commit()
+
+    detail_response = client.get(
+        f"/patients/{patient_id}/gait/sessions/{session_id}",
+        headers=auth,
+    )
+    frames_response = client.get(
+        f"/patients/{patient_id}/gait/sessions/{session_id}/frames",
+        headers=auth,
+    )
+
+    assert detail_response.status_code == 200
+    assert frames_response.status_code == 200
+    assert "Infinity" not in detail_response.get_data(as_text=True)
+    assert "Infinity" not in frames_response.get_data(as_text=True)
+    detail = detail_response.get_json()["data"]
+    frame = frames_response.get_json()["data"]["items"][0]
+    assert detail["metrics"]["walking_speed_mps"]["value"] is None
+    assert detail["data_quality"]["missing_required_values"] == 2
+    assert next(
+        flag
+        for flag in detail["flags"]
+        if flag["metric_key"] == "walking_speed_mps"
+    )["status"] == "unknown"
+    assert frame["left"]["pressure"]["p1"] is None
+    assert frame["left"]["imu"]["ax"] is None
+    assert frame["left"]["walking_speed_mps"] is None
+
+
 @pytest.mark.parametrize("count", [1, 6])
 def test_compare_rejects_session_counts_outside_two_to_five(client, count):
     auth, patient_id, session_ids = _setup_sessions(
@@ -343,6 +473,26 @@ def test_compare_preserves_requested_session_order_for_baseline(client):
     assert speed_rows[0]["value"] == pytest.approx(1.0)
     assert speed_rows[0]["delta_abs"] == pytest.approx(0.0)
     assert speed_rows[1]["delta_abs"] == pytest.approx(-0.2)
+
+
+def test_compare_returns_recent_history_separately_from_selected_delta(client):
+    starts = [_BASE_TIME + timedelta(minutes=index) for index in range(7)]
+    speeds = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8]
+    auth, patient_id, session_ids = _setup_sessions(client, starts, walking_speeds=speeds)
+
+    response = client.post(
+        f"/patients/{patient_id}/gait/compare",
+        headers=auth,
+        json={"session_ids": [session_ids[0], session_ids[1]]},
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()["data"]
+    assert data["metrics"]["walking_speed_mps"][0]["delta_abs"] == 0.0
+    assert data["history_baselines"]["walking_speed_mps"] == {
+        "median": pytest.approx(1.4),
+        "reason": None,
+    }
 
 
 def test_compare_accepts_five_sessions(client):

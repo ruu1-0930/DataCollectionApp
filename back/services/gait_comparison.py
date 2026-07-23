@@ -1,6 +1,13 @@
 """Pure comparison of canonical gait-session summaries."""
 
-from services.gait_analysis import CANONICAL_METRIC_KEYS, DERIVED_METRICS, FIRMWARE_METRICS
+import statistics
+
+from services.gait_analysis import (
+    CANONICAL_METRIC_KEYS,
+    DERIVED_METRICS,
+    FIRMWARE_METRICS,
+    _finite_or_none,
+)
 
 
 def _metric_unit(metric_key):
@@ -11,7 +18,31 @@ def _metric_unit(metric_key):
 
 def _metric_value(summary, metric_key):
     metric = summary.get("metrics", {}).get(metric_key)
-    return metric.get("value") if isinstance(metric, dict) else None
+    return _finite_or_none(metric.get("value")) if isinstance(metric, dict) else None
+
+
+def _history_baseline(summaries, metric_key):
+    values = [
+        value
+        for summary in summaries
+        if summary.get("data_quality", {}).get("status") in {"complete", "usable"}
+        if (value := _metric_value(summary, metric_key)) not in (None, 0)
+    ][-5:]
+    if not values:
+        return {"median": None, "reason": "history_insufficient"}
+    return {"median": statistics.median(values), "reason": None}
+
+
+def _delta(value, baseline_value):
+    if value is None:
+        return None, None, "value_unavailable"
+    if baseline_value is None:
+        return None, None, "baseline_unavailable"
+
+    delta_abs = value - baseline_value
+    if baseline_value == 0:
+        return delta_abs, None, "baseline_zero"
+    return delta_abs, delta_abs / baseline_value * 100, None
 
 
 def compare_session_summaries(summaries, session_ids):
@@ -46,12 +77,7 @@ def compare_session_summaries(summaries, session_ids):
         rows = []
         for summary in selected:
             value = _metric_value(summary, metric_key)
-            if value is None or baseline_value is None:
-                delta_abs = None
-                delta_pct = None
-            else:
-                delta_abs = value - baseline_value
-                delta_pct = delta_abs / baseline_value * 100 if baseline_value else None
+            delta_abs, delta_pct, reason = _delta(value, baseline_value)
             rows.append(
                 {
                     "session_id": summary["session_id"],
@@ -59,8 +85,17 @@ def compare_session_summaries(summaries, session_ids):
                     "unit": _metric_unit(metric_key),
                     "delta_abs": delta_abs,
                     "delta_pct": delta_pct,
+                    "reason": reason,
                 }
             )
         metrics[metric_key] = rows
 
-    return {"session_ids": list(session_ids), "metrics": metrics}
+    history_baselines = {
+        metric_key: _history_baseline(summaries, metric_key)
+        for metric_key in CANONICAL_METRIC_KEYS
+    }
+    return {
+        "session_ids": list(session_ids),
+        "metrics": metrics,
+        "history_baselines": history_baselines,
+    }

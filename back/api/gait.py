@@ -1,11 +1,15 @@
 """Read-only gait workbench endpoints backed by canonical gait services."""
 
 from datetime import datetime, timedelta
+import re
 
 from flask import Blueprint, g, jsonify, request
 
+from config import db
 from models.models import DeviceRawData, Patient
 from services.gait_analysis import (
+    CANONICAL_METRIC_KEYS,
+    _finite_or_none,
     aggregate_session,
     build_session_flags,
     segment_sessions,
@@ -23,6 +27,23 @@ _PAGE_SIZE_DEFAULT = 100
 _PAGE_SIZE_MAX = 500
 _CHART_POINT_MAX = 500
 _SESSION_WINDOW_DAYS = 30
+_SESSION_GAP_SECONDS = 30
+_DATE_ONLY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_SESSION_ID_PATTERN = re.compile(
+    r"^P(?P<patient_id>\d+)-(?P<timestamp>\d{8}T\d{9})$"
+)
+_AGGREGATE_COLS = (
+    DeviceRawData.collected_at,
+    DeviceRawData.foot,
+    DeviceRawData.step_length,
+    DeviceRawData.walking_speed,
+    DeviceRawData.single_support_time,
+    DeviceRawData.double_support_time,
+)
+_SENSOR_COLS = tuple(
+    getattr(DeviceRawData, column)
+    for column in _PRESSURE_COLS + _IMU_COLS
+)
 
 
 def _owned_patient_or_resp(patient_id):
@@ -35,22 +56,33 @@ def _owned_patient_or_resp(patient_id):
     return patient, None
 
 
-def _fetch_rows(patient_id):
-    """Load raw per-foot values only; transformed model outputs never enter the DTO."""
-    query = DeviceRawData.query.filter_by(patient_id=patient_id)
+def _fetch_rows(
+    patient_id,
+    *,
+    start=None,
+    end=None,
+    timestamps=None,
+    include_sensors=False,
+):
+    """Load only the requested columns and stable session/page time range."""
+    columns = _AGGREGATE_COLS + (_SENSOR_COLS if include_sensors else ())
+    query = db.session.query(*columns).filter(DeviceRawData.patient_id == patient_id)
+    if start is not None:
+        query = query.filter(DeviceRawData.collected_at >= start)
+    if end is not None:
+        query = query.filter(DeviceRawData.collected_at <= end)
+    if timestamps is not None:
+        if not timestamps:
+            return []
+        query = query.filter(DeviceRawData.collected_at.in_(timestamps))
 
+    column_names = [column.key for column in columns]
     rows = []
-    for raw in query.order_by(DeviceRawData.collected_at.asc()).all():
-        row = {
-            "collected_at": raw.collected_at,
-            "foot": raw.foot,
-            "step_length": raw.step_length,
-            "walking_speed": raw.walking_speed,
-            "single_support_time": raw.single_support_time,
-            "double_support_time": raw.double_support_time,
-        }
-        for column in _PRESSURE_COLS + _IMU_COLS:
-            row[column] = getattr(raw, column)
+    for values in query.order_by(DeviceRawData.collected_at.asc()).all():
+        row = dict(zip(column_names, values))
+        for column in column_names:
+            if column not in {"collected_at", "foot"}:
+                row[column] = _finite_or_none(row[column])
         rows.append(row)
     return rows
 
@@ -96,37 +128,203 @@ def _session_records(rows, patient_id):
     return records
 
 
-def _parse_naive_datetime(value):
+def _parse_naive_datetime(value, *, date_end=False):
     try:
         parsed = datetime.fromisoformat(value)
     except (TypeError, ValueError):
         raise ValueError("时间必须是 ISO-8601 naive datetime")
     if parsed.tzinfo is not None:
         raise ValueError("时间不能包含时区")
-    return parsed
+    if date_end and _DATE_ONLY_PATTERN.fullmatch(value):
+        return parsed + timedelta(days=1), True
+    return parsed, False
 
 
 def _session_filter_bounds_or_resp():
     start_value = request.args.get("start") or None
     end_value = request.args.get("end") or None
     try:
-        start = _parse_naive_datetime(start_value) if start_value else None
-        end = _parse_naive_datetime(end_value) if end_value else None
+        start = _parse_naive_datetime(start_value)[0] if start_value else None
+        end, end_exclusive = (
+            _parse_naive_datetime(end_value, date_end=True)
+            if end_value
+            else (None, False)
+        )
     except ValueError as error:
-        return None, None, (jsonify(Response.error(422, str(error))), 422)
+        return None, None, False, (jsonify(Response.error(422, str(error))), 422)
     if start is not None and end is not None and end < start:
-        return None, None, (jsonify(Response.error(422, "end 不能早于 start")), 422)
-    return start, end, None
+        return None, None, False, (jsonify(Response.error(422, "end 不能早于 start")), 422)
+    return start, end, end_exclusive, None
 
 
-def _filter_session_records(records, start, end):
+def _timestamp_query(patient_id):
+    return db.session.query(DeviceRawData.collected_at).filter(
+        DeviceRawData.patient_id == patient_id
+    )
+
+
+def _session_starts_in_range(patient_id, start, end, end_exclusive):
     effective_start = start or datetime.now() - timedelta(days=_SESSION_WINDOW_DAYS)
-    return [
-        record
-        for record in records
-        if record[0]["start"] >= effective_start
-        and (end is None or record[0]["start"] <= end)
-    ]
+    previous_row = (
+        _timestamp_query(patient_id)
+        .filter(DeviceRawData.collected_at < effective_start)
+        .distinct()
+        .order_by(DeviceRawData.collected_at.desc())
+        .first()
+    )
+    query = (
+        _timestamp_query(patient_id)
+        .filter(DeviceRawData.collected_at >= effective_start)
+        .distinct()
+    )
+    if end is not None:
+        operator = (
+            DeviceRawData.collected_at < end
+            if end_exclusive
+            else DeviceRawData.collected_at <= end
+        )
+        query = query.filter(operator)
+
+    timestamps = [row[0] for row in query.order_by(DeviceRawData.collected_at.asc()).all()]
+    if previous_row is not None:
+        timestamps.insert(0, previous_row[0])
+    if not timestamps:
+        return []
+
+    starts = []
+    group_start = timestamps[0]
+    for previous, current in zip(timestamps, timestamps[1:]):
+        if (current - previous).total_seconds() > _SESSION_GAP_SECONDS:
+            if group_start >= effective_start:
+                starts.append(group_start)
+            group_start = current
+    if group_start >= effective_start:
+        starts.append(group_start)
+    return starts
+
+
+def _iter_session_starts_desc(patient_id, *, before=None):
+    query = _timestamp_query(patient_id)
+    if before is not None:
+        query = query.filter(DeviceRawData.collected_at < before)
+    query = query.distinct().order_by(DeviceRawData.collected_at.desc())
+
+    group_start = None
+    later = None
+    for row in query.yield_per(500):
+        timestamp = row[0]
+        if later is not None and (later - timestamp).total_seconds() > _SESSION_GAP_SECONDS:
+            yield group_start
+        group_start = timestamp
+        later = timestamp
+    if group_start is not None:
+        yield group_start
+
+
+def _session_bounds_for_start(patient_id, start):
+    previous_row = (
+        _timestamp_query(patient_id)
+        .filter(DeviceRawData.collected_at < start)
+        .distinct()
+        .order_by(DeviceRawData.collected_at.desc())
+        .first()
+    )
+    if (
+        previous_row is not None
+        and (start - previous_row[0]).total_seconds() <= _SESSION_GAP_SECONDS
+    ):
+        return None
+
+    previous = None
+    query = (
+        _timestamp_query(patient_id)
+        .filter(DeviceRawData.collected_at >= start)
+        .distinct()
+        .order_by(DeviceRawData.collected_at.asc())
+    )
+    for row in query.yield_per(500):
+        timestamp = row[0]
+        if previous is None and timestamp != start:
+            return None
+        if (
+            previous is not None
+            and (timestamp - previous).total_seconds() > _SESSION_GAP_SECONDS
+        ):
+            break
+        previous = timestamp
+    return (start, previous) if previous is not None else None
+
+
+def _parse_session_start(patient_id, session_id):
+    match = _SESSION_ID_PATTERN.fullmatch(session_id)
+    if match is None or int(match.group("patient_id")) != patient_id:
+        return None
+    try:
+        start = datetime.strptime(match.group("timestamp"), "%Y%m%dT%H%M%S%f")
+    except ValueError:
+        return None
+    return start
+
+
+def _load_session(patient_id, start, *, include_sensors):
+    bounds = _session_bounds_for_start(patient_id, start)
+    if bounds is None:
+        return None
+    rows = _fetch_rows(
+        patient_id,
+        start=bounds[0],
+        end=bounds[1],
+        include_sensors=include_sensors,
+    )
+    sessions = segment_sessions(rows, gap_seconds=_SESSION_GAP_SECONDS)
+    if len(sessions) != 1 or sessions[0]["start"] != start:
+        return None
+    return sessions[0]
+
+
+def _record_for_session_id(patient_id, session_id, *, include_sensors, history=None):
+    start = _parse_session_start(patient_id, session_id)
+    if start is None:
+        return None
+    session = _load_session(patient_id, start, include_sensors=include_sensors)
+    if session is None:
+        return None
+    return session, _session_summary(session, patient_id, history or [])
+
+
+def _prior_history(patient_id, before):
+    summaries_desc = []
+    valid_count = 0
+    for start in _iter_session_starts_desc(patient_id, before=before):
+        session = _load_session(patient_id, start, include_sensors=False)
+        if session is None:
+            continue
+        summary = _session_summary(session, patient_id, [])
+        summaries_desc.append(summary)
+        if summary["data_quality"]["status"] != "limited":
+            valid_count += 1
+        if valid_count == 5:
+            break
+    return list(reversed(summaries_desc))
+
+
+def _comparison_history(patient_id):
+    summaries_desc = []
+    valid_counts = {metric_key: 0 for metric_key in CANONICAL_METRIC_KEYS}
+    for start in _iter_session_starts_desc(patient_id):
+        session = _load_session(patient_id, start, include_sensors=False)
+        if session is None:
+            continue
+        summary = _session_summary(session, patient_id, [])
+        summaries_desc.append(summary)
+        if summary["data_quality"]["status"] in {"complete", "usable"}:
+            for metric_key in CANONICAL_METRIC_KEYS:
+                value = summary["metrics"][metric_key]["value"]
+                if _finite_or_none(value) not in (None, 0):
+                    valid_counts[metric_key] += 1
+        if all(count >= 5 for count in valid_counts.values()):
+            break
+    return list(reversed(summaries_desc))
 
 
 def _public_summary(summary):
@@ -144,14 +342,20 @@ def _foot_payload(row):
     if row is None:
         return None
     return {
-        "pressure": {column: row.get(column) for column in _PRESSURE_COLS},
+        "pressure": {
+            column: _finite_or_none(row.get(column))
+            for column in _PRESSURE_COLS
+        },
         "pressure_unit": "ADC",
-        "imu": {column: row.get(column) for column in _IMU_COLS},
+        "imu": {
+            column: _finite_or_none(row.get(column))
+            for column in _IMU_COLS
+        },
         "imu_unit": "raw_unscaled",
-        "walking_speed_mps": row.get("walking_speed"),
-        "step_length_m": row.get("step_length"),
-        "single_support_time_s": row.get("single_support_time"),
-        "double_support_time_s": row.get("double_support_time"),
+        "walking_speed_mps": _finite_or_none(row.get("walking_speed")),
+        "step_length_m": _finite_or_none(row.get("step_length")),
+        "single_support_time_s": _finite_or_none(row.get("single_support_time")),
+        "double_support_time_s": _finite_or_none(row.get("double_support_time")),
     }
 
 
@@ -201,13 +405,21 @@ def list_gait_sessions(patient_id):
     if error:
         return error
 
-    start, end, error = _session_filter_bounds_or_resp()
+    start, end, end_exclusive, error = _session_filter_bounds_or_resp()
     if error:
         return error
 
-    records = _session_records(_fetch_rows(patient_id), patient_id)
-    records = _filter_session_records(records, start, end)
-    summaries = [_public_summary(summary) for _, summary in reversed(records)]
+    starts = _session_starts_in_range(patient_id, start, end, end_exclusive)
+    history = _prior_history(patient_id, starts[0]) if starts else []
+    summaries = []
+    for session_start in starts:
+        session = _load_session(patient_id, session_start, include_sensors=False)
+        if session is None:
+            continue
+        summary = _session_summary(session, patient_id, history)
+        history.append(summary)
+        summaries.append(_public_summary(summary))
+    summaries.reverse()
     return jsonify(Response.success(data={"total": len(summaries), "sessions": summaries}))
 
 
@@ -218,7 +430,14 @@ def get_gait_session(patient_id, session_id):
     if error:
         return error
 
-    record = _record_for_id(_session_records(_fetch_rows(patient_id), patient_id), session_id)
+    start = _parse_session_start(patient_id, session_id)
+    history = _prior_history(patient_id, start) if start is not None else []
+    record = _record_for_session_id(
+        patient_id,
+        session_id,
+        include_sensors=True,
+        history=history,
+    )
     if record is None:
         return _session_not_found_response()
 
@@ -238,21 +457,50 @@ def get_gait_session_frames(patient_id, session_id):
     if error:
         return error
 
-    record = _record_for_id(_session_records(_fetch_rows(patient_id), patient_id), session_id)
-    if record is None:
+    session_start = _parse_session_start(patient_id, session_id)
+    bounds = (
+        _session_bounds_for_start(patient_id, session_start)
+        if session_start is not None
+        else None
+    )
+    if bounds is None:
         return _session_not_found_response()
 
     page = _page_arg("page", 1)
     page_size = _page_arg("page_size", _PAGE_SIZE_DEFAULT, _PAGE_SIZE_MAX)
-    frames = record[0]["frames"]
-    start = (page - 1) * page_size
-    items = [_frame_payload(frame) for frame in frames[start:start + page_size]]
+    timestamp_query = (
+        _timestamp_query(patient_id)
+        .filter(DeviceRawData.collected_at >= bounds[0])
+        .filter(DeviceRawData.collected_at <= bounds[1])
+        .distinct()
+    )
+    total = timestamp_query.count()
+    page_timestamps = [
+        row[0]
+        for row in (
+            timestamp_query.order_by(DeviceRawData.collected_at.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+    ]
+    page_rows = _fetch_rows(
+        patient_id,
+        timestamps=page_timestamps,
+        include_sensors=True,
+    )
+    frames = [
+        frame
+        for session in segment_sessions(page_rows, gap_seconds=_SESSION_GAP_SECONDS)
+        for frame in session["frames"]
+    ]
+    items = [_frame_payload(frame) for frame in frames]
     return jsonify(
         Response.success(
             data={
                 "page": page,
                 "page_size": page_size,
-                "total": len(frames),
+                "total": total,
                 "items": items,
             }
         )
@@ -271,7 +519,21 @@ def compare_gait_sessions(patient_id):
     if not isinstance(session_ids, list) or not all(isinstance(item, str) for item in session_ids):
         return jsonify(Response.error(422, "session_ids 必须是字符串数组")), 422
 
-    summaries = [summary for _, summary in _session_records(_fetch_rows(patient_id), patient_id)]
+    selected = []
+    for session_id in session_ids:
+        record = _record_for_session_id(
+            patient_id,
+            session_id,
+            include_sensors=False,
+        )
+        if record is not None:
+            selected.append(record[1])
+
+    summaries_by_id = {
+        summary["session_id"]: summary
+        for summary in _comparison_history(patient_id) + selected
+    }
+    summaries = sorted(summaries_by_id.values(), key=lambda summary: summary["start"])
     try:
         data = compare_session_summaries(summaries, session_ids)
     except ValueError as error:
