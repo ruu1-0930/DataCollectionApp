@@ -14,8 +14,8 @@ def _load_or_train_model(model_path=_MODEL_PATH):
                 return pickle.load(f)
         except Exception:
             pass
-    X_fake = np.random.rand(10, 6)
-    y_fake = np.random.randint(0, 2, size=(10, 5))
+    X_fake = np.arange(60, dtype=float).reshape(10, 6)
+    y_fake = np.tile([0, 1], (5, 5)).T
     m = MultiOutputClassifier(SVC(probability=True))
     m.fit(X_fake, y_fake)
     return m
