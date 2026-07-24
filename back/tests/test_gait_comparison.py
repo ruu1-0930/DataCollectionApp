@@ -91,19 +91,57 @@ def test_compare_returns_separate_recent_five_valid_history_medians():
     assert out["metrics"]["walking_speed_mps"][0]["delta_abs"] == 0.0
 
 
-def test_compare_history_baseline_excludes_zero_missing_and_non_finite_values():
+def test_compare_history_uses_one_recent_five_session_set_without_backfill():
     summaries = [
-        summary("S1", None),
-        summary("S2", 0.0),
-        summary("S3", math.nan),
-        summary("S4", math.inf),
+        summary("S0", 999.0),
+        summary("S1", 0.0),
+        summary("S2", None),
+        summary("S3", 2.0),
+        summary("S4", 4.0),
+        summary("S5", 6.0),
+    ]
+    for index, item in enumerate(summaries):
+        item["metrics"]["step_length_m"]["value"] = 999.0 if index == 0 else index / 10
+
+    out = compare_session_summaries(summaries, ["S4", "S5"])
+
+    assert out["history_baselines"]["walking_speed_mps"] == {
+        "median": 3.0,
+        "reason": None,
+    }
+    assert out["history_baselines"]["step_length_m"] == {
+        "median": 0.3,
+        "reason": None,
+    }
+
+
+def test_compare_nulls_arithmetic_overflow_with_reason():
+    out = compare_session_summaries(
+        [summary("S1", -1e308), summary("S2", 1e308)],
+        ["S1", "S2"],
+    )
+
+    row = out["metrics"]["walking_speed_mps"][1]
+    assert row["delta_abs"] is None
+    assert row["delta_pct"] is None
+    assert row["reason"] == "arithmetic_non_finite"
+
+
+def test_compare_nulls_overflowed_history_median_without_older_backfill():
+    summaries = [
+        summary("S0", 0.5),
+        summary("S1", 1e308),
+        summary("S2", None),
+        summary("S3", 1e308),
+        summary("S4", 1e308),
+        summary("S5", 1e308),
     ]
 
-    out = compare_session_summaries(summaries, ["S1", "S2"])
+    out = compare_session_summaries(summaries, ["S4", "S5"])
 
     assert out["history_baselines"]["walking_speed_mps"] == {
         "median": None,
-        "reason": "history_insufficient",
+        "reason": "arithmetic_non_finite",
     }
 
 

@@ -21,16 +21,21 @@ def _metric_value(summary, metric_key):
     return _finite_or_none(metric.get("value")) if isinstance(metric, dict) else None
 
 
-def _history_baseline(summaries, metric_key):
+def _history_baseline(recent_summaries, metric_key):
     values = [
         value
-        for summary in summaries
-        if summary.get("data_quality", {}).get("status") in {"complete", "usable"}
-        if (value := _metric_value(summary, metric_key)) not in (None, 0)
-    ][-5:]
+        for summary in recent_summaries
+        if (value := _metric_value(summary, metric_key)) is not None
+    ]
     if not values:
         return {"median": None, "reason": "history_insufficient"}
-    return {"median": statistics.median(values), "reason": None}
+    try:
+        median = _finite_or_none(statistics.median(values))
+    except ArithmeticError:
+        median = None
+    if median is None:
+        return {"median": None, "reason": "arithmetic_non_finite"}
+    return {"median": median, "reason": None}
 
 
 def _delta(value, baseline_value):
@@ -39,10 +44,15 @@ def _delta(value, baseline_value):
     if baseline_value is None:
         return None, None, "baseline_unavailable"
 
-    delta_abs = value - baseline_value
+    delta_abs = _finite_or_none(value - baseline_value)
+    if delta_abs is None:
+        return None, None, "arithmetic_non_finite"
     if baseline_value == 0:
         return delta_abs, None, "baseline_zero"
-    return delta_abs, delta_abs / baseline_value * 100, None
+    delta_pct = _finite_or_none(delta_abs / baseline_value * 100)
+    if delta_pct is None:
+        return delta_abs, None, "arithmetic_non_finite"
+    return delta_abs, delta_pct, None
 
 
 def compare_session_summaries(summaries, session_ids):
@@ -71,6 +81,12 @@ def compare_session_summaries(summaries, session_ids):
     if len(set(patient_ids)) != 1:
         raise ValueError("selected summaries must belong to the same patient")
 
+    recent_history = [
+        summary
+        for summary in summaries
+        if summary.get("data_quality", {}).get("status") in {"complete", "usable"}
+    ][-5:]
+
     metrics = {}
     for metric_key in CANONICAL_METRIC_KEYS:
         baseline_value = _metric_value(selected[0], metric_key)
@@ -91,7 +107,7 @@ def compare_session_summaries(summaries, session_ids):
         metrics[metric_key] = rows
 
     history_baselines = {
-        metric_key: _history_baseline(summaries, metric_key)
+        metric_key: _history_baseline(recent_history, metric_key)
         for metric_key in CANONICAL_METRIC_KEYS
     }
     return {

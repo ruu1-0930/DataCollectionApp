@@ -120,6 +120,22 @@ def _create_other_clinician_auth(client):
     return {"Authorization": f"Bearer {token}"}
 
 
+def _capture_raw_selects(action):
+    statements = []
+
+    def record_sql(_conn, _cursor, statement, _parameters, _context, _executemany):
+        normalized = " ".join(statement.lower().split())
+        if normalized.startswith("select") and "device_raw_data" in normalized:
+            statements.append(normalized)
+
+    event.listen(db.engine, "before_cursor_execute", record_sql)
+    try:
+        response = action()
+    finally:
+        event.remove(db.engine, "before_cursor_execute", record_sql)
+    return response, statements
+
+
 def test_session_filters_include_canonical_start_boundaries(client):
     starts = [
         _BASE_TIME,
@@ -249,6 +265,18 @@ def test_session_filters_reject_reversed_datetime_range(client):
     assert response.status_code == 422
 
 
+def test_session_filters_reject_adjacent_reversed_date_only_range(client):
+    auth, patient_id, _ = _setup_session(client)
+
+    response = client.get(
+        f"/patients/{patient_id}/gait/sessions",
+        headers=auth,
+        query_string={"start": "2026-07-13", "end": "2026-07-12"},
+    )
+
+    assert response.status_code == 422
+
+
 def test_sessions_return_stable_ids_newest_first(client):
     older_start = _BASE_TIME
     newer_start = _BASE_TIME + timedelta(minutes=1)
@@ -262,6 +290,38 @@ def test_sessions_return_stable_ids_newest_first(client):
     assert sessions[0]["start"] > sessions[1]["start"]
     assert re.fullmatch(rf"P{patient_id}-\d{{8}}T\d{{9}}", sessions[0]["session_id"])
     assert "session_index" not in sessions[0]
+
+
+def test_session_list_bulk_loads_aggregate_rows_once_for_narrow_and_wide_ranges(client):
+    starts = [_BASE_TIME + timedelta(minutes=index) for index in range(7)]
+    auth, patient_id, _ = _setup_sessions(client, starts)
+
+    narrow_response, narrow_statements = _capture_raw_selects(
+        lambda: client.get(
+            f"/patients/{patient_id}/gait/sessions",
+            headers=auth,
+            query_string={
+                "start": starts[0].isoformat(),
+                "end": starts[1].isoformat(),
+            },
+        )
+    )
+    wide_response, wide_statements = _capture_raw_selects(
+        lambda: client.get(
+            f"/patients/{patient_id}/gait/sessions",
+            headers=auth,
+            query_string={
+                "start": starts[0].isoformat(),
+                "end": starts[-1].isoformat(),
+            },
+        )
+    )
+
+    assert narrow_response.status_code == 200
+    assert wide_response.status_code == 200
+    assert len(narrow_statements) == len(wide_statements)
+    assert sum("device_raw_data.walking_speed" in sql for sql in narrow_statements) == 1
+    assert sum("device_raw_data.walking_speed" in sql for sql in wide_statements) == 1
 
 
 def test_session_detail_uses_step_length_without_inline_frames(client):
@@ -425,6 +485,42 @@ def test_non_finite_raw_values_return_null_without_json_failure(client):
     assert frame["left"]["walking_speed_mps"] is None
 
 
+def test_finite_extreme_values_do_not_overflow_gait_json(client):
+    starts = [_BASE_TIME, _BASE_TIME + timedelta(minutes=1)]
+    auth, patient_id, session_ids = _setup_sessions(
+        client,
+        starts,
+        walking_speeds=[-1e308, 1e308],
+    )
+
+    detail_response = client.get(
+        f"/patients/{patient_id}/gait/sessions/{session_ids[1]}",
+        headers=auth,
+    )
+    compare_response = client.post(
+        f"/patients/{patient_id}/gait/compare",
+        headers=auth,
+        json={"session_ids": session_ids},
+    )
+
+    assert detail_response.status_code == 200
+    assert compare_response.status_code == 200
+    assert "Infinity" not in detail_response.get_data(as_text=True)
+    assert "NaN" not in detail_response.get_data(as_text=True)
+    assert "Infinity" not in compare_response.get_data(as_text=True)
+    assert "NaN" not in compare_response.get_data(as_text=True)
+    comparison_row = compare_response.get_json()["data"]["metrics"]["walking_speed_mps"][1]
+    assert comparison_row["delta_abs"] is None
+    assert comparison_row["delta_pct"] is None
+    assert comparison_row["reason"] == "value_unavailable"
+    speed_flag = next(
+        flag
+        for flag in detail_response.get_json()["data"]["flags"]
+        if flag["metric_key"] == "walking_speed_mps"
+    )
+    assert speed_flag["status"] == "unknown"
+
+
 @pytest.mark.parametrize("count", [1, 6])
 def test_compare_rejects_session_counts_outside_two_to_five(client, count):
     auth, patient_id, session_ids = _setup_sessions(
@@ -452,6 +548,55 @@ def test_compare_rejects_duplicate_session_ids(client):
         json={"session_ids": [session_ids[0], session_ids[0]]},
     )
     assert response.status_code == 422
+
+
+def test_invalid_compare_payloads_execute_zero_raw_queries(client):
+    starts = [_BASE_TIME + timedelta(minutes=index) for index in range(6)]
+    auth, patient_id, session_ids = _setup_sessions(client, starts)
+    invalid_session_ids = [
+        [],
+        [session_ids[0]],
+        session_ids,
+        [session_ids[0], session_ids[0]],
+        [session_ids[0], "not-a-session-id"],
+    ]
+
+    for selected in invalid_session_ids:
+        response, statements = _capture_raw_selects(
+            lambda selected=selected: client.post(
+                f"/patients/{patient_id}/gait/compare",
+                headers=auth,
+                json={"session_ids": selected},
+            )
+        )
+        assert response.status_code == 422
+        assert statements == []
+
+
+def test_compare_bulk_loads_once_with_constant_query_count_for_two_or_five_sessions(client):
+    starts = [_BASE_TIME + timedelta(minutes=index) for index in range(7)]
+    auth, patient_id, session_ids = _setup_sessions(client, starts)
+
+    two_response, two_statements = _capture_raw_selects(
+        lambda: client.post(
+            f"/patients/{patient_id}/gait/compare",
+            headers=auth,
+            json={"session_ids": session_ids[:2]},
+        )
+    )
+    five_response, five_statements = _capture_raw_selects(
+        lambda: client.post(
+            f"/patients/{patient_id}/gait/compare",
+            headers=auth,
+            json={"session_ids": session_ids[:5]},
+        )
+    )
+
+    assert two_response.status_code == 200
+    assert five_response.status_code == 200
+    assert len(two_statements) == len(five_statements)
+    assert sum("device_raw_data.walking_speed" in sql for sql in two_statements) == 1
+    assert sum("device_raw_data.walking_speed" in sql for sql in five_statements) == 1
 
 
 def test_compare_preserves_requested_session_order_for_baseline(client):

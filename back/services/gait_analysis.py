@@ -55,6 +55,13 @@ def _finite_or_none(value):
         return None
 
 
+def _finite_statistic(operation, values):
+    try:
+        return _finite_or_none(operation(values))
+    except (ArithmeticError, ValueError):
+        return None
+
+
 def segment_sessions(rows, gap_seconds=30):
     """Group ordered device rows into timestamp-paired left/right frames."""
     if not rows:
@@ -98,7 +105,7 @@ def _frame_value(frame, field):
         if frame.get(foot) is not None and frame[foot].get(field) is not None
         if (value := _finite_or_none(frame[foot][field])) is not None
     ]
-    return statistics.fmean(values) if values else None
+    return _finite_statistic(statistics.fmean, values) if values else None
 
 
 def _frame_series(frames, field):
@@ -112,7 +119,7 @@ def _side_mean(frames, foot, field):
         if frame.get(foot) is not None and frame[foot].get(field) is not None
         if (value := _finite_or_none(frame[foot][field])) is not None
     ]
-    return statistics.fmean(values) if values else None
+    return _finite_statistic(statistics.fmean, values) if values else None
 
 
 def _statistics(values):
@@ -120,13 +127,24 @@ def _statistics(values):
     if not values:
         return {"mean": None, "median": None, "std": None, "cv_pct": None, "n": 0}
 
-    mean = statistics.fmean(values)
-    std = statistics.pstdev(values) if len(values) > 1 else 0.0
+    mean = _finite_statistic(statistics.fmean, values)
+    median = _finite_statistic(statistics.median, values)
+    std = (
+        _finite_statistic(statistics.pstdev, values)
+        if len(values) > 1
+        else 0.0
+    )
+    if mean is None or std is None:
+        cv_pct = None
+    elif mean == 0:
+        cv_pct = 0.0
+    else:
+        cv_pct = _safe_ratio(std, mean, multiplier=100)
     return {
         "mean": mean,
-        "median": statistics.median(values),
+        "median": median,
         "std": std,
-        "cv_pct": (std / mean * 100) if mean else 0.0,
+        "cv_pct": cv_pct,
         "n": len(values),
     }
 
@@ -150,8 +168,9 @@ def _ratio_series(frames, numerator_field, denominator_field, multiplier=1):
     for frame in frames:
         numerator = _frame_value(frame, numerator_field)
         denominator = _frame_value(frame, denominator_field)
-        if numerator is not None and denominator not in (None, 0):
-            values.append(numerator / denominator * multiplier)
+        value = _safe_ratio(numerator, denominator, multiplier)
+        if value is not None:
+            values.append(value)
     return values
 
 
@@ -192,8 +211,11 @@ def aggregate_session(frames):
     left_step = metrics["step_length_m"]["left_value"]
     right_step = metrics["step_length_m"]["right_value"]
     asymmetry = None
-    if left_step is not None and right_step is not None and left_step + right_step:
-        asymmetry = abs(left_step - right_step) / ((left_step + right_step) / 2) * 100
+    if left_step is not None and right_step is not None:
+        total_step = _finite_or_none(left_step + right_step)
+        step_difference = _finite_or_none(abs(left_step - right_step))
+        if total_step not in (None, 0) and step_difference is not None:
+            asymmetry = _safe_ratio(step_difference, total_step / 2, multiplier=100)
     metrics["step_length_asymmetry_pct"] = _metric(
         [] if asymmetry is None else [asymmetry],
         DERIVED_METRICS["step_length_asymmetry_pct"]["unit"],
@@ -221,9 +243,10 @@ def aggregate_session(frames):
         single_support = _frame_value(frame, "single_support_time")
         double_support = _frame_value(frame, "double_support_time")
         if single_support is not None and double_support is not None:
-            total_support = single_support + double_support
-            if total_support:
-                double_support_values.append(double_support / total_support * 100)
+            total_support = _finite_or_none(single_support + double_support)
+            value = _safe_ratio(double_support, total_support, multiplier=100)
+            if value is not None:
+                double_support_values.append(value)
     metrics["double_support_ratio_pct"] = _metric(
         double_support_values,
         DERIVED_METRICS["double_support_ratio_pct"]["unit"],
@@ -240,7 +263,10 @@ def _safe_ratio(numerator, denominator, multiplier=1):
     multiplier = _finite_or_none(multiplier)
     if numerator is None or denominator in (None, 0) or multiplier is None:
         return None
-    return _finite_or_none(numerator / denominator * multiplier)
+    try:
+        return _finite_or_none(numerator / denominator * multiplier)
+    except ArithmeticError:
+        return None
 
 
 def session_data_quality(frames):
@@ -299,7 +325,14 @@ def _history_for_metric(history_baseline, metric_key, current_value):
             "reason": "history_insufficient",
         }
 
-    median = statistics.median(prior_values)
+    median = _finite_statistic(statistics.median, prior_values)
+    if median is None:
+        return {
+            "median": None,
+            "delta_abs": None,
+            "delta_pct": None,
+            "reason": "arithmetic_non_finite",
+        }
     current_value = _finite_or_none(current_value)
     if current_value is None:
         return {
@@ -309,7 +342,14 @@ def _history_for_metric(history_baseline, metric_key, current_value):
             "reason": "current_unavailable",
         }
 
-    delta_abs = current_value - median
+    delta_abs = _finite_or_none(current_value - median)
+    if delta_abs is None:
+        return {
+            "median": median,
+            "delta_abs": None,
+            "delta_pct": None,
+            "reason": "arithmetic_non_finite",
+        }
     if median == 0:
         return {
             "median": median,
@@ -317,11 +357,12 @@ def _history_for_metric(history_baseline, metric_key, current_value):
             "delta_pct": None,
             "reason": "baseline_zero",
         }
+    delta_pct = _safe_ratio(delta_abs, median, multiplier=100)
     return {
         "median": median,
         "delta_abs": delta_abs,
-        "delta_pct": delta_abs / median * 100,
-        "reason": None,
+        "delta_pct": delta_pct,
+        "reason": None if delta_pct is not None else "arithmetic_non_finite",
     }
 
 

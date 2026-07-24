@@ -172,6 +172,19 @@ def test_aggregate_treats_non_finite_firmware_values_as_missing(unavailable):
     assert cadence["value"] is None
 
 
+def test_aggregate_nulls_finite_inputs_when_statistics_overflow():
+    out = aggregate_session([paired_frame(walking_speed=1e308)])
+
+    speed = out["metrics"]["walking_speed_mps"]
+    cadence = out["metrics"]["cadence_spm"]
+    assert speed["value"] is None
+    assert speed["left_value"] == 1e308
+    assert speed["right_value"] == 1e308
+    assert speed["statistics"]["mean"] is None
+    assert speed["statistics"]["median"] is None
+    assert cadence["value"] is None
+
+
 # ---------- session_data_quality ----------
 
 
@@ -314,6 +327,25 @@ def test_history_percentage_change_reports_zero_baseline_reason():
         "delta_abs": 1.2,
         "delta_pct": None,
         "reason": "baseline_zero",
+    }
+
+
+def test_history_nulls_arithmetic_overflow_with_reason_and_unknown_delta():
+    history = [
+        {
+            "data_quality": {"status": "complete"},
+            "metrics": metric_fixture(walking_speed_mps=-1e308),
+        }
+    ]
+
+    flags = build_session_flags(metric_fixture(walking_speed_mps=1e308), history)
+    speed = next(flag for flag in flags if flag["metric_key"] == "walking_speed_mps")
+
+    assert speed["history"] == {
+        "median": -1e308,
+        "delta_abs": None,
+        "delta_pct": None,
+        "reason": "arithmetic_non_finite",
     }
 
 

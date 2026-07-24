@@ -8,7 +8,6 @@ from flask import Blueprint, g, jsonify, request
 from config import db
 from models.models import DeviceRawData, Patient
 from services.gait_analysis import (
-    CANONICAL_METRIC_KEYS,
     _finite_or_none,
     aggregate_session,
     build_session_flags,
@@ -152,7 +151,11 @@ def _session_filter_bounds_or_resp():
         )
     except ValueError as error:
         return None, None, False, (jsonify(Response.error(422, str(error))), 422)
-    if start is not None and end is not None and end < start:
+    if (
+        start is not None
+        and end is not None
+        and (end <= start if end_exclusive else end < start)
+    ):
         return None, None, False, (jsonify(Response.error(422, "end 不能早于 start")), 422)
     return start, end, end_exclusive, None
 
@@ -203,24 +206,6 @@ def _session_starts_in_range(patient_id, start, end, end_exclusive):
     return starts
 
 
-def _iter_session_starts_desc(patient_id, *, before=None):
-    query = _timestamp_query(patient_id)
-    if before is not None:
-        query = query.filter(DeviceRawData.collected_at < before)
-    query = query.distinct().order_by(DeviceRawData.collected_at.desc())
-
-    group_start = None
-    later = None
-    for row in query.yield_per(500):
-        timestamp = row[0]
-        if later is not None and (later - timestamp).total_seconds() > _SESSION_GAP_SECONDS:
-            yield group_start
-        group_start = timestamp
-        later = timestamp
-    if group_start is not None:
-        yield group_start
-
-
 def _session_bounds_for_start(patient_id, start):
     previous_row = (
         _timestamp_query(patient_id)
@@ -266,10 +251,7 @@ def _parse_session_start(patient_id, session_id):
     return start
 
 
-def _load_session(patient_id, start, *, include_sensors):
-    bounds = _session_bounds_for_start(patient_id, start)
-    if bounds is None:
-        return None
+def _session_for_bounds(patient_id, bounds, *, include_sensors):
     rows = _fetch_rows(
         patient_id,
         start=bounds[0],
@@ -277,54 +259,18 @@ def _load_session(patient_id, start, *, include_sensors):
         include_sensors=include_sensors,
     )
     sessions = segment_sessions(rows, gap_seconds=_SESSION_GAP_SECONDS)
-    if len(sessions) != 1 or sessions[0]["start"] != start:
+    if len(sessions) != 1 or sessions[0]["start"] != bounds[0]:
         return None
     return sessions[0]
 
 
-def _record_for_session_id(patient_id, session_id, *, include_sensors, history=None):
-    start = _parse_session_start(patient_id, session_id)
-    if start is None:
-        return None
-    session = _load_session(patient_id, start, include_sensors=include_sensors)
-    if session is None:
-        return None
-    return session, _session_summary(session, patient_id, history or [])
-
-
-def _prior_history(patient_id, before):
-    summaries_desc = []
-    valid_count = 0
-    for start in _iter_session_starts_desc(patient_id, before=before):
-        session = _load_session(patient_id, start, include_sensors=False)
-        if session is None:
-            continue
-        summary = _session_summary(session, patient_id, [])
-        summaries_desc.append(summary)
-        if summary["data_quality"]["status"] != "limited":
-            valid_count += 1
-        if valid_count == 5:
-            break
-    return list(reversed(summaries_desc))
-
-
-def _comparison_history(patient_id):
-    summaries_desc = []
-    valid_counts = {metric_key: 0 for metric_key in CANONICAL_METRIC_KEYS}
-    for start in _iter_session_starts_desc(patient_id):
-        session = _load_session(patient_id, start, include_sensors=False)
-        if session is None:
-            continue
-        summary = _session_summary(session, patient_id, [])
-        summaries_desc.append(summary)
-        if summary["data_quality"]["status"] in {"complete", "usable"}:
-            for metric_key in CANONICAL_METRIC_KEYS:
-                value = summary["metrics"][metric_key]["value"]
-                if _finite_or_none(value) not in (None, 0):
-                    valid_counts[metric_key] += 1
-        if all(count >= 5 for count in valid_counts.values()):
-            break
-    return list(reversed(summaries_desc))
+def _bulk_session_records(patient_id, *, end=None):
+    rows = _fetch_rows(
+        patient_id,
+        end=end,
+        include_sensors=False,
+    )
+    return _session_records(rows, patient_id)
 
 
 def _public_summary(summary):
@@ -410,15 +356,24 @@ def list_gait_sessions(patient_id):
         return error
 
     starts = _session_starts_in_range(patient_id, start, end, end_exclusive)
-    history = _prior_history(patient_id, starts[0]) if starts else []
-    summaries = []
-    for session_start in starts:
-        session = _load_session(patient_id, session_start, include_sensors=False)
-        if session is None:
-            continue
-        summary = _session_summary(session, patient_id, history)
-        history.append(summary)
-        summaries.append(_public_summary(summary))
+    if not starts:
+        return jsonify(Response.success(data={"total": 0, "sessions": []}))
+
+    final_bounds = _session_bounds_for_start(patient_id, starts[-1])
+    if final_bounds is None:
+        return jsonify(Response.success(data={"total": 0, "sessions": []}))
+    records_by_start = {
+        session["start"]: summary
+        for session, summary in _bulk_session_records(
+            patient_id,
+            end=final_bounds[1],
+        )
+    }
+    summaries = [
+        _public_summary(records_by_start[session_start])
+        for session_start in starts
+        if session_start in records_by_start
+    ]
     summaries.reverse()
     return jsonify(Response.success(data={"total": len(summaries), "sessions": summaries}))
 
@@ -431,17 +386,23 @@ def get_gait_session(patient_id, session_id):
         return error
 
     start = _parse_session_start(patient_id, session_id)
-    history = _prior_history(patient_id, start) if start is not None else []
-    record = _record_for_session_id(
-        patient_id,
-        session_id,
-        include_sensors=True,
-        history=history,
+    bounds = (
+        _session_bounds_for_start(patient_id, start)
+        if start is not None
+        else None
     )
-    if record is None:
+    if bounds is None:
         return _session_not_found_response()
 
-    session, summary = record
+    record = _record_for_id(
+        _bulk_session_records(patient_id, end=bounds[1]),
+        session_id,
+    )
+    session = _session_for_bounds(patient_id, bounds, include_sensors=True)
+    if record is None or session is None:
+        return _session_not_found_response()
+
+    summary = record[1]
     data = _public_summary(summary)
     data["chart_series"] = _chart_series(session["frames"])
     return jsonify(Response.success(data=data))
@@ -519,21 +480,17 @@ def compare_gait_sessions(patient_id):
     if not isinstance(session_ids, list) or not all(isinstance(item, str) for item in session_ids):
         return jsonify(Response.error(422, "session_ids 必须是字符串数组")), 422
 
-    selected = []
-    for session_id in session_ids:
-        record = _record_for_session_id(
-            patient_id,
-            session_id,
-            include_sensors=False,
-        )
-        if record is not None:
-            selected.append(record[1])
+    if not 2 <= len(session_ids) <= 5:
+        return jsonify(Response.error(422, "comparison requires 2 to 5 sessions")), 422
+    if len(set(session_ids)) != len(session_ids):
+        return jsonify(Response.error(422, "session_ids must be unique")), 422
+    if any(_parse_session_start(patient_id, session_id) is None for session_id in session_ids):
+        return jsonify(Response.error(422, "invalid session_id format")), 422
 
-    summaries_by_id = {
-        summary["session_id"]: summary
-        for summary in _comparison_history(patient_id) + selected
-    }
-    summaries = sorted(summaries_by_id.values(), key=lambda summary: summary["start"])
+    summaries = [
+        summary
+        for _session, summary in _bulk_session_records(patient_id)
+    ]
     try:
         data = compare_session_summaries(summaries, session_ids)
     except ValueError as error:
