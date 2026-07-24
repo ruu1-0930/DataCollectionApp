@@ -9,8 +9,8 @@ def test_format_subject_id():
 
 def _token(client):
     resp = client.post('/clinician/enable', json={
-        'hospital': 'H', 'dept': 'D', 'name': 'Dr', 'phone': '1',
-        'terminal_code': 't', 'passcode': '1234'})
+        'hospital': 'H', 'dept': 'D', 'name': 'Dr', 'phone': '13800000000',
+        'passcode': '1234'})
     return resp.get_json()['data']['token']
 
 
@@ -43,8 +43,8 @@ def test_create_patient_dedup_returns_existing(client):
 
 def test_list_patients_only_own(client):
     auth = _auth(client)
-    client.post('/patients', headers=auth, json={'name': 'A', 'phone': '111'})
-    client.post('/patients', headers=auth, json={'name': 'B', 'phone': '222'})
+    client.post('/patients', headers=auth, json={'name': 'A', 'phone': '13700000000'})
+    client.post('/patients', headers=auth, json={'name': 'B', 'phone': '13600000000'})
     resp = client.get('/patients', headers=auth)
     items = resp.get_json()['data']
     assert len(items) == 2
@@ -53,7 +53,7 @@ def test_list_patients_only_own(client):
 def test_get_patient_detail(client):
     auth = _auth(client)
     pid = client.post('/patients', headers=auth,
-                      json={'name': 'A', 'phone': '111'}).get_json()['data']['id']
+                      json={'name': 'A', 'phone': '13700000000'}).get_json()['data']['id']
     resp = client.get(f'/patients/{pid}', headers=auth)
     assert resp.get_json()['data']['name'] == 'A'
 
@@ -61,9 +61,9 @@ def test_get_patient_detail(client):
 def test_get_other_clinician_patient_forbidden(client):
     auth1 = _auth(client)
     pid = client.post('/patients', headers=auth1,
-                      json={'name': 'A', 'phone': '111'}).get_json()['data']['id']
+                      json={'name': 'A', 'phone': '13700000000'}).get_json()['data']['id']
     token2 = client.post('/clinician/enable', json={
-        'hospital': 'H', 'dept': 'D', 'name': 'Dr2', 'phone': '2',
-        'terminal_code': 't2', 'passcode': '1234'}).get_json()['data']['token']
+        'hospital': 'H', 'dept': 'D', 'name': 'Dr2', 'phone': '13900000000',
+        'passcode': '1234'}).get_json()['data']['token']
     resp = client.get(f'/patients/{pid}', headers={'Authorization': f'Bearer {token2}'})
     assert resp.get_json()['code'] == 403

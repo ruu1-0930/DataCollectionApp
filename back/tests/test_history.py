@@ -15,8 +15,8 @@ def _frame(**over):
 
 
 def _setup_with_data(client, n=3):
-    auth = {'Authorization': f"Bearer {client.post('/clinician/enable', json={'hospital':'H','dept':'D','name':'Dr','phone':'1','terminal_code':'t','passcode':'1234'}).get_json()['data']['token']}"}
-    pid = client.post('/patients', headers=auth, json={'name': 'A', 'phone': '111'}).get_json()['data']['id']
+    auth = {'Authorization': f"Bearer {client.post('/clinician/enable', json={'hospital':'H','dept':'D','name':'Dr','phone':'13800000000','passcode':'1234'}).get_json()['data']['token']}"}
+    pid = client.post('/patients', headers=auth, json={'name': 'A', 'phone': '13700000000'}).get_json()['data']['id']
     client.post('/devices', headers=auth, json={'device_code': 'INSOLE-001'})
     for i in range(n):
         body = _frame(ax=i); body['patient_id'] = pid
@@ -47,6 +47,6 @@ def test_history_pagination(client):
 def test_history_other_clinician_forbidden(client):
     auth, pid = _setup_with_data(client, n=1)
     token2 = client.post('/clinician/enable', json={
-        'hospital':'H','dept':'D','name':'Dr2','phone':'2','terminal_code':'t2','passcode':'1234'}).get_json()['data']['token']
+        'hospital':'H','dept':'D','name':'Dr2','phone':'13900000000','passcode':'1234'}).get_json()['data']['token']
     resp = client.get(f'/patients/{pid}/data', headers={'Authorization': f'Bearer {token2}'})
     assert resp.get_json()['code'] == 403

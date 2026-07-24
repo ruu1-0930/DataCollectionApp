@@ -2,8 +2,8 @@ from models.models import DeviceRawData
 
 
 def _setup(client):
-    auth = {'Authorization': f"Bearer {client.post('/clinician/enable', json={'hospital':'H','dept':'D','name':'Dr','phone':'1','terminal_code':'t','passcode':'1234'}).get_json()['data']['token']}"}
-    pid = client.post('/patients', headers=auth, json={'name': 'A', 'phone': '111'}).get_json()['data']['id']
+    auth = {'Authorization': f"Bearer {client.post('/clinician/enable', json={'hospital':'H','dept':'D','name':'Dr','phone':'13800000000','passcode':'1234'}).get_json()['data']['token']}"}
+    pid = client.post('/patients', headers=auth, json={'name': 'A', 'phone': '13700000000'}).get_json()['data']['id']
     client.post('/devices', headers=auth, json={'device_code': 'INSOLE-001'})
     return auth, pid
 

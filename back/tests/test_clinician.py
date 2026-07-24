@@ -1,8 +1,32 @@
-def _enable_payload(**over):
-    p = {'hospital': '协和', 'dept': '骨科', 'name': '王医生',
-         'phone': '13800000000', 'terminal_code': 'term-1', 'passcode': '1234'}
-    p.update(over)
-    return p
+import pytest
+from sqlalchemy.exc import IntegrityError
+
+from auth import hash_passcode
+from config import db
+from models.models import Clinician
+
+
+def _enable_payload(**overrides):
+    payload = {
+        'hospital': '协和医院',
+        'dept': '骨科',
+        'name': '王医生',
+        'phone': '13800000000',
+        'passcode': '1234',
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _login_payload(**overrides):
+    payload = {
+        'hospital': '协和医院',
+        'name': '王医生',
+        'phone': '13800000000',
+        'passcode': '1234',
+    }
+    payload.update(overrides)
+    return payload
 
 
 def test_enable_creates_clinician_and_returns_token(client):
@@ -20,22 +44,33 @@ def test_enable_missing_field_rejected(client):
     assert resp.get_json()['code'] == 400
 
 
-def test_login_with_correct_passcode(client):
+def test_login_uses_hospital_name_phone_and_passcode(client):
     client.post('/clinician/enable', json=_enable_payload())
-    resp = client.post('/clinician/login', json={
-        'phone': '13800000000', 'terminal_code': 'term-1', 'passcode': '1234'})
-    assert resp.get_json()['data']['token']
+    response = client.post('/clinician/login', json=_login_payload())
+    assert response.status_code == 200
+    assert response.get_json()['data']['token']
 
 
-def test_login_wrong_passcode_rejected(client):
+def test_login_name_and_passcode_fail_with_same_generic_message(client):
     client.post('/clinician/enable', json=_enable_payload())
-    resp = client.post('/clinician/login', json={
-        'phone': '13800000000', 'terminal_code': 'term-1', 'passcode': '0000'})
-    assert resp.get_json()['code'] == 401
+    wrong_name = client.post(
+        '/clinician/login', json=_login_payload(name='其他医生'))
+    wrong_passcode = client.post(
+        '/clinician/login', json=_login_payload(passcode='9999'))
+    assert wrong_name.status_code == 401
+    assert wrong_passcode.status_code == 401
+    assert wrong_name.get_json()['msg'] == wrong_passcode.get_json()['msg']
+
+
+def test_login_rejects_bad_phone_and_short_passcode(client):
+    bad_phone = client.post('/clinician/login', json=_login_payload(phone='123'))
+    short_passcode = client.post('/clinician/login', json=_login_payload(passcode='123'))
+    assert bad_phone.status_code == 400
+    assert short_passcode.status_code == 400
 
 
 def test_enable_reissue_requires_correct_passcode(client):
-    # 同手机同终端再次启用：口令正确才幂等重发 token
+    # 同一医院和手机号再次启用：口令正确才幂等重发 token
     client.post('/clinician/enable', json=_enable_payload())
     resp = client.post('/clinician/enable', json=_enable_payload())
     assert resp.get_json()['code'] == 200
@@ -43,11 +78,132 @@ def test_enable_reissue_requires_correct_passcode(client):
 
 
 def test_enable_reissue_wrong_passcode_rejected(client):
-    # 红线：已启用终端用错口令再启用，不得签发 token
+    # 红线：已启用账户用错口令再启用，不得签发 token
     client.post('/clinician/enable', json=_enable_payload())
     resp = client.post('/clinician/enable', json=_enable_payload(passcode='9999'))
     assert resp.get_json()['code'] == 401
     assert resp.get_json().get('data') is None
+
+
+def test_enable_existing_account_wrong_name_rejected(client):
+    client.post('/clinician/enable', json=_enable_payload())
+    response = client.post(
+        '/clinician/enable',
+        json=_enable_payload(name='其他医生'),
+    )
+    assert response.status_code == 401
+    assert response.get_json()['msg'] == '登录凭证不匹配'
+
+
+def test_enable_trims_identity_fields_for_account_and_login(client):
+    enabled = client.post(
+        '/clinician/enable',
+        json=_enable_payload(
+            hospital='  协和医院  ',
+            dept='  骨科  ',
+            name='  王医生  ',
+            phone='  13600000000  ',
+            passcode='  1234  ',
+        ),
+    )
+    assert enabled.status_code == 200
+    clinician = enabled.get_json()['data']['clinician']
+    assert clinician['hospital'] == '协和医院'
+    assert clinician['dept'] == '骨科'
+    assert clinician['name'] == '王医生'
+    assert clinician['phone'] == '13600000000'
+
+    logged_in = client.post(
+        '/clinician/login',
+        json=_login_payload(
+            hospital='  协和医院  ',
+            name='  王医生  ',
+            phone='  13600000000  ',
+            passcode='  1234  ',
+        ),
+    )
+    assert logged_in.status_code == 200
+
+
+def test_hospital_is_part_of_clinician_identity(client):
+    first = client.post(
+        '/clinician/enable',
+        json=_enable_payload(hospital='协和医院', phone='13500000000'),
+    )
+    second = client.post(
+        '/clinician/enable',
+        json=_enable_payload(hospital='卋和医院', name='李医生', phone='13500000000'),
+    )
+    assert first.status_code == second.status_code == 200
+
+    response = client.post(
+        '/clinician/login',
+        json=_login_payload(hospital='卋和医院', name='李医生', phone='13500000000'),
+    )
+    assert response.status_code == 200
+    assert response.get_json()['data']['clinician']['hospital'] == '卋和医院'
+
+
+def test_unknown_name_and_passcode_mismatches_share_one_failure_message(client):
+    client.post('/clinician/enable', json=_enable_payload())
+    responses = [
+        client.post('/clinician/login', json=_login_payload(phone='13400000000')),
+        client.post('/clinician/login', json=_login_payload(name='其他医生')),
+        client.post('/clinician/login', json=_login_payload(passcode='9999')),
+    ]
+    assert [response.status_code for response in responses] == [401, 401, 401]
+    assert {response.get_json()['msg'] for response in responses} == {'登录凭证不匹配'}
+
+
+def test_enable_race_rechecks_matching_account_and_issues_token(client, monkeypatch):
+    original_commit = db.session.commit
+
+    def commit_after_matching_account_wins():
+        db.session.rollback()
+        db.session.add(Clinician(
+            hospital='协和医院',
+            dept='骨科',
+            name='王医生',
+            phone='13300000000',
+            passcode_hash=hash_passcode('1234'),
+        ))
+        original_commit()
+        raise IntegrityError('simulated unique conflict', None, None)
+
+    monkeypatch.setattr(db.session, 'commit', commit_after_matching_account_wins)
+    response = client.post('/clinician/enable', json=_enable_payload(phone='13300000000'))
+    assert response.status_code == 200
+    assert response.get_json()['data']['token']
+
+
+@pytest.mark.parametrize(
+    ('raced_name', 'raced_passcode'),
+    [('其他医生', '1234'), ('王医生', '9999')],
+)
+def test_enable_race_rejects_mismatched_existing_account(
+    client,
+    monkeypatch,
+    raced_name,
+    raced_passcode,
+):
+    original_commit = db.session.commit
+
+    def commit_after_mismatched_account_wins():
+        db.session.rollback()
+        db.session.add(Clinician(
+            hospital='协和医院',
+            dept='骨科',
+            name=raced_name,
+            phone='13200000000',
+            passcode_hash=hash_passcode(raced_passcode),
+        ))
+        original_commit()
+        raise IntegrityError('simulated unique conflict', None, None)
+
+    monkeypatch.setattr(db.session, 'commit', commit_after_mismatched_account_wins)
+    response = client.post('/clinician/enable', json=_enable_payload(phone='13200000000'))
+    assert response.status_code == 401
+    assert response.get_json()['msg'] == '登录凭证不匹配'
 
 
 def _token(client):
@@ -66,6 +222,37 @@ def test_put_me_updates_dept(client):
     resp = client.put('/clinician/me', headers={'Authorization': f'Bearer {token}'},
                       json={'dept': '康复科'})
     assert resp.get_json()['data']['dept'] == '康复科'
+
+
+def test_profile_update_rejects_duplicate_hospital_phone(client):
+    first = client.post('/clinician/enable', json=_enable_payload(phone='13800000000'))
+    second = client.post(
+        '/clinician/enable',
+        json=_enable_payload(name='李医生', phone='13900000000'),
+    )
+    assert first.status_code == second.status_code == 200
+    second_token = second.get_json()['data']['token']
+    response = client.put(
+        '/clinician/me',
+        headers={'Authorization': f'Bearer {second_token}'},
+        json={'phone': '13800000000'},
+    )
+    assert response.status_code == 409
+    assert response.get_json()['code'] == 409
+
+
+def test_profile_update_reraises_integrity_error_without_conflict(client, monkeypatch):
+    token = _token(client)
+    error = IntegrityError('simulated unrelated failure', None, None)
+    monkeypatch.setattr(db.session, 'commit', lambda: (_ for _ in ()).throw(error))
+
+    with pytest.raises(IntegrityError) as raised:
+        client.put(
+            '/clinician/me',
+            headers={'Authorization': f'Bearer {token}'},
+            json={'phone': '13100000000'},
+        )
+    assert raised.value is error
 
 
 def test_me_requires_token(client):

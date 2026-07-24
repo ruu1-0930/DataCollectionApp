@@ -9,12 +9,11 @@ class Clinician(db.Model):
     dept = db.Column(db.String(100), nullable=False)
     name = db.Column(db.String(50), nullable=False)
     phone = db.Column(db.String(20), nullable=False)
-    terminal_code = db.Column(db.String(100), nullable=False)
     passcode_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
     __table_args__ = (
-        db.UniqueConstraint('phone', 'terminal_code', name='uq_clinician_phone_terminal'),
+        db.UniqueConstraint('hospital', 'phone', name='uq_clinician_hospital_phone'),
     )
 
 

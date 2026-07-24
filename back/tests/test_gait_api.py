@@ -52,8 +52,7 @@ def _setup(client, frame_count=1):
             "hospital": "H",
             "dept": "D",
             "name": "Dr",
-            "phone": "1",
-            "terminal_code": "t",
+            "phone": "13800000000",
             "passcode": "1234",
         },
     ).get_json()["data"]["token"]
@@ -61,7 +60,7 @@ def _setup(client, frame_count=1):
     patient_id = client.post(
         "/patients",
         headers=auth,
-        json={"name": "A", "phone": "111", "age": 72},
+        json={"name": "A", "phone": "13700000000", "age": 72},
     ).get_json()["data"]["id"]
     client.post("/devices", headers=auth, json={"device_code": "INSOLE-001"})
 
@@ -144,8 +143,7 @@ def _create_other_clinician_auth(client):
             "hospital": "H",
             "dept": "D",
             "name": "Dr2",
-            "phone": "2",
-            "terminal_code": "t2",
+            "phone": "13900000000",
             "passcode": "1234",
         },
     ).get_json()["data"]["token"]

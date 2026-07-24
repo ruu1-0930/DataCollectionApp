@@ -6,8 +6,8 @@ from config import db
 
 
 def _make_clinician():
-    c = Clinician(hospital='H', dept='D', name='Dr', phone='1',
-                  terminal_code='t', passcode_hash='x')
+    c = Clinician(hospital='H', dept='D', name='Dr', phone='13800000000',
+                  passcode_hash='x')
     db.session.add(c); db.session.commit()
     return c
 

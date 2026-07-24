@@ -19,10 +19,9 @@ CREATE TABLE clinicians (
   dept VARCHAR(100) NOT NULL,
   name VARCHAR(50) NOT NULL,
   phone VARCHAR(20) NOT NULL,
-  terminal_code VARCHAR(100) NOT NULL,
   passcode_hash VARCHAR(255) NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_clinician_phone_terminal (phone, terminal_code)
+  UNIQUE KEY uq_clinician_hospital_phone (hospital, phone)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE devices (

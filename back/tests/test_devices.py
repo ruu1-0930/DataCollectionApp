@@ -1,7 +1,7 @@
 def _auth(client):
     token = client.post('/clinician/enable', json={
-        'hospital': 'H', 'dept': 'D', 'name': 'Dr', 'phone': '1',
-        'terminal_code': 't', 'passcode': '1234'}).get_json()['data']['token']
+        'hospital': 'H', 'dept': 'D', 'name': 'Dr', 'phone': '13800000000',
+        'passcode': '1234'}).get_json()['data']['token']
     return {'Authorization': f'Bearer {token}'}
 
 

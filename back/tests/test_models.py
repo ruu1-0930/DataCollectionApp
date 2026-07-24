@@ -3,7 +3,7 @@ from models.models import Clinician, Device, Patient, PatientPII, DeviceRawData,
 
 def test_clinician_patient_pii_chain(db):
     c = Clinician(hospital='H', dept='D', name='Dr', phone='13800000000',
-                  terminal_code='term-1', passcode_hash='x')
+                  passcode_hash='x')
     db.session.add(c); db.session.commit()
 
     p = Patient(clinician_id=c.id, subject_id='#00001', gender='F', age=30)
@@ -19,7 +19,7 @@ def test_clinician_patient_pii_chain(db):
 
 
 def test_raw_and_transformed_attribution(db):
-    c = Clinician(hospital='H', dept='D', name='Dr', phone='1', terminal_code='t', passcode_hash='x')
+    c = Clinician(hospital='H', dept='D', name='Dr', phone='13900000000', passcode_hash='x')
     db.session.add(c); db.session.commit()
     dev = Device(device_code='DEV1', device_name='insole', clinician_id=c.id)
     p = Patient(clinician_id=c.id, subject_id='#00002')
@@ -36,3 +36,13 @@ def test_raw_and_transformed_attribution(db):
 
     assert raw.clinician_id == c.id and raw.patient_id == p.id and raw.device_id == dev.id
     assert tr.raw_data_id == raw.id
+
+
+def test_clinician_schema_uses_hospital_phone_identity():
+    clinician_table = Clinician.__table__
+    assert 'terminal_code' not in clinician_table.columns
+    assert any(
+        constraint.name == 'uq_clinician_hospital_phone'
+        and tuple(constraint.columns.keys()) == ('hospital', 'phone')
+        for constraint in clinician_table.constraints
+    )
