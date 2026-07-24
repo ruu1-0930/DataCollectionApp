@@ -106,6 +106,37 @@ def _setup_session(client, frames=1):
     return auth, patient_id, session_ids[0]
 
 
+def _request_session_endpoint(
+    client,
+    endpoint,
+    *,
+    auth,
+    patient_id,
+    session_id,
+    comparison_baseline_id,
+):
+    if endpoint == "compare":
+        return client.post(
+            f"/patients/{patient_id}/gait/compare",
+            headers=auth,
+            json={"session_ids": [comparison_baseline_id, session_id]},
+        )
+    suffix = "/frames" if endpoint == "frames" else ""
+    return client.get(
+        f"/patients/{patient_id}/gait/sessions/{session_id}{suffix}",
+        headers=auth,
+    )
+
+
+def _noncanonical_session_id(kind, patient_id, start):
+    timestamp = f"{start:%Y%m%dT%H%M%S}{start.microsecond // 1000:03d}"
+    if kind == "leading_zero":
+        return f"P{patient_id:05d}-{timestamp}"
+    if kind == "too_long":
+        return f"P{'9' * 5000}-{timestamp}"
+    return f"P{patient_id}-{timestamp}-extra"
+
+
 def _create_other_clinician_auth(client):
     token = client.post(
         "/clinician/enable",
@@ -150,6 +181,20 @@ def _capture_loaded_aggregate_timestamps(monkeypatch, action):
     return action(), loaded_timestamps
 
 
+def _capture_loaded_aggregate_batches(monkeypatch, action):
+    loaded_batches = []
+    original_fetch_rows = gait_api._fetch_rows
+
+    def tracked_fetch_rows(*args, **kwargs):
+        rows = original_fetch_rows(*args, **kwargs)
+        if not kwargs.get("include_sensors", False):
+            loaded_batches.append([row["collected_at"] for row in rows])
+        return rows
+
+    monkeypatch.setattr(gait_api, "_fetch_rows", tracked_fetch_rows)
+    return action(), loaded_batches
+
+
 def _setup_bounded_history_scenario(client):
     old_starts = [
         _BASE_TIME - timedelta(days=10) + timedelta(minutes=index)
@@ -185,6 +230,60 @@ def _setup_bounded_history_scenario(client):
         "recent_starts": recent_starts,
         "target_starts": target_starts,
         "target_ids": session_ids[-2:],
+    }
+
+
+def _setup_history_beyond_limited_sessions(client, *, trailing_target):
+    old_starts = [
+        _BASE_TIME - timedelta(days=10) + timedelta(minutes=index)
+        for index in range(5)
+    ]
+    qualified_starts = [
+        _BASE_TIME + timedelta(minutes=index)
+        for index in range(5)
+    ]
+    limited_starts = [
+        _BASE_TIME + timedelta(minutes=5 + index)
+        for index in range(30)
+    ]
+    target_starts = (
+        [_BASE_TIME + timedelta(minutes=35)]
+        if trailing_target
+        else []
+    )
+    starts = [*old_starts, *qualified_starts, *limited_starts, *target_starts]
+    speeds = [
+        *([99.0] * len(old_starts)),
+        0.0,
+        0.8,
+        1.0,
+        1.2,
+        1.4,
+        *([9.0] * (len(limited_starts) + len(target_starts))),
+    ]
+    auth, patient_id, session_ids = _setup_sessions(
+        client,
+        starts,
+        walking_speeds=speeds,
+    )
+    unpaired_starts = [*limited_starts, *target_starts]
+    (
+        DeviceRawData.query.filter(
+            DeviceRawData.patient_id == patient_id,
+            DeviceRawData.foot == "R",
+            DeviceRawData.collected_at.in_(unpaired_starts),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.session.commit()
+    return {
+        "auth": auth,
+        "patient_id": patient_id,
+        "old_starts": old_starts,
+        "qualified_starts": qualified_starts,
+        "limited_starts": limited_starts,
+        "target_ids": session_ids[-len(target_starts):] if target_starts else [],
+        "qualified_ids": session_ids[len(old_starts):len(old_starts) + 5],
     }
 
 
@@ -344,6 +443,64 @@ def test_sessions_return_stable_ids_newest_first(client):
     assert "session_index" not in sessions[0]
 
 
+def test_exact_thirty_second_gap_stays_joined_and_one_microsecond_splits_across_chunk(
+    client,
+):
+    first_start = _BASE_TIME
+    first_session_times = [
+        first_start + timedelta(seconds=30 * index)
+        for index in range(10)
+    ]
+    first_session_times.append(
+        first_start + timedelta(seconds=299, microseconds=876999)
+    )
+    second_start = first_session_times[-1] + timedelta(
+        seconds=30,
+        microseconds=1,
+    )
+    auth, patient_id, _ = _setup_sessions(
+        client,
+        [*first_session_times, second_start],
+    )
+    first_id = _session_id(patient_id, first_start)
+    second_id = _session_id(patient_id, second_start)
+
+    list_response = client.get(
+        f"/patients/{patient_id}/gait/sessions",
+        headers=auth,
+        query_string={
+            "start": first_start.isoformat(),
+            "end": second_start.isoformat(),
+        },
+    )
+    detail_response = client.get(
+        f"/patients/{patient_id}/gait/sessions/{first_id}",
+        headers=auth,
+    )
+    compare_response = client.post(
+        f"/patients/{patient_id}/gait/compare",
+        headers=auth,
+        json={"session_ids": [first_id, second_id]},
+    )
+
+    assert list_response.status_code == 200
+    sessions = list_response.get_json()["data"]["sessions"]
+    assert [session["session_id"] for session in sessions] == [second_id, first_id]
+    first_summary = next(
+        session for session in sessions
+        if session["session_id"] == first_id
+    )
+    assert first_summary["frame_count"] == 11
+    assert first_summary["end"] == first_session_times[-1].isoformat()
+    assert detail_response.status_code == 200
+    assert detail_response.get_json()["data"]["frame_count"] == 11
+    assert compare_response.status_code == 200
+    assert compare_response.get_json()["data"]["session_ids"] == [
+        first_id,
+        second_id,
+    ]
+
+
 def test_session_list_bulk_loads_aggregate_rows_once_for_narrow_and_wide_ranges(client):
     starts = [_BASE_TIME + timedelta(minutes=index) for index in range(7)]
     auth, patient_id, _ = _setup_sessions(client, starts)
@@ -452,6 +609,51 @@ def test_session_detail_only_materializes_target_and_recent_five_aggregate_rows(
     assert loaded_timestamps
     assert min(loaded_timestamps) >= scenario["recent_starts"][0]
     assert not set(loaded_timestamps).intersection(scenario["old_starts"])
+
+
+def test_session_detail_scans_past_thirty_limited_sessions_for_five_usable_flags(
+    client,
+    monkeypatch,
+):
+    scenario = _setup_history_beyond_limited_sessions(
+        client,
+        trailing_target=True,
+    )
+
+    response, loaded_batches = _capture_loaded_aggregate_batches(
+        monkeypatch,
+        lambda: client.get(
+            (
+                f"/patients/{scenario['patient_id']}/gait/sessions/"
+                f"{scenario['target_ids'][0]}"
+            ),
+            headers=scenario["auth"],
+        ),
+    )
+
+    assert response.status_code == 200
+    speed_flag = next(
+        flag
+        for flag in response.get_json()["data"]["flags"]
+        if flag["metric_key"] == "walking_speed_mps"
+    )
+    assert speed_flag["history"]["median"] == pytest.approx(1.0)
+    assert len(loaded_batches) == 7
+    assert all(len(set(batch)) <= 6 for batch in loaded_batches)
+    loaded_timestamps = {
+        timestamp
+        for batch in loaded_batches
+        for timestamp in batch
+    }
+    assert 0.0 in [
+        row.walking_speed
+        for row in DeviceRawData.query.filter(
+            DeviceRawData.patient_id == scenario["patient_id"],
+            DeviceRawData.collected_at.in_(scenario["qualified_starts"]),
+        ).all()
+    ]
+    assert not loaded_timestamps.intersection(scenario["old_starts"])
+    assert min(loaded_timestamps) == scenario["qualified_starts"][0]
 
 
 def test_frames_are_paginated_and_raw_units_are_explicit(client):
@@ -635,6 +837,74 @@ def test_finite_extreme_values_do_not_overflow_gait_json(client):
     assert speed_flag["status"] == "unknown"
 
 
+@pytest.mark.parametrize("endpoint", ["detail", "frames", "compare"])
+@pytest.mark.parametrize(
+    "invalid_kind",
+    ["leading_zero", "too_long", "other_noncanonical"],
+)
+def test_noncanonical_session_ids_are_422_before_any_raw_query(
+    client,
+    endpoint,
+    invalid_kind,
+):
+    starts = [_BASE_TIME, _BASE_TIME + timedelta(minutes=1)]
+    auth, patient_id, session_ids = _setup_sessions(client, starts)
+    invalid_id = _noncanonical_session_id(
+        invalid_kind,
+        patient_id,
+        starts[1],
+    )
+
+    response, statements = _capture_raw_selects(
+        lambda: _request_session_endpoint(
+            client,
+            endpoint,
+            auth=auth,
+            patient_id=patient_id,
+            session_id=invalid_id,
+            comparison_baseline_id=session_ids[0],
+        )
+    )
+
+    assert response.status_code == 422
+    assert statements == []
+
+
+@pytest.mark.parametrize("endpoint", ["detail", "frames", "compare"])
+def test_canonical_missing_session_ids_are_404(client, endpoint):
+    starts = [_BASE_TIME, _BASE_TIME + timedelta(minutes=1)]
+    auth, patient_id, session_ids = _setup_sessions(client, starts)
+    missing_id = _session_id(patient_id, _BASE_TIME + timedelta(days=1))
+
+    response = _request_session_endpoint(
+        client,
+        endpoint,
+        auth=auth,
+        patient_id=patient_id,
+        session_id=missing_id,
+        comparison_baseline_id=session_ids[0],
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize("endpoint", ["detail", "frames", "compare"])
+def test_canonical_existing_session_ids_are_200(client, endpoint):
+    starts = [_BASE_TIME, _BASE_TIME + timedelta(minutes=1)]
+    auth, patient_id, session_ids = _setup_sessions(client, starts)
+
+    response = _request_session_endpoint(
+        client,
+        endpoint,
+        auth=auth,
+        patient_id=patient_id,
+        session_id=session_ids[1],
+        comparison_baseline_id=session_ids[0],
+    )
+
+    assert response.status_code == 200
+
+
 @pytest.mark.parametrize("count", [1, 6])
 def test_compare_rejects_session_counts_outside_two_to_five(client, count):
     auth, patient_id, session_ids = _setup_sessions(
@@ -762,11 +1032,51 @@ def test_compare_materializes_only_selected_and_fixed_recent_five_sessions(
     )
 
     assert response.status_code == 200
-    history = response.get_json()["data"]["history_baselines"]["walking_speed_mps"]
-    assert history == {"median": pytest.approx(1.0), "reason": None}
+    history_baselines = response.get_json()["data"]["history_baselines"]
+    assert history_baselines["walking_speed_mps"] == {
+        "median": pytest.approx(1.0),
+        "reason": None,
+    }
+    assert history_baselines["cadence_spm"] == {
+        "median": pytest.approx(100.0),
+        "reason": None,
+    }
+    assert len(history_baselines) == 8
     assert loaded_timestamps
     assert min(loaded_timestamps) >= scenario["recent_starts"][2]
     assert not set(loaded_timestamps).intersection(scenario["old_starts"])
+
+
+def test_compare_scans_unbounded_history_batches_until_five_usable_sessions(
+    client,
+    monkeypatch,
+):
+    scenario = _setup_history_beyond_limited_sessions(
+        client,
+        trailing_target=False,
+    )
+
+    response, loaded_batches = _capture_loaded_aggregate_batches(
+        monkeypatch,
+        lambda: client.post(
+            f"/patients/{scenario['patient_id']}/gait/compare",
+            headers=scenario["auth"],
+            json={"session_ids": scenario["qualified_ids"][:2]},
+        ),
+    )
+
+    assert response.status_code == 200
+    history = response.get_json()["data"]["history_baselines"]["walking_speed_mps"]
+    assert history == {"median": pytest.approx(1.0), "reason": None}
+    assert len(loaded_batches) == 7
+    assert all(len(set(batch)) <= 7 for batch in loaded_batches)
+    loaded_timestamps = {
+        timestamp
+        for batch in loaded_batches
+        for timestamp in batch
+    }
+    assert not loaded_timestamps.intersection(scenario["old_starts"])
+    assert min(loaded_timestamps) == scenario["qualified_starts"][0]
 
 
 def test_compare_preserves_requested_session_order_for_baseline(client):

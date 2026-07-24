@@ -31,7 +31,6 @@ _SESSION_GAP_SECONDS = 30
 _SESSION_BOUND_CHUNK_MINUTES = 5
 _SESSION_BOUND_MAX_CHUNKS = 288
 _HISTORY_BATCH_SIZE = 5
-_HISTORY_CANDIDATE_LIMIT = 25
 _DATE_ONLY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SESSION_ID_PATTERN = re.compile(
     r"^P(?P<patient_id>\d+)-(?P<timestamp>\d{8}T\d{9})$"
@@ -403,23 +402,16 @@ def _load_bounded_sessions(patient_id, target_ranges, *, history_before):
     target_sessions = {}
     eligible_history_newest = []
     cursor = history_before
-    candidates_seen = 0
     first_batch = True
 
-    while first_batch or (
-        len(eligible_history_newest) < _HISTORY_BATCH_SIZE
-        and candidates_seen < _HISTORY_CANDIDATE_LIMIT
-    ):
+    while first_batch or len(eligible_history_newest) < _HISTORY_BATCH_SIZE:
         candidate_ranges = []
         for _ in range(_HISTORY_BATCH_SIZE):
-            if candidates_seen >= _HISTORY_CANDIDATE_LIMIT:
-                break
             bounds = _previous_session_bounds(patient_id, cursor)
             if bounds is None:
                 break
             candidate_ranges.append(bounds)
             cursor = bounds[0]
-            candidates_seen += 1
 
         ranges = [
             *candidate_ranges,
@@ -524,6 +516,10 @@ def _session_not_found_response():
     return jsonify(Response.error(404, "会话不存在")), 404
 
 
+def _invalid_session_id_response():
+    return jsonify(Response.error(422, "invalid session_id format")), 422
+
+
 @gait_bp.route("/patients/<int:patient_id>/gait/sessions", methods=["GET"])
 @token_required()
 def list_gait_sessions(patient_id):
@@ -568,11 +564,9 @@ def get_gait_session(patient_id, session_id):
         return error
 
     start = _parse_session_start(patient_id, session_id)
-    bounds = (
-        _session_bounds_for_start(patient_id, start)
-        if start is not None
-        else None
-    )
+    if start is None:
+        return _invalid_session_id_response()
+    bounds = _session_bounds_for_start(patient_id, start)
     if bounds is None:
         return _session_not_found_response()
 
@@ -603,11 +597,9 @@ def get_gait_session_frames(patient_id, session_id):
         return error
 
     session_start = _parse_session_start(patient_id, session_id)
-    bounds = (
-        _session_bounds_for_start(patient_id, session_start)
-        if session_start is not None
-        else None
-    )
+    if session_start is None:
+        return _invalid_session_id_response()
+    bounds = _session_bounds_for_start(patient_id, session_start)
     if bounds is None:
         return _session_not_found_response()
 
@@ -673,11 +665,11 @@ def compare_gait_sessions(patient_id):
         for session_id in session_ids
     ]
     if any(start is None for start in starts):
-        return jsonify(Response.error(422, "invalid session_id format")), 422
+        return _invalid_session_id_response()
 
     bounds_by_start = _session_bounds_for_starts(patient_id, starts)
     if any(bounds_by_start.get(start) is None for start in starts):
-        return jsonify(Response.error(422, "missing requested session summaries")), 422
+        return _session_not_found_response()
     target_ranges = [bounds_by_start[start] for start in starts]
     history, sessions_by_start = _load_bounded_sessions(
         patient_id,
