@@ -43,16 +43,20 @@
      - ⏳ **待验**：连接鞋垫 → 采集 → 上传落库 + 归属（查 `device_raw_data` 每帧 L/R 两行 + `device_transformed_data` T1-T5 + `patients.last_collected_at`）、按患者查历史（数据页）。store/页面/蓝牙/网络无法 vitest mock，见 plan Task 12 手动清单。
    - HTTPS/密钥/收回公网随迁移完成。
 
-### 临床步态数据工作台（跨仓只读链路，Tasks 1–7 已完成）
+### 临床步态数据工作台（跨仓只读链路，当前证据截至 2026-07-25；Tasks 1–7 已完成）
 
 - 当前链路是 `Project Streamlit -> Project FastAPI /api/clinical/* -> 本仓库 Flask /patients/*/gait/* -> MySQL device_raw_data`。A 原样透传当前 clinician Bearer JWT；B 校验 JWT，并在所有患者、会话、详情、逐帧和比较接口执行 clinician 归属检查。
 - B 是规范数据源，负责 30 秒 gap 会话切分、稳定 session ID、8 个规范指标、数据质量、关注项、会话详情、最多 500 点图表序列、分页逐帧数据，以及同一患者 2–5 次会话比较。`gait_bp` 注册修复已提交为 `d3bf301`；步长始终保持固件语义 `step_length`，不得改称 stride length。`stride_time_cv_pct` 使用 `2 * step_length / walking_speed` 序列计算 CV，公式披露修复见 `ae3728c`。
+- 最终 B 修复提交为 `57d306b`、`89ac8af`、`66db5ca`、`324d7c9`；A 修复提交为 `af26e14`、`c5ee7b0`、`f73f21d`。最终 broad review 已批准：`0 Critical / 0 Important / 0 Minor`。
 - 压力只使用 `ADC`，IMU 只使用 `raw_unscaled`；这些信号和探索性公式尚未标定，需固件与临床验证。T1–T5、随机 SVM 回退和其他未验证模型输出不得进入临床 DTO、关注项或 UI。
-- 当前 B 全量证据为 `92 passed, 594 warnings in 14.32s`。已知 warning 类别：sklearn 概率接口弃用、`datetime.utcnow` 弃用、SQLAlchemy `Query.get` legacy warning；不得把 warning 写成测试失败，也不得隐去。
-- **剩余契约缺口**：会话关注项已使用最近最多 5 个质量非 `limited` 的既往会话中位数；比较接口当前只以首个选中会话计算差值，尚未为每个比较指标返回设计要求的“最近 5 次有效会话中位数”。原要求保留，后续补齐。
+- 当前最终自动化证据（2026-07-25）：B full `151 passed, 1978 warnings in 24.91s`；A related client/BFF/UI `229 passed, 1 warning in 5.89s`；Harness boundary `577 passed in 7.09s`。warning 类别仍为 sklearn probability、`datetime.utcnow`、SQLAlchemy `Query.get`、Starlette `python_multipart`；warning 不构成测试失败。
+- comparison recent-five per-metric median 契约已关闭：所有 metric 共用最近最多五个 complete/usable 历史会话窗口，保留有限 0；每 metric 在固定窗口内忽略 unavailable；该基线与 first-selected delta baseline 分离。B 分批向前扫描，直到五个合格会话或历史耗尽，不使用固定候选截断。
+- 已关闭边界包括：NaN/Inf fail closed；strict canonical 8 metrics/flags；SQL frame pagination 与有界历史；400/404/422；inclusive end date/reverse range；late-401 pending reset；`delta_abs`/`delta_pct`；9-point pressure time series + raw IMU magnitude；canonical ID；30s gap。
 - 数据视图浏览器证据先使用本地 mock clinical BFF + 真实 Streamlit，在 1440x900 和 390x844 修复后无 DOM overflow/occlusion；另验证了真实 A FastAPI 的 health、未认证 clinical 401，以及 B 不可用时真实 Streamlit 经真实 A BFF 只显示脱敏错误和唯一重试按钮。
 - 随后已用一次性 seeded SQLite 运行**真实 B Flask 应用/端点 + 真实 A FastAPI + 真实 Streamlit**：浏览器登录后加载 1 个患者、3 个稳定会话、概览/证据、12 条分页帧、压力/IMU 3 个可见图，以及保留 2 个勾选会话的比较页（恰好 1 个可选指标图 + 完整表），无横向 overflow。证据截图在 `D:\ME5001\Project\.superpowers\sdd\task-8-seeded-real-comparison.png`。
 - RDS-backed B 本地启动仍因 DNS 不可达而在监听前失败。seeded SQLite 证据不能替代真实 MySQL/RDS、真实鞋垫或真实 clinician 多账号 ownership 验证；文档不得记录 RDS 主机或凭据，也不得把本地种子数据外推为生产路径已验。
+- Task 8 仍为 Partial，仅因真实 MySQL/RDS query plan/微秒/规模、真实设备 L/R/gap、真实 clinician JWT/ownership/multi-account、production three-service 仍未验证；不得声称 Task 8 complete。seeded SQLite browser evidence 不得外推生产。
+- AI Agent、MCP、memory 仍不在当前阶段；跌倒检测仍只是报告，未实现。
 - 跌倒检测调研已完成于 `docs/fall-detection-feasibility.md`；采样率仍是阻塞项，本阶段没有实现跌倒检测。
 ### 2.2 并行线 — 官网展示页（面向医生推广，代码完成）
 
