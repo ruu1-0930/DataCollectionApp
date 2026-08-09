@@ -193,6 +193,20 @@ def _capture_loaded_aggregate_batches(monkeypatch, action):
     return action(), loaded_batches
 
 
+def _capture_loaded_sensor_timestamps(monkeypatch, action):
+    loaded_timestamps = []
+    original_fetch_rows = gait_api._fetch_rows
+
+    def tracked_fetch_rows(*args, **kwargs):
+        rows = original_fetch_rows(*args, **kwargs)
+        if kwargs.get("include_sensors", False):
+            loaded_timestamps.extend(row["collected_at"] for row in rows)
+        return rows
+
+    monkeypatch.setattr(gait_api, "_fetch_rows", tracked_fetch_rows)
+    return action(), loaded_timestamps
+
+
 def _setup_bounded_history_scenario(client):
     old_starts = [
         _BASE_TIME - timedelta(days=10) + timedelta(minutes=index)
@@ -580,6 +594,54 @@ def test_session_detail_uses_step_length_without_inline_frames(client):
     assert "stride_length" not in json.dumps(data)
 
 
+def test_session_detail_includes_pressure_summary_contract(client):
+    auth, patient_id, session_id = _setup_session(client)
+
+    response = client.get(
+        f"/patients/{patient_id}/gait/sessions/{session_id}",
+        headers=auth,
+    )
+
+    assert response.status_code == 200
+    summary = response.get_json()["data"]["pressure_summary"]
+    assert summary["method"] == "nonzero_mean_v1"
+    assert summary["unit"] == "ADC"
+    assert set(summary["left"]["sensors"]) == {f"p{i}" for i in range(1, 10)}
+    assert summary["attention"]["quality"] in {
+        "usable",
+        "partial",
+        "insufficient",
+    }
+
+
+def test_full_session_pressure_summary_uses_all_501_frames_before_chart_sampling(client):
+    auth, patient_id, session_id = _setup_session(client, frames=501)
+    left_rows = (
+        DeviceRawData.query.filter_by(patient_id=patient_id, foot="L")
+        .order_by(DeviceRawData.collected_at.asc())
+        .all()
+    )
+    assert len(left_rows) == 501
+    for index, row in enumerate(left_rows, start=1):
+        row.p1 = float(index)
+    db.session.commit()
+
+    detail = client.get(
+        f"/patients/{patient_id}/gait/sessions/{session_id}",
+        headers=auth,
+    ).get_json()["data"]
+
+    assert detail["chart_series"]["total_points"] == 501
+    assert len(detail["chart_series"]["items"]) == 500
+    assert (
+        detail["pressure_summary"]["left"]["sensors"]["p1"]["valid_samples"]
+        == 501
+    )
+    assert detail["pressure_summary"]["left"]["sensors"]["p1"][
+        "mean_adc"
+    ] == pytest.approx(251.0)
+
+
 def test_session_detail_only_materializes_target_and_recent_five_aggregate_rows(
     client,
     monkeypatch,
@@ -672,6 +734,7 @@ def test_frames_are_paginated_and_raw_units_are_explicit(client):
     assert data["items"][0]["left"]["imu_unit"] == "raw_unscaled"
     assert data["items"][0]["right"]["pressure_unit"] == "ADC"
     assert data["items"][0]["right"]["imu_unit"] == "raw_unscaled"
+    assert "pressure_summary" not in data
 
 
 def test_frames_use_default_and_capped_page_sizes(client):
@@ -733,34 +796,35 @@ def test_session_list_queries_only_aggregation_columns(client):
 
     assert response.status_code == 200
     assert statements
+    assert all(
+        "pressure_summary" not in session
+        for session in response.get_json()["data"]["sessions"]
+    )
     assert all("device_raw_data.p1" not in statement for statement in statements)
     assert all("device_raw_data.ax" not in statement for statement in statements)
 
 
-def test_target_session_detail_does_not_load_other_session_raw_models(client):
+def test_target_session_detail_materializes_only_target_session_sensor_rows(
+    client,
+    monkeypatch,
+):
     starts = [
         *[_BASE_TIME + timedelta(seconds=index) for index in range(4)],
         *[_BASE_TIME + timedelta(minutes=2, seconds=index) for index in range(4)],
     ]
     auth, patient_id, session_ids = _setup_sessions(client, starts)
-    db.session.expunge_all()
-    loaded_raw_ids = []
-
-    def record_load(raw, _context):
-        loaded_raw_ids.append(raw.id)
-
-    event.listen(DeviceRawData, "load", record_load)
-    try:
-        response = client.get(
+    response, loaded_timestamps = _capture_loaded_sensor_timestamps(
+        monkeypatch,
+        lambda: client.get(
             f"/patients/{patient_id}/gait/sessions/{session_ids[0]}",
             headers=auth,
-        )
-    finally:
-        event.remove(DeviceRawData, "load", record_load)
+        ),
+    )
 
     assert response.status_code == 200
     assert response.get_json()["data"]["frame_count"] == 4
-    assert len(loaded_raw_ids) <= 8
+    assert set(loaded_timestamps) == set(starts[:4])
+    assert not set(loaded_timestamps).intersection(starts[4:])
 
 
 def test_non_finite_raw_values_return_null_without_json_failure(client):
@@ -1014,6 +1078,25 @@ def test_compare_bulk_loads_once_with_constant_query_count_for_two_or_five_sessi
     assert sum("device_raw_data.walking_speed" in sql for sql in five_statements) == 1
 
 
+def test_compare_omits_pressure_summary_and_queries_only_aggregation_columns(client):
+    starts = [_BASE_TIME, _BASE_TIME + timedelta(minutes=1)]
+    auth, patient_id, session_ids = _setup_sessions(client, starts)
+
+    response, statements = _capture_raw_selects(
+        lambda: client.post(
+            f"/patients/{patient_id}/gait/compare",
+            headers=auth,
+            json={"session_ids": session_ids},
+        )
+    )
+
+    assert response.status_code == 200
+    assert "pressure_summary" not in json.dumps(response.get_json()["data"])
+    assert statements
+    assert all("device_raw_data.p1" not in statement for statement in statements)
+    assert all("device_raw_data.ax" not in statement for statement in statements)
+
+
 def test_compare_materializes_only_selected_and_fixed_recent_five_sessions(
     client,
     monkeypatch,
@@ -1155,6 +1238,22 @@ def test_all_gait_workbench_routes_forbid_other_clinician(client):
 
     assert owner["Authorization"] != other["Authorization"]
     assert [response.status_code for response in responses] == [403, 403, 403, 403]
+
+
+def test_pressure_summary_detail_checks_ownership_before_raw_queries(client):
+    _owner, patient_id, session_ids = _setup_sessions(client, [_BASE_TIME])
+    other = _create_other_clinician_auth(client)
+
+    response, statements = _capture_raw_selects(
+        lambda: client.get(
+            f"/patients/{patient_id}/gait/sessions/{session_ids[0]}",
+            headers=other,
+        )
+    )
+
+    assert response.status_code == 403
+    assert statements == []
+    assert "pressure_summary" not in response.get_data(as_text=True)
 
 
 def test_workbench_payloads_exclude_unvalidated_svm(client):

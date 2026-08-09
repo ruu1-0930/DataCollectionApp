@@ -16,6 +16,7 @@ from services.gait_analysis import (
     session_data_quality,
 )
 from services.gait_comparison import compare_session_summaries
+from services.pressure_analysis import summarize_pressure
 from utils import Response, token_required
 
 
@@ -582,6 +583,7 @@ def get_gait_session(patient_id, session_id):
 
     summary = _session_summary(aggregate_session_record, patient_id, history)
     data = _public_summary(summary)
+    data["pressure_summary"] = summarize_pressure(session["frames"])
     data["chart_series"] = _chart_series(session["frames"])
     return jsonify(Response.success(data=data))
 
