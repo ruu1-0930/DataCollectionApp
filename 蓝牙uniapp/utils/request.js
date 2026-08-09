@@ -82,7 +82,7 @@ const instance = new Request({
   // }
 })
 
-// 401 静默刷新并重试一次：用本地 phone+terminalCode+passcode 换新 token
+// 401 静默刷新并重试一次：用本地 hospital+name+phone+passcode 换新 token
 async function retryWithRefresh(config) {
   if (!config) return Promise.reject(config)
   // 重试标记必须放在 custom 上：luch-request 的 mergeConfig 只透传 custom/header 等白名单字段，
