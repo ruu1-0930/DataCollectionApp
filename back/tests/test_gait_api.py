@@ -1,5 +1,6 @@
 """Integration tests for the stable gait data workbench API."""
 
+from collections import Counter
 import json
 import math
 import re
@@ -193,18 +194,20 @@ def _capture_loaded_aggregate_batches(monkeypatch, action):
     return action(), loaded_batches
 
 
-def _capture_loaded_sensor_timestamps(monkeypatch, action):
-    loaded_timestamps = []
+def _capture_loaded_sensor_batches(monkeypatch, action):
+    loaded_batches = []
     original_fetch_rows = gait_api._fetch_rows
 
     def tracked_fetch_rows(*args, **kwargs):
         rows = original_fetch_rows(*args, **kwargs)
         if kwargs.get("include_sensors", False):
-            loaded_timestamps.extend(row["collected_at"] for row in rows)
+            loaded_batches.append(
+                [(row["foot"], row["collected_at"]) for row in rows]
+            )
         return rows
 
     monkeypatch.setattr(gait_api, "_fetch_rows", tracked_fetch_rows)
-    return action(), loaded_timestamps
+    return action(), loaded_batches
 
 
 def _setup_bounded_history_scenario(client):
@@ -813,18 +816,37 @@ def test_target_session_detail_materializes_only_target_session_sensor_rows(
         *[_BASE_TIME + timedelta(minutes=2, seconds=index) for index in range(4)],
     ]
     auth, patient_id, session_ids = _setup_sessions(client, starts)
-    response, loaded_timestamps = _capture_loaded_sensor_timestamps(
-        monkeypatch,
-        lambda: client.get(
-            f"/patients/{patient_id}/gait/sessions/{session_ids[0]}",
-            headers=auth,
-        ),
-    )
+    db.session.expunge_all()
+    loaded_raw_ids = []
+
+    def record_load(raw, _context):
+        loaded_raw_ids.append(raw.id)
+
+    event.listen(DeviceRawData, "load", record_load)
+    try:
+        response, loaded_batches = _capture_loaded_sensor_batches(
+            monkeypatch,
+            lambda: client.get(
+                f"/patients/{patient_id}/gait/sessions/{session_ids[0]}",
+                headers=auth,
+            ),
+        )
+    finally:
+        event.remove(DeviceRawData, "load", record_load)
 
     assert response.status_code == 200
     assert response.get_json()["data"]["frame_count"] == 4
-    assert set(loaded_timestamps) == set(starts[:4])
-    assert not set(loaded_timestamps).intersection(starts[4:])
+    assert len(loaded_batches) == 1
+    assert Counter(loaded_batches[0]) == Counter(
+        (foot, timestamp)
+        for timestamp in starts[:4]
+        for foot in ("L", "R")
+    )
+    assert not {
+        timestamp
+        for _foot, timestamp in loaded_batches[0]
+    }.intersection(starts[4:])
+    assert loaded_raw_ids == []
 
 
 def test_non_finite_raw_values_return_null_without_json_failure(client):
