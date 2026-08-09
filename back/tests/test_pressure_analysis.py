@@ -1,5 +1,6 @@
 from copy import deepcopy
 from datetime import datetime
+import math
 
 import pytest
 
@@ -19,6 +20,17 @@ def frame(*, left=None, right=None):
 
 def sensor_row(keys, value):
     return {key: value for key in keys}
+
+
+def assert_summary_numbers_are_finite(value):
+    if isinstance(value, dict):
+        for item in value.values():
+            assert_summary_numbers_are_finite(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            assert_summary_numbers_are_finite(item)
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        assert math.isfinite(value)
 
 
 def test_nonzero_mean_is_per_side_and_sensor():
@@ -61,6 +73,30 @@ def test_sensor_statistics_exclude_bool_none_string_nonfinite_and_nonpositive_va
         "valid_samples": 1,
         "total_samples": 9,
     }
+
+
+def test_huge_integer_that_cannot_convert_to_float_is_unavailable_without_raising():
+    summary = summarize_pressure([frame(left={"p1": 10**400})])
+
+    assert summary["left"]["sensors"]["p1"] == {
+        "mean_adc": None,
+        "valid_samples": 0,
+        "total_samples": 1,
+    }
+    assert_summary_numbers_are_finite(summary)
+
+
+def test_scaled_positive_mean_stays_finite_for_repeated_near_max_values():
+    frames = [frame(left={"p1": 1.7e308}) for _ in range(3)]
+
+    summary = summarize_pressure(frames)
+
+    assert summary["left"]["sensors"]["p1"] == {
+        "mean_adc": 1.7e308,
+        "valid_samples": 3,
+        "total_samples": 3,
+    }
+    assert_summary_numbers_are_finite(summary)
 
 
 def test_total_samples_count_only_rows_where_that_foot_is_present():
@@ -133,6 +169,48 @@ def test_load_proxy_uses_only_the_same_matched_sensor_set():
     assert bilateral["load_asymmetry_pct"] == pytest.approx(200 / 3)
     assert summary["attention"]["quality"] == "partial"
     assert summary["attention"]["level"] is None
+
+
+def test_scaled_positive_asymmetry_and_shares_avoid_intermediate_overflow():
+    frames = [
+        frame(left={"p1": 1.7e308}, right={"p1": 1.6e308})
+        for _ in range(3)
+    ]
+
+    summary = summarize_pressure(frames)
+    bilateral = summary["bilateral"]
+
+    assert bilateral["left_load_proxy_adc"] == 1.7e308
+    assert bilateral["right_load_proxy_adc"] == 1.6e308
+    assert bilateral["left_load_share_pct"] == pytest.approx(1700 / 33)
+    assert bilateral["right_load_share_pct"] == pytest.approx(1600 / 33)
+    assert bilateral["load_asymmetry_pct"] == pytest.approx(200 / 33)
+    assert bilateral["sensors"]["p1"]["asymmetry_pct"] == pytest.approx(200 / 33)
+    assert_summary_numbers_are_finite(summary)
+
+
+def test_unrepresentable_matched_load_proxies_degrade_attention_conservatively():
+    keys = SENSOR_KEYS[:6]
+    frames = [
+        frame(left=sensor_row(keys, 3e307), right=sensor_row(keys, 3e307))
+        for _ in range(3)
+    ]
+
+    summary = summarize_pressure(frames)
+    bilateral = summary["bilateral"]
+
+    assert bilateral["matched_sensor_count"] == 6
+    assert bilateral["left_load_proxy_adc"] is None
+    assert bilateral["right_load_proxy_adc"] is None
+    assert bilateral["left_load_share_pct"] is None
+    assert bilateral["right_load_share_pct"] is None
+    assert bilateral["load_asymmetry_pct"] is None
+    assert summary["attention"] == {
+        "level": None,
+        "quality": "insufficient",
+        "reason_codes": ["insufficient_pressure_data"],
+    }
+    assert_summary_numbers_are_finite(summary)
 
 
 def test_exactly_six_matched_sensors_are_usable_with_deterministic_reasons():
