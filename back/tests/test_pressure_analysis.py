@@ -51,6 +51,14 @@ def test_nonzero_mean_is_per_side_and_sensor():
     assert summary["right"]["sensors"]["p2"]["mean_adc"] == 30.0
 
 
+def test_ordinary_integer_mean_preserves_direct_arithmetic_result():
+    frames = [frame(left={"p1": value}) for value in (4091, 4092, 4093)]
+
+    mean = summarize_pressure(frames)["left"]["sensors"]["p1"]["mean_adc"]
+
+    assert mean == 4092.0
+
+
 def test_all_zero_and_nonfinite_values_become_unavailable():
     summary = summarize_pressure(
         [frame(left={"p1": 0.0}, right={"p1": float("nan")})]
@@ -309,6 +317,37 @@ def test_right_higher_reason_precedes_sensor_asymmetry():
         "right_load_higher",
         "sensor_asymmetry",
     ]
+
+
+@pytest.mark.parametrize(
+    ("left_p1", "right_p1", "expected_asymmetry", "expected_level"),
+    [
+        (20.0, 20.0, 0.0, "normal"),
+        (21.0, 19.0, 10.0, "mild"),
+        (11.0, 9.0, 20.0, "moderate"),
+        (23.0, 17.0, 30.0, "high"),
+    ],
+)
+def test_summary_preserves_exact_attention_boundaries(
+    left_p1,
+    right_p1,
+    expected_asymmetry,
+    expected_level,
+):
+    keys = SENSOR_KEYS[:6]
+    left = sensor_row(keys, 20.0)
+    right = sensor_row(keys, 20.0)
+    left["p1"] = left_p1
+    right["p1"] = right_p1
+    frames = [frame(left=left.copy(), right=right.copy()) for _ in range(3)]
+
+    summary = summarize_pressure(frames)
+
+    assert summary["bilateral"]["sensors"]["p1"]["asymmetry_pct"] == (
+        expected_asymmetry
+    )
+    assert summary["attention"]["quality"] == "usable"
+    assert summary["attention"]["level"] == expected_level
 
 
 @pytest.mark.parametrize(

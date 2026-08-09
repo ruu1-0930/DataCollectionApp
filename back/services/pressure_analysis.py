@@ -23,19 +23,36 @@ def _eligible(value):
 
 
 def _positive_mean(values):
+    try:
+        direct_mean = math.fsum(values) / len(values)
+    except OverflowError:
+        direct_mean = None
+    if direct_mean is not None and math.isfinite(direct_mean):
+        return direct_mean
+
     scale = max(values)
     normalized_mean = math.fsum(value / scale for value in values) / len(values)
     return scale * normalized_mean
 
 
 def _positive_pair_metrics(left, right):
+    direct_total = left + right
+    if math.isfinite(direct_total):
+        left_share = left / direct_total * 100
+        return {
+            "left_share_pct": left_share,
+            "right_share_pct": 100 - left_share,
+            "asymmetry_pct": abs(left - right) / (direct_total / 2) * 100,
+        }
+
     scale = max(left, right)
     left_scaled = left / scale
     right_scaled = right / scale
     scaled_total = left_scaled + right_scaled
+    left_share = left_scaled / scaled_total * 100
     return {
-        "left_share_pct": left_scaled / scaled_total * 100,
-        "right_share_pct": right_scaled / scaled_total * 100,
+        "left_share_pct": left_share,
+        "right_share_pct": 100 - left_share,
         "asymmetry_pct": abs(left_scaled - right_scaled)
         / (scaled_total / 2)
         * 100,
