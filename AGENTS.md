@@ -36,26 +36,25 @@
    - **待办**：**HBuilderX 重打包 App**（https 地址打进 apk 才生效）；关 RDS 公网、复查安全组（5000 不对公网/22 仅对己）、下线旧机器；证书到期前续签。（admin 已弃用，无需部署）
 1. **🟠 阶段 1 — 止血（部分完成）**：
    - ✅ **后端净重设（scope A，已完成）**：六表临床模型（clinicians/devices/patients/patient_pii/device_raw_data/device_transformed_data）+ 医护口令认证（bcrypt + JWT）+ 采集归属 clinician+patient+device + 按患者历史只读 API。子 agent 驱动 TDD，34 测试全绿。见 `back/` 与 `database_schema_mysql.sql`。
-   - ✅ **App 端接入新接口（代码完成，scope A）**：分支 `feature/frontend-backend-alignment`，子 agent 驱动 12 任务。`utils/terminal.js`（terminal_code）、`api/{clinician,patient,device}.js` 薄封装、`utils/apiShape.js`（后端↔前端形状映射）、`request.js`（token 走 `auth.getToken()`「Bearer xxx」整串 + 401 静默重登）、`operatorStore.enable/refreshToken`（启用即 enable→发 token）、`patientStore` 改后端发 `id/subject_id`、患者新建/选择页接 `POST/GET /patients`、采集上传补 `patient_id` 且无当前患者禁采、数据页按 `/patients/<id>/data` 拉历史、删除作废 `api/user.js` 与旧登录 `store/modules/user.js`。纯函数 vitest 22 测试全绿。对齐 spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-07-frontend-backend-alignment.md`。
+   - ✅ **App 端接入新接口（代码完成，scope A）**：分支 `feature/frontend-backend-alignment`。clinician 身份唯一键为 `(hospital, phone)`；启用提交医院/科室/姓名/手机号/口令，登录提交医院/姓名/手机号/口令。终端身份及运行时终端凭证已移除，旧本地 operator 残留会在读取时清理并回写；本次身份调整不做数据库迁移。`api/{clinician,patient,device}.js` 保持薄封装，`request.js` 以 `Bearer` JWT 鉴权，患者新建/选择、采集上传和按患者历史均已接后端。2026-08-13 源码扫描未发现运行时终端凭证，uni-app 自动化 `33 passed`。
    - ✅ **6→38 维全量落库（每脚一行，代码完成）**：一帧 BLE = 合并 38 字段（**固定前 19 左脚 / 后 19 右脚**），后端摄取拆成 L/R 两条每脚记录入库。`device_raw_data` 由「6 轴 IMU」扩为每脚 `foot`(L/R)+9 压力 `p1..p9`+6 IMU+4 步态（步长/步速/单支撑/双支撑，皆为设备固件输出，非本仓库模型计算；仅 SVM T1–T5 为推理）。改动文件：`models/models.py`、`database_schema_mysql.sql`、`migrations/001_raw_data_per_foot.sql`、`api/device.py`(38→2 行拆分 + 每脚跑 SVM)、`api/patient.py`(历史返回带 `foot`+全量压力/步态)；App `utils/apiShape.js` 的 `mapHistoryItem` 同步暴露 `foot`/`pressure`/步态。**后端 35 测试 + App 22 vitest 全绿**。`蓝牙uniapp` 上传侧无需改（已发 38 命名字段，拆分在后端）。
    - 🟡 **App 端真机回归（部分已验，2026-06-09）**：HBuilderX → 真后端 `http://118.31.39.47`。
       - ⏳ **设备路径待验**：新增设备流程已由**扫码改为蓝牙搜索附近设备**（修复了运行时权限未申请导致扫不到的问题，见 `store/modules/blueTooth.js` 的 `requestBlePermissions`/`syncBluetoothState`）；连接鞋垫、采集、上传落库与历史查询仍需真实设备和真实数据库回归。
      - ⏳ **待验**：连接鞋垫 → 采集 → 上传落库 + 归属（查 `device_raw_data` 每帧 L/R 两行 + `device_transformed_data` T1-T5 + `patients.last_collected_at`）、按患者查历史（数据页）。store/页面/蓝牙/网络无法 vitest mock，见 plan Task 12 手动清单。
    - HTTPS/密钥/收回公网随迁移完成。
 
-### 临床步态数据工作台（跨仓只读链路，当前证据截至 2026-07-25；Tasks 1–7 已完成）
+### 临床步态数据工作台（跨仓只读链路，当前证据截至 2026-08-13）
 
-- 当前链路是 `Project Streamlit -> Project FastAPI /api/clinical/* -> 本仓库 Flask /patients/*/gait/* -> MySQL device_raw_data`。A 原样透传当前 clinician Bearer JWT；B 校验 JWT，并在所有患者、会话、详情、逐帧和比较接口执行 clinician 归属检查。
+- 当前链路是 `Project Streamlit -> Project FastAPI /api/clinical/* -> 本仓库 Flask /patients/*/gait/* -> device_raw_data`。A 原样透传当前 clinician Bearer JWT；B 校验 JWT，并在所有患者、会话、详情、逐帧和比较接口执行 clinician 归属检查。登录链路只使用医院、姓名、手机号、口令，不再使用终端身份。
 - B 是规范数据源，负责 30 秒 gap 会话切分、稳定 session ID、8 个规范指标、数据质量、关注项、会话详情、最多 500 点图表序列、分页逐帧数据，以及同一患者 2–5 次会话比较。`gait_bp` 注册修复已提交为 `d3bf301`；步长始终保持固件语义 `step_length`，不得改称 stride length。`stride_time_cv_pct` 使用 `2 * step_length / walking_speed` 序列计算 CV，公式披露修复见 `ae3728c`。
 - 最终 B 修复提交为 `57d306b`、`89ac8af`、`66db5ca`、`324d7c9`；A 修复提交为 `af26e14`、`c5ee7b0`、`f73f21d`。最终 broad review 已批准：`0 Critical / 0 Important / 0 Minor`。
-- 压力只使用 `ADC`，IMU 只使用 `raw_unscaled`；这些信号和探索性公式尚未标定，需固件与临床验证。T1–T5、随机 SVM 回退和其他未验证模型输出不得进入临床 DTO、关注项或 UI。
-- 当前最终自动化证据（2026-07-25）：B full `151 passed, 1978 warnings in 24.91s`；A related client/BFF/UI `229 passed, 1 warning in 5.89s`；Harness boundary `577 passed in 7.09s`。warning 类别仍为 sklearn probability、`datetime.utcnow`、SQLAlchemy `Query.get`、Starlette `python_multipart`；warning 不构成测试失败。
+- `back/services/pressure_analysis.py` 按完整会话、分脚汇总 `p1..p9`：仅有限且大于 0 的 ADC 样本进入均值，同时保留每个传感器的 `valid_samples`/`total_samples`。同一传感器左右脚各至少 3 个有效样本才进入 matched 集合；基于完整 matched 集合计算左右负载代理、负载占比和不对称度，并按 10%/20%/30% 给出研究性关注等级。ADC 尚未标定，不能换算物理压力，也不能据此给出疾病严重程度。
+- 只有单会话详情 `GET /patients/<id>/gait/sessions/<session_id>` 暴露 `pressure_summary`；会话列表、比较和逐帧接口均省略该字段。详情压力汇总使用目标会话的有界批量查询；列表/比较不读取压力传感器列，逐帧仍按分页边界读取。
+- 当前自动化证据（2026-08-13）：B focused `158 passed`；B full `194 passed in 29.04s`，伴随 `4058` 条既有 warning（sklearn SVC `probability`、`datetime.utcnow()`、SQLAlchemy `Query.get()`）；uni-app `33 passed`。会话排序的时间依赖测试已改为显式请求 fixture 时间范围，生产默认最近 30 天窗口保持不变；源码运行时终端凭证扫描和 diff-check 均干净。
 - comparison recent-five per-metric median 契约已关闭：所有 metric 共用最近最多五个 complete/usable 历史会话窗口，保留有限 0；每 metric 在固定窗口内忽略 unavailable；该基线与 first-selected delta baseline 分离。B 分批向前扫描，直到五个合格会话或历史耗尽，不使用固定候选截断。
 - 已关闭边界包括：NaN/Inf fail closed；strict canonical 8 metrics/flags；SQL frame pagination 与有界历史；400/404/422；inclusive end date/reverse range；late-401 pending reset；`delta_abs`/`delta_pct`；9-point pressure time series + raw IMU magnitude；canonical ID；30s gap。
-- 数据视图浏览器证据先使用本地 mock clinical BFF + 真实 Streamlit，在 1440x900 和 390x844 修复后无 DOM overflow/occlusion；另验证了真实 A FastAPI 的 health、未认证 clinical 401，以及 B 不可用时真实 Streamlit 经真实 A BFF 只显示脱敏错误和唯一重试按钮。
-- 随后已用一次性 seeded SQLite 运行**真实 B Flask 应用/端点 + 真实 A FastAPI + 真实 Streamlit**：浏览器登录后加载 1 个患者、3 个稳定会话、概览/证据、12 条分页帧、压力/IMU 3 个可见图，以及保留 2 个勾选会话的比较页（恰好 1 个可选指标图 + 完整表），无横向 overflow。证据截图在 `D:\ME5001\Project\.superpowers\sdd\task-8-seeded-real-comparison.png`。
-- RDS-backed B 本地启动仍因 DNS 不可达而在监听前失败。seeded SQLite 证据不能替代真实 MySQL/RDS、真实鞋垫或真实 clinician 多账号 ownership 验证；文档不得记录 RDS 主机或凭据，也不得把本地种子数据外推为生产路径已验。
-- Task 8 仍为 Partial，仅因真实 MySQL/RDS query plan/微秒/规模、真实设备 L/R/gap、真实 clinician JWT/ownership/multi-account、production three-service 仍未验证；不得声称 Task 8 complete。seeded SQLite browser evidence 不得外推生产。
+- 本地浏览器 QA 使用隔离的一次性 SQLite，运行真实 B Flask、A FastAPI 与 Streamlit；验证了四字段登录、1 个患者/2 次采集会话、会话均值足压、单帧足压、IMU 以及会话切换重置，并覆盖 1440x900 与 390x844。多选状态仅由真实 Streamlit AppTest 验证为 `[] -> [S1] -> [S1, S2]`，不声称比较图已完成浏览器验证。QA 后临时数据库已删除，相关本地服务已停止。
+- 上述本地证据不得外推为 RDS、真实鞋垫、生产三服务链路或真实多 clinician ownership 已验证；压力 ADC 标定也未完成。仍需在真实设备、真实数据库和生产部署路径上做纵向验证。
 - AI Agent、MCP、memory 仍不在当前阶段；跌倒检测仍只是报告，未实现。
 - 跌倒检测调研已完成于 `docs/fall-detection-feasibility.md`；采样率仍是阻塞项，本阶段没有实现跌倒检测。
 ### 2.2 并行线 — 官网展示页（面向医生推广，代码完成）
