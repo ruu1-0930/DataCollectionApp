@@ -448,7 +448,14 @@ def test_sessions_return_stable_ids_newest_first(client):
     newer_start = _BASE_TIME + timedelta(minutes=1)
     auth, patient_id, session_ids = _setup_sessions(client, [older_start, newer_start])
 
-    response = client.get(f"/patients/{patient_id}/gait/sessions", headers=auth)
+    response = client.get(
+        f"/patients/{patient_id}/gait/sessions",
+        headers=auth,
+        query_string={
+            "start": older_start.isoformat(),
+            "end": newer_start.isoformat(),
+        },
+    )
     assert response.status_code == 200
     sessions = response.get_json()["data"]["sessions"]
 
