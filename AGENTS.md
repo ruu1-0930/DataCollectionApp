@@ -43,18 +43,20 @@
      - ⏳ **待验**：连接鞋垫 → 采集 → 上传落库 + 归属（查 `device_raw_data` 每帧 L/R 两行 + `device_transformed_data` T1-T5 + `patients.last_collected_at`）、按患者查历史（数据页）。store/页面/蓝牙/网络无法 vitest mock，见 plan Task 12 手动清单。
    - HTTPS/密钥/收回公网随迁移完成。
 
-### 临床步态数据工作台（跨仓只读链路，当前证据截至 2026-08-13）
+### 临床步态数据工作台（跨仓只读链路，当前证据截至 2026-08-17）
 
-- 当前链路是 `Project Streamlit -> Project FastAPI /api/clinical/* -> 本仓库 Flask /patients/*/gait/* -> device_raw_data`。A 原样透传当前 clinician Bearer JWT；B 校验 JWT，并在所有患者、会话、详情、逐帧和比较接口执行 clinician 归属检查。登录链路只使用医院、姓名、手机号、口令，不再使用终端身份。
+- 当前链路是 `Project Streamlit -> Project FastAPI /api/clinical/* -> 本仓库 Flask /patients/*/gait/* -> device_raw_data`。A 原样透传当前 clinician Bearer JWT；B 校验 JWT，并在所有患者、会话、详情、逐帧和比较接口执行 clinician 归属检查。登录链路只使用医院、姓名、手机号、口令，不再使用终端身份；`enable`/`login` 仅接受精确 JSON 字段集，未知字段、`terminal_code`、非对象或畸形 JSON 返回 400，口令至少 4 字符且 UTF-8 编码不超过 72 字节。
 - B 是规范数据源，负责 30 秒 gap 会话切分、稳定 session ID、8 个规范指标、数据质量、关注项、会话详情、最多 500 点图表序列、分页逐帧数据，以及同一患者 2–5 次会话比较。`gait_bp` 注册修复已提交为 `d3bf301`；步长始终保持固件语义 `step_length`，不得改称 stride length。`stride_time_cv_pct` 使用 `2 * step_length / walking_speed` 序列计算 CV，公式披露修复见 `ae3728c`。
-- 最终 B 修复提交为 `57d306b`、`89ac8af`、`66db5ca`、`324d7c9`；A 修复提交为 `af26e14`、`c5ee7b0`、`f73f21d`。最终 broad review 已批准：`0 Critical / 0 Important / 0 Minor`。
-- `back/services/pressure_analysis.py` 按完整会话、分脚汇总 `p1..p9`：仅有限且大于 0 的 ADC 样本进入均值，同时保留每个传感器的 `valid_samples`/`total_samples`。同一传感器左右脚各至少 3 个有效样本才进入 matched 集合；基于完整 matched 集合计算左右负载代理、负载占比和不对称度，并按 10%/20%/30% 给出研究性关注等级。ADC 尚未标定，不能换算物理压力，也不能据此给出疾病严重程度。
+- 2026-07-25 工作台范围的最终 B 修复提交为 `57d306b`、`89ac8af`、`66db5ca`、`324d7c9`；A 修复提交为 `af26e14`、`c5ee7b0`、`f73f21d`，该历史范围的 broad review 已批准：`0 Critical / 0 Important / 0 Minor`。本节 2026-08-17 新增修复的 broad review 仍待完成。
+- `back/services/pressure_analysis.py` 按完整会话、分脚汇总 `p1..p9`：仅有限且大于 0 的 ADC 样本进入均值，同时保留每个传感器的 `valid_samples`/`total_samples`。同一传感器左右脚各至少 3 个有效样本才进入 matched 集合；基于完整 matched 集合计算左右负载代理、负载占比和不对称度，并按 10%/20%/30% 给出研究性关注等级。详情压力汇总直接读取目标会话原始 per-foot 行，故同脚同时间戳的重复原始行不会在帧配对中丢失。ADC 尚未标定，不能换算物理压力，也不能据此给出疾病严重程度。
 - 只有单会话详情 `GET /patients/<id>/gait/sessions/<session_id>` 暴露 `pressure_summary`；会话列表、比较和逐帧接口均省略该字段。详情压力汇总使用目标会话的有界批量查询；列表/比较不读取压力传感器列，逐帧仍按分页边界读取。
-- 当前自动化证据（2026-08-13）：B focused `158 passed`；B full `194 passed in 29.04s`，伴随 `4058` 条既有 warning（sklearn SVC `probability`、`datetime.utcnow()`、SQLAlchemy `Query.get()`）；uni-app `33 passed`。会话排序的时间依赖测试已改为显式请求 fixture 时间范围，生产默认最近 30 天窗口保持不变；源码运行时终端凭证扫描和 diff-check 均干净。
+- 采集端安全修复提交为 `ff4d693`、`94d4cfb`、`27bad49`、`62d807e`：持久化 operator profile 不保存 passcode，`runtimePasscode` 只存在于运行期 Pinia 状态；`reset` 与启动未解锁分支都会清 JWT；请求生命周期日志只记录 URL、方法、状态和错误类别，不记录口令、JWT、PII 或原始传感器载荷；解锁提交有并发门。
+- 当前自动化证据（2026-08-17）：B full `215 passed in 34.11s`，伴随 `4095` 条既有 warning（sklearn SVC `probability`、`datetime.utcnow()`、SQLAlchemy `Query.get()`）；uni-app `54 passed`；A clinical/UI `329 passed in 6.09s`，仅 1 条既有 Starlette `python_multipart` warning；Harness boundary `577 passed in 6.65s`。源码运行时终端凭证扫描和 diff-check 均干净。
 - comparison recent-five per-metric median 契约已关闭：所有 metric 共用最近最多五个 complete/usable 历史会话窗口，保留有限 0；每 metric 在固定窗口内忽略 unavailable；该基线与 first-selected delta baseline 分离。B 分批向前扫描，直到五个合格会话或历史耗尽，不使用固定候选截断。
 - 已关闭边界包括：NaN/Inf fail closed；strict canonical 8 metrics/flags；SQL frame pagination 与有界历史；400/404/422；inclusive end date/reverse range；late-401 pending reset；`delta_abs`/`delta_pct`；9-point pressure time series + raw IMU magnitude；canonical ID；30s gap。
 - 本地浏览器 QA 使用隔离的一次性 SQLite，运行真实 B Flask、A FastAPI 与 Streamlit；验证了四字段登录、1 个患者/2 次采集会话、会话均值足压、单帧足压、IMU 以及会话切换重置，并覆盖 1440x900 与 390x844。多选状态仅由真实 Streamlit AppTest 验证为 `[] -> [S1] -> [S1, S2]`，不声称比较图已完成浏览器验证。QA 后临时数据库已删除，相关本地服务已停止。
 - 上述本地证据不得外推为 RDS、真实鞋垫、生产三服务链路或真实多 clinician ownership 已验证；压力 ADC 标定也未完成。仍需在真实设备、真实数据库和生产部署路径上做纵向验证。
+- Task 8 的本地实现、修复、验证和文档提交已完成；最终跨仓 broad specification/code-quality review 尚未完成，因此不得称 Task 8 已完全关闭。
 - AI Agent、MCP、memory 仍不在当前阶段；跌倒检测仍只是报告，未实现。
 - 跌倒检测调研已完成于 `docs/fall-detection-feasibility.md`；采样率仍是阻塞项，本阶段没有实现跌倒检测。
 ### 2.2 并行线 — 官网展示页（面向医生推广，代码完成）
