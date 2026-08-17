@@ -652,6 +652,41 @@ def test_full_session_pressure_summary_uses_all_501_frames_before_chart_sampling
     ] == pytest.approx(251.0)
 
 
+def test_pressure_summary_counts_duplicate_same_timestamp_per_foot_rows(client):
+    auth, patient_id, session_id = _setup_session(client)
+    left = DeviceRawData.query.filter_by(patient_id=patient_id, foot="L").one()
+    duplicate = DeviceRawData(
+        device_id=left.device_id,
+        patient_id=left.patient_id,
+        clinician_id=left.clinician_id,
+        foot="L",
+        **{f"p{index}": 100.0 for index in range(1, 10)},
+        ax=left.ax,
+        ay=left.ay,
+        az=left.az,
+        gx=left.gx,
+        gy=left.gy,
+        gz=left.gz,
+        step_length=left.step_length,
+        walking_speed=left.walking_speed,
+        single_support_time=left.single_support_time,
+        double_support_time=left.double_support_time,
+        collected_at=left.collected_at,
+    )
+    db.session.add(duplicate)
+    db.session.commit()
+
+    summary = client.get(
+        f"/patients/{patient_id}/gait/sessions/{session_id}",
+        headers=auth,
+    ).get_json()["data"]["pressure_summary"]
+
+    left_p1 = summary["left"]["sensors"]["p1"]
+    assert left_p1["total_samples"] == 2
+    assert left_p1["valid_samples"] == 2
+    assert left_p1["mean_adc"] == pytest.approx(550.0)
+
+
 def test_session_detail_only_materializes_target_and_recent_five_aggregate_rows(
     client,
     monkeypatch,

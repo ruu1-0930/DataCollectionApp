@@ -16,7 +16,7 @@ from services.gait_analysis import (
     session_data_quality,
 )
 from services.gait_comparison import compare_session_summaries
-from services.pressure_analysis import summarize_pressure
+from services.pressure_analysis import summarize_pressure_rows
 from utils import Response, token_required
 
 
@@ -102,6 +102,28 @@ def _fetch_rows(
         for column in column_names:
             if column not in {"collected_at", "foot"}:
                 row[column] = _finite_or_none(row[column])
+        rows.append(row)
+    return rows
+
+
+def _fetch_pressure_rows_for_bounds(patient_id, bounds):
+    """Load every raw pressure row for one resolved session in one bounded query."""
+    columns = (DeviceRawData.foot,) + tuple(
+        getattr(DeviceRawData, column) for column in _PRESSURE_COLS
+    )
+    query = (
+        db.session.query(*columns)
+        .filter(DeviceRawData.patient_id == patient_id)
+        .filter(DeviceRawData.collected_at >= bounds[0])
+        .filter(DeviceRawData.collected_at <= bounds[1])
+        .order_by(DeviceRawData.collected_at.asc(), DeviceRawData.id.asc())
+    )
+    column_names = [column.key for column in columns]
+    rows = []
+    for values in query.all():
+        row = dict(zip(column_names, values))
+        for column in _PRESSURE_COLS:
+            row[column] = _finite_or_none(row[column])
         rows.append(row)
     return rows
 
@@ -583,7 +605,9 @@ def get_gait_session(patient_id, session_id):
 
     summary = _session_summary(aggregate_session_record, patient_id, history)
     data = _public_summary(summary)
-    data["pressure_summary"] = summarize_pressure(session["frames"])
+    data["pressure_summary"] = summarize_pressure_rows(
+        _fetch_pressure_rows_for_bounds(patient_id, bounds)
+    )
     data["chart_series"] = _chart_series(session["frames"])
     return jsonify(Response.success(data=data))
 

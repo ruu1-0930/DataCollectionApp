@@ -77,8 +77,7 @@ def pressure_attention_level(asymmetry_pct):
     return "normal"
 
 
-def _side_summary(frames, foot):
-    rows = [frame[foot] for frame in frames if frame.get(foot) is not None]
+def _side_summary(rows):
     sensors = {}
     for sensor in SENSOR_KEYS:
         values = [row.get(sensor) for row in rows if _eligible(row.get(sensor))]
@@ -202,15 +201,11 @@ def _attention_summary(bilateral, both_feet_present):
     return {"level": level, "quality": quality, "reason_codes": reasons}
 
 
-def summarize_pressure(frames):
-    """Summarize nonzero pressure means and matched bilateral asymmetry."""
-    frames = list(frames)
-    left = _side_summary(frames, "L")
-    right = _side_summary(frames, "R")
+def _summarize_pressure_rows(left_rows, right_rows):
+    left = _side_summary(left_rows)
+    right = _side_summary(right_rows)
     bilateral = _bilateral_summary(left, right)
-    both_feet_present = any(frame.get("L") is not None for frame in frames) and any(
-        frame.get("R") is not None for frame in frames
-    )
+    both_feet_present = bool(left_rows) and bool(right_rows)
     return {
         "method": "nonzero_mean_v1",
         "unit": "ADC",
@@ -220,3 +215,21 @@ def summarize_pressure(frames):
         "bilateral": bilateral,
         "attention": _attention_summary(bilateral, both_feet_present),
     }
+
+
+def summarize_pressure(frames):
+    """Summarize nonzero pressure means from paired gait frames."""
+    frames = list(frames)
+    return _summarize_pressure_rows(
+        [frame["L"] for frame in frames if frame.get("L") is not None],
+        [frame["R"] for frame in frames if frame.get("R") is not None],
+    )
+
+
+def summarize_pressure_rows(rows):
+    """Summarize every raw per-foot row without frame-pair deduplication."""
+    rows = list(rows)
+    return _summarize_pressure_rows(
+        [row for row in rows if row.get("foot") == "L"],
+        [row for row in rows if row.get("foot") == "R"],
+    )

@@ -69,6 +69,84 @@ def test_login_rejects_bad_phone_and_short_passcode(client):
     assert short_passcode.status_code == 400
 
 
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/clinician/enable", []),
+        ("/clinician/enable", "not-an-object"),
+        ("/clinician/enable", None),
+        ("/clinician/enable", {}),
+        ("/clinician/login", []),
+        ("/clinician/login", "not-an-object"),
+        ("/clinician/login", None),
+        ("/clinician/login", {}),
+    ],
+)
+def test_enable_and_login_reject_non_object_json_as_bad_request(client, path, payload):
+    client.application.config["PROPAGATE_EXCEPTIONS"] = False
+    response = client.post(path, json=payload)
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/clinician/enable", _enable_payload(terminal_code="legacy")),
+        ("/clinician/login", _login_payload(terminal_code="legacy")),
+    ],
+)
+def test_enable_and_login_reject_unknown_json_fields(client, path, payload):
+    if path.endswith("login"):
+        client.post("/clinician/enable", json=_enable_payload())
+    response = client.post(path, json=payload)
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/clinician/enable", {"hospital": "协和医院"}),
+        ("/clinician/login", {"hospital": "协和医院"}),
+    ],
+)
+def test_enable_and_login_reject_missing_json_fields(client, path, payload):
+    response = client.post(path, json=payload)
+    assert response.status_code == 400
+
+
+def test_profile_update_rejects_empty_or_unknown_json_fields(client):
+    token = _token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    client.application.config["PROPAGATE_EXCEPTIONS"] = False
+    for payload in (
+        [],
+        "not-an-object",
+        None,
+        {},
+        {"terminal_code": "legacy"},
+        {"dept": "  "},
+    ):
+        response = client.put("/clinician/me", headers=headers, json=payload)
+        assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("passcode", "expected_status"),
+    [
+        ("a" * 72, 200),
+        ("a" * 73, 400),
+        ("密" * 24, 200),
+        ("密" * 25, 400),
+    ],
+)
+def test_enable_enforces_utf8_passcode_byte_limit(client, passcode, expected_status):
+    response = client.post(
+        "/clinician/enable",
+        json=_enable_payload(phone="13600000000", passcode=passcode),
+    )
+    assert response.status_code == expected_status
+
+
 def test_enable_reissue_requires_correct_passcode(client):
     # 同一医院和手机号再次启用：口令正确才幂等重发 token
     client.post('/clinician/enable', json=_enable_payload())

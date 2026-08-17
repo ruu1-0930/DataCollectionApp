@@ -12,6 +12,9 @@ clinician_bp = Blueprint('clinician', __name__)
 
 _PHONE_PATTERN = re.compile(r'^1\d{10}$')
 _LOGIN_FAILURE = '登录凭证不匹配'
+_ENABLE_FIELDS = frozenset({'hospital', 'dept', 'name', 'phone', 'passcode'})
+_LOGIN_FIELDS = frozenset({'hospital', 'name', 'phone', 'passcode'})
+_PROFILE_FIELDS = frozenset({'hospital', 'dept', 'name', 'phone'})
 
 
 def _clean_string(data, key):
@@ -20,7 +23,26 @@ def _clean_string(data, key):
 
 
 def _valid_passcode(passcode):
-    return len(passcode) >= 4
+    try:
+        return len(passcode) >= 4 and len(passcode.encode('utf-8')) <= 72
+    except UnicodeEncodeError:
+        return False
+
+
+def _json_object_with_allowed_fields(allowed_fields, *, exact):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return None
+    keys = set(data)
+    if (exact and keys != allowed_fields) or (
+        not exact and (not keys or not keys.issubset(allowed_fields))
+    ):
+        return None
+    return data
+
+
+def _invalid_json_fields_response():
+    return jsonify(Response.error(400, '请求字段无效')), 400
 
 
 def _account_conflict():
@@ -34,7 +56,9 @@ def _clinician_public(c):
 
 @clinician_bp.route('/clinician/enable', methods=['POST'])
 def enable():
-    data = request.json or {}
+    data = _json_object_with_allowed_fields(_ENABLE_FIELDS, exact=True)
+    if data is None:
+        return _invalid_json_fields_response()
     hospital = _clean_string(data, 'hospital')
     dept = _clean_string(data, 'dept')
     name = _clean_string(data, 'name')
@@ -74,7 +98,9 @@ def enable():
 
 @clinician_bp.route('/clinician/login', methods=['POST'])
 def login():
-    data = request.json or {}
+    data = _json_object_with_allowed_fields(_LOGIN_FIELDS, exact=True)
+    if data is None:
+        return _invalid_json_fields_response()
     hospital = _clean_string(data, 'hospital')
     name = _clean_string(data, 'name')
     phone = _clean_string(data, 'phone')
@@ -104,7 +130,9 @@ def get_me():
 @token_required()
 def update_me():
     c = Clinician.query.get(g.clinician_id)
-    data = request.json or {}
+    data = _json_object_with_allowed_fields(_PROFILE_FIELDS, exact=False)
+    if data is None:
+        return _invalid_json_fields_response()
     updates = {}
     for field in ('hospital', 'dept', 'name', 'phone'):
         if field in data:
