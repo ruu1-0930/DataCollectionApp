@@ -6,7 +6,9 @@
       <view class="h2">{{ subtitle }}</view>
     </view>
     <CaInput label="口令" icon="🔒" :password="true" placeholder="输入口令解锁" v-model="passcode" />
-    <view class="btn" @tap="onUnlock">解锁</view>
+    <view class="btn" :class="{ disabled: submitting }" @tap="onUnlock">
+      {{ submitting ? '验证中…' : '解锁' }}
+    </view>
     <view class="hint">日常打开需验证医生登录口令。\n非本人？<text class="link" @tap="onReset">重新注册</text></view>
   </view>
 </template>
@@ -15,21 +17,30 @@
 import { ref, computed } from 'vue'
 import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { usePatientStoreWithOut } from '@/store/modules/patient'
+import { createSubmissionGate } from '@/utils/submissionGate'
 const op = useOperatorStoreWithOut()
 const ps = usePatientStoreWithOut()
 const passcode = ref('')
+const submitting = ref(false)
+const submissionGate = createSubmissionGate((value) => {
+  submitting.value = value
+})
 const subtitle = computed(() => {
   const o = op.operator || {}
   return [o.hospital, o.dept, o.name].filter(Boolean).join(' · ')
 })
 async function onUnlock() {
-  try {
-    await op.unlock(passcode.value)
-  } catch (e) {
-    return uni.showToast({ title: '口令错误或网络异常', icon: 'none' })
-  }
-  if (ps.current) uni.switchTab({ url: '/pages/home/home' })
-  else uni.reLaunch({ url: '/pages/patient/select' })
+  return submissionGate.run(async () => {
+    try {
+      await op.unlock(passcode.value)
+    } catch (e) {
+      uni.showToast({ title: '口令错误或网络异常', icon: 'none' })
+      return false
+    }
+    if (ps.current) uni.switchTab({ url: '/pages/home/home' })
+    else uni.reLaunch({ url: '/pages/patient/select' })
+    return true
+  })
 }
 function onReset() {
   uni.showModal({
@@ -46,6 +57,7 @@ function onReset() {
 .h1 { font-size: 38rpx; font-weight: 800; color: $ca-t1; margin-top: 24rpx; }
 .h2 { font-size: 25rpx; color: $ca-t2; margin-top: 10rpx; }
 .btn { margin-top: 40rpx; background: $ca-primary; color: #fff; font-size: 30rpx; font-weight: 700; text-align: center; padding: 28rpx; border-radius: 26rpx; }
+.btn.disabled { opacity: 0.6; pointer-events: none; }
 .hint { font-size: 22rpx; color: $ca-t3; text-align: center; margin-top: 24rpx; line-height: 1.6; white-space: pre-line; }
 .link { color: $ca-primary; }
 </style>

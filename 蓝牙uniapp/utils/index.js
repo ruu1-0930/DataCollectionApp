@@ -21,8 +21,7 @@ function pageTo(url) {
       animationType: 'pop-in',
       animationDuration: 100
     })
-  } catch (error) {
-    console.error('Navigation error:', error)
+  } catch {
     // 这里可以添加错误处理逻辑，例如显示一个错误提示给用户
   }
 }

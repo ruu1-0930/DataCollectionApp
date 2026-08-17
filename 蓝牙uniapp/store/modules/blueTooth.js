@@ -77,7 +77,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       try {
         this.isBluetoothOpen = this.globalBle.isEnabled()
       } catch (e) {
-        console.warn('读取蓝牙状态失败', e)
+        this.isBluetoothOpen = false
       }
       // #endif
       return this.isBluetoothOpen
@@ -99,13 +99,11 @@ export const useBlueToothStore = defineStore('blueToothStore', {
               // 不同 Android 版本要求的权限不同，拿到任意扫描相关权限即放行
               resolve((res.granted && res.granted.length > 0) || false)
             },
-            (err) => {
-              console.warn('申请蓝牙权限失败', err)
+            () => {
               resolve(false)
             }
           )
         } catch (e) {
-          console.warn('requestPermissions 异常', e)
           resolve(true) // 异常时不阻塞，交给扫描结果兜底
         }
         // #endif
@@ -137,7 +135,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       this.globalBle.startScanBleDevice(durationMs, (res) => {
         // 仅 type==0 是扫描结果帧，其余为错误/状态帧
         if (res?.type !== 0) {
-          if (res?.type != null) console.log('扫描回调非结果帧', res.type, res.message)
           return
         }
         const d = res?.data?.device
@@ -177,7 +174,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
     },
     initBle() {
       this.globalBle.onBtOpenStateListener((res) => {
-        console.log('监听到蓝牙状态改变', res.data ? '蓝牙开启' : '蓝牙关闭')
         this.isBluetoothOpen = res.data ? true : false
 
         if (!res.data) {
@@ -194,7 +190,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
     checkBluetooth() {
       setInterval(() => {
         this.isBluetoothOpen = BleLib.isEnabled()
-        console.log('当前蓝牙状态', this.isBluetoothOpen)
       }, 1000)
     },
 
@@ -204,7 +199,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       this.bles_objs[device.device_code].ble.close()
       // 断开后清空首页实时显示，避免残留上一次的数据
       this.realtime = emptyRealtime()
-      console.log(`${device.device_code} 断开连接`)
     },
 
     connectDevice(id) {
@@ -249,16 +243,13 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       // autoConnect=false：点击即连这种直连场景更快更稳；true 只适合断线后台慢速重连，是首连必失败的主因
       const tryConnect = () => {
       currentBle.ble.connect(device.device_code, false, (res) => {
-        console.log(`${device.device_code} 连接结果`, res)
         // type==0 表示连接成功 type==1
         if (res.type == 0) {
           connected = true
           this.bles_objs[device.device_code].isConnected = true
 
           currentBle.ble.scanServices(async (resSevice) => {
-            currentBle.ble.setMtu(512, (res) => {
-              console.log('setMtu', res)
-            })
+            currentBle.ble.setMtu(512, () => {})
 
             // 获取服务数据（自定义服务固定在 data[2]：含 NOTIFY 特征 4f93ccac）
             const resSeviceData = resSevice.data[2]
@@ -292,7 +283,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
 
               // 效果验证 长度40个字符串
               if (dataArray.length != 38) {
-                console.log('数据长度不正确', dataArray.length)
                 return
               }
 
@@ -354,8 +344,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
                 right_double_sp_time: parseFloat(dataArray[37])
               }
 
-              // console.log('apiData', apiData)
-
               // 每帧刷新首页实时显示（与是否落库无关：即使未选患者也能看到数据）
               this.realtime = {
                 hasData: true,
@@ -389,7 +377,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
               const patientId = ps.currentId
               if (!patientId) {
                 // 无当前患者：禁止上传（避免数据无法归属）
-                console.warn('未选择患者，已跳过本帧上传')
                 return
               }
               uploadRawDataApi(device.device_code, buildRawDataPayload(patientId, apiData))
@@ -407,7 +394,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
           // 仅首连阶段才自动重试一次，避免把 Android 固有的偶发 GATT 失败直接抛给用户
           if (retriesLeft > 0) {
             retriesLeft--
-            console.warn(`${device.device_code} 连接失败(type:${res.type})，自动重试…`)
             setTimeout(tryConnect, 600)
             return
           }
@@ -426,8 +412,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
     sendMassge(data, device_code) {
       const currentBle = this.bles_objs[device_code]
 
-      console.log(`服务uuid：${currentBle.service_uuid}  写uuid:${currentBle.write_characteristic_uuid}  通知：${currentBle.read_characteristic_uuid}`)
-
       if (!currentBle.isConnected) {
         uni.showToast({
           title: '当前设备未连接',
@@ -441,7 +425,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         //   title: '当前设备未初始化,或者不支持写入',
         //   icon: 'none'
         // })
-        console.error('当前设备未初始化,或者不支持写入')
         return
       }
 
@@ -454,11 +437,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       }
 
       const str = this.toHex(data)
-      console.log(`${device_code} 发送数据`, data, str)
-
-      currentBle.ble.writeStringDataToBle(currentBle.service_uuid, currentBle.write_characteristic_uuid, str.toString(), (res) => {
-        console.log(`${device_code} 发送数据结果`, res)
-      })
+      currentBle.ble.writeStringDataToBle(currentBle.service_uuid, currentBle.write_characteristic_uuid, str.toString(), () => {})
     },
 
     /**
@@ -466,7 +445,6 @@ export const useBlueToothStore = defineStore('blueToothStore', {
      */
     async getDevicesList() {
       this.deviceList = await listDevicesApi()
-      console.log('设备列表', this.deviceList)
 
       const existDeviceList = Object.keys(this.bles_objs)
       // bles_objs 更新

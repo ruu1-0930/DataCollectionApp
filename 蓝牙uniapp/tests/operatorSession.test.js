@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   authenticateOperator,
   buildPersistentOperator,
+  resetOperatorSession,
 } from '../utils/operatorSession'
 
 const profile = {
@@ -62,18 +63,39 @@ describe('operator runtime authentication', () => {
     expect(loginApi).not.toHaveBeenCalled()
   })
 
+  it('resets runtime state and clears both the profile and persisted token', () => {
+    const state = {
+      operator: profile,
+      runtimePasscode: 'runtime-secret',
+      unlocked: true,
+    }
+    const clearOperator = vi.fn()
+    const clearToken = vi.fn()
+
+    resetOperatorSession({ state, clearOperator, clearToken })
+
+    expect(state).toEqual({
+      operator: null,
+      runtimePasscode: null,
+      unlocked: false,
+    })
+    expect(clearOperator).toHaveBeenCalledOnce()
+    expect(clearToken).toHaveBeenCalledOnce()
+  })
+
   it('wires the Pinia store to asynchronous runtime authentication', () => {
     const source = readSource('../store/modules/operator.js')
     expect(source).toContain('runtimePasscode: null')
     expect(source).toContain('async unlock(passcode)')
     expect(source).toContain('authenticateOperator')
-    expect(source).toContain('this.runtimePasscode = null')
+    expect(source).toContain('resetOperatorSession')
   })
 
-  it('awaits remote unlock in the unlock page', () => {
+  it('connects the unlock page to the executable submission gate', () => {
     const source = readSource('../pages/setup/unlock.vue')
-    expect(source).toContain('async function onUnlock()')
-    expect(source).toContain('await op.unlock(passcode.value)')
+    expect(source).toContain('createSubmissionGate')
+    expect(source).toContain(':class="{ disabled: submitting }"')
+    expect(source).toContain("submitting ? '验证中…' : '解锁'")
   })
 })
 

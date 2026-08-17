@@ -19,3 +19,11 @@ export async function authenticateOperator({ operator, passcode, loginApi }) {
     operator: buildPersistentOperator(operator, response.clinician),
   }
 }
+
+export function resetOperatorSession({ state, clearOperator, clearToken }) {
+  state.operator = null
+  state.runtimePasscode = null
+  state.unlocked = false
+  clearOperator()
+  clearToken()
+}

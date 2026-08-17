@@ -24,3 +24,7 @@ export function setToken(token) {
 export function getToken() {
   return uni.getStorageSync('__token__')
 }
+
+export function clearToken() {
+  return uni.removeStorageSync('__token__')
+}

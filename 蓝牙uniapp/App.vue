@@ -2,6 +2,7 @@
 import { useBlueToothStoreWithOut } from '@/store/modules/blueTooth'
 import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { usePatientStoreWithOut } from '@/store/modules/patient'
+import { resolveLaunchRoute } from '@/utils/appLaunch'
 
 export default {
   onLaunch: function () {
@@ -11,15 +12,12 @@ export default {
     const op = useOperatorStoreWithOut()
     const ps = usePatientStoreWithOut()
 
-    // 网关：未启用 → 启用页；已启用未解锁 → 解锁页；已解锁未选患者 → 选患者；否则进首页
-    if (!op.isEnabled) {
-      uni.reLaunch({ url: '/pages/setup/enable' })
-    } else if (!op.unlocked) {
-      uni.reLaunch({ url: '/pages/setup/unlock' })
-    } else if (!ps.current) {
-      uni.reLaunch({ url: '/pages/patient/select' })
-    }
-    // 已启用+已解锁+有当前患者：留在默认首页
+    const launchRoute = resolveLaunchRoute({
+      enabled: op.isEnabled,
+      unlocked: op.unlocked,
+      hasPatient: !!ps.current,
+    })
+    if (launchRoute) uni.reLaunch({ url: launchRoute })
   },
   onShow() {}, onHide() {}
 }

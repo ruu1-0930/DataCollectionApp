@@ -2,9 +2,13 @@ import { defineStore } from 'pinia'
 import { store } from '@/store'
 import { getOperator, setOperator, clearOperator } from '@/utils/clinicStorage'
 import { buildEnableCredentials } from '@/utils/clinicianCredentials'
-import { setToken, getToken } from '@/utils/auth'
+import { clearToken, setToken, getToken } from '@/utils/auth'
 import { clinicianEnableApi, clinicianLoginApi } from '@/api'
-import { authenticateOperator, buildPersistentOperator } from '@/utils/operatorSession'
+import {
+  authenticateOperator,
+  buildPersistentOperator,
+  resetOperatorSession,
+} from '@/utils/operatorSession'
 
 export const useOperatorStore = defineStore('operatorStore', {
   state: () => ({
@@ -58,10 +62,11 @@ export const useOperatorStore = defineStore('operatorStore', {
     },
     hasToken() { return !!getToken() },
     reset() {
-      this.operator = null
-      this.runtimePasscode = null
-      this.unlocked = false
-      clearOperator()
+      resetOperatorSession({
+        state: this,
+        clearOperator,
+        clearToken,
+      })
     },
     attribution() {
       const o = this.operator || {}

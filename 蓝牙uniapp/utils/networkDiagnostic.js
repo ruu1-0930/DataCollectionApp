@@ -15,12 +15,10 @@ export const testNetworkConnection = () => {
       url: 'https://www.baidu.com',
       method: 'GET',
       timeout: 5000,
-      success: (res) => {
-        console.log('✅ 基本网络连接正常')
+      success: () => {
         resolve({ basic: true, message: '基本网络连接正常' })
       },
       fail: (err) => {
-        console.error('❌ 基本网络连接失败:', err)
         reject({ basic: false, message: '基本网络连接失败', error: err })
       }
     })
@@ -33,9 +31,7 @@ export const testNetworkConnection = () => {
 export const testServerConnection = () => {
   return new Promise((resolve, reject) => {
     const serverUrl = baseURL.replace('http://', '').replace('https://', '')
-    const [host, port] = serverUrl.split(':')
-    
-    console.log('🔍 测试服务器连接:', { host, port })
+    const [host] = serverUrl.split(':')
     
     // 尝试连接服务器
     uni.request({
@@ -43,12 +39,9 @@ export const testServerConnection = () => {
       method: 'GET',
       timeout: 10000,
       success: (res) => {
-        console.log('✅ 服务器连接正常')
         resolve({ server: true, message: '服务器连接正常', data: res.data })
       },
       fail: (err) => {
-        console.error('❌ 服务器连接失败:', err)
-        
         // 尝试ping测试
         testPing(host).then(pingResult => {
           resolve({ 
@@ -93,8 +86,6 @@ export const testPing = (host) => {
  * 完整的网络诊断
  */
 export const runNetworkDiagnostic = async () => {
-  console.log('🔍 开始网络诊断...')
-  
   const results = {
     timestamp: new Date().toISOString(),
     basic: null,
@@ -130,7 +121,6 @@ export const runNetworkDiagnostic = async () => {
     }
   }
   
-  console.log('📊 网络诊断结果:', results)
   return results
 }
 
