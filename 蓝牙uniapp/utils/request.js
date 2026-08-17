@@ -2,6 +2,7 @@ import Request from '@/js_sdk/luch-request/luch-request'
 import { baseURL, requestTimeout, contentType } from '@/config'
 import { getToken } from '@/utils/auth'
 import { useOperatorStoreWithOut } from '@/store/modules/operator'
+import { logRequestError, logRequestStart, logResponse } from '@/utils/requestLog'
 
 /**
  * @description 处理code异常
@@ -82,7 +83,7 @@ const instance = new Request({
   // }
 })
 
-// 401 静默刷新并重试一次：用本地 hospital+name+phone+passcode 换新 token
+// 401 静默刷新并重试一次：使用当前运行期已验证的口令换新 token。
 async function retryWithRefresh(config) {
   if (!config) return Promise.reject(config)
   // 重试标记必须放在 custom 上：luch-request 的 mergeConfig 只透传 custom/header 等白名单字段，
@@ -92,7 +93,7 @@ async function retryWithRefresh(config) {
     return Promise.reject(config)
   }
   const op = useOperatorStoreWithOut()
-  if (!op.operator || !op.operator.passcode) return Promise.reject(config)
+  if (!op.operator || !op.runtimePasscode) return Promise.reject(config)
   await op.refreshToken()
   config.custom = { ...(config.custom || {}), _retried: true }
   config.header = { ...(config.header || {}), Authorization: getToken() }
@@ -101,14 +102,7 @@ async function retryWithRefresh(config) {
 
 instance.interceptors.request.use(
   (config) => {
-    console.log('🚀 发起请求:', {
-      url: config.url,
-      method: config.method,
-      baseURL: config.baseURL,
-      fullPath: config.baseURL + config.url,
-      timeout: config.timeout,
-      data: config.data
-    })
+    logRequestStart(config)
     
     // token 由操作员启用/登录产生，存为 "Bearer xxx" 整串（auth.getToken）
     const token = getToken()
@@ -137,11 +131,7 @@ instance.interceptors.request.use(
 
 instance.interceptors.response.use(
   (response) => {
-    console.log('✅ 请求成功:', {
-      url: response.config.url,
-      status: response.statusCode,
-      data: response.data
-    })
+    logResponse(response)
     /* 对响应成功做点什么 可使用async await 做异步操作*/
     if (response.config.custom.verification) {
       // 演示自定义参数的作用
@@ -170,13 +160,7 @@ instance.interceptors.response.use(
     return response.data.data
   },
   (error) => {
-    console.error('❌ 请求失败:', {
-      url: error.config?.url,
-      method: error.config?.method,
-      statusCode: error.statusCode,
-      errMsg: error.errMsg,
-      data: error.data
-    })
+    logRequestError(error)
     
     // 网络连接错误处理
     if (error.errMsg && error.errMsg.includes('request:fail')) {
