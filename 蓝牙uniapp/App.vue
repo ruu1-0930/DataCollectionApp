@@ -2,7 +2,8 @@
 import { useBlueToothStoreWithOut } from '@/store/modules/blueTooth'
 import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { usePatientStoreWithOut } from '@/store/modules/patient'
-import { resolveLaunchRoute } from '@/utils/appLaunch'
+import { prepareAppLaunch } from '@/utils/appLaunch'
+import { clearToken } from '@/utils/auth'
 
 export default {
   onLaunch: function () {
@@ -12,10 +13,11 @@ export default {
     const op = useOperatorStoreWithOut()
     const ps = usePatientStoreWithOut()
 
-    const launchRoute = resolveLaunchRoute({
+    const launchRoute = prepareAppLaunch({
       enabled: op.isEnabled,
       unlocked: op.unlocked,
       hasPatient: !!ps.current,
+      clearToken,
     })
     if (launchRoute) uni.reLaunch({ url: launchRoute })
   },

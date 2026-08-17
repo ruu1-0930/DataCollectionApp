@@ -4,3 +4,8 @@ export function resolveLaunchRoute({ enabled, unlocked, hasPatient }) {
   if (!hasPatient) return '/pages/patient/select'
   return null
 }
+
+export function prepareAppLaunch({ enabled, unlocked, hasPatient, clearToken }) {
+  if (!unlocked) clearToken()
+  return resolveLaunchRoute({ enabled, unlocked, hasPatient })
+}
