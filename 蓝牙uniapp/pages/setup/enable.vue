@@ -3,15 +3,15 @@
     <view class="hero">
       <view class="logo">🦶</view>
       <view class="h1">步态采集系统</view>
-      <view class="h2">首次注册 · 请填写本机操作信息</view>
+      <view class="h2">首次注册 · 请填写医生认证信息</view>
     </view>
     <CaInput label="医院" icon="🏥" placeholder="如：市第一人民医院" v-model="f.hospital" />
     <CaInput label="科室" icon="🩺" placeholder="如：康复科" v-model="f.dept" />
     <CaInput label="医生姓名" icon="👤" placeholder="请输入您的姓名" v-model="f.name" />
     <CaInput label="联系方式" icon="📞" type="number" placeholder="手机号" v-model="f.phone" />
-    <CaInput label="设置口令" icon="🔒" :password="true" placeholder="自设一个本机口令" v-model="f.passcode" />
-    <view class="btn" @tap="onEnable">注册并启用本机</view>
-    <view class="hint">仅本机注册一次，之后只需口令解锁、无需重复登录。\n口令用于打开 App，丢失设备可防数据泄露。</view>
+    <CaInput label="设置登录口令" icon="🔒" :password="true" placeholder="设置医生登录口令" v-model="f.passcode" />
+    <view class="btn" @tap="onEnable">注册并启用</view>
+    <view class="hint">注册后，重启应用或令牌失效时需重新输入登录口令。\n口令仅在当前运行期用于身份验证。</view>
   </view>
 </template>
 

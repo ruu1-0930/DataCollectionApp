@@ -1,14 +1,16 @@
 import { defineStore } from 'pinia'
 import { store } from '@/store'
 import { getOperator, setOperator, clearOperator } from '@/utils/clinicStorage'
-import { buildEnableCredentials, buildLoginCredentials } from '@/utils/clinicianCredentials'
+import { buildEnableCredentials } from '@/utils/clinicianCredentials'
 import { setToken, getToken } from '@/utils/auth'
 import { clinicianEnableApi, clinicianLoginApi } from '@/api'
+import { authenticateOperator, buildPersistentOperator } from '@/utils/operatorSession'
 
 export const useOperatorStore = defineStore('operatorStore', {
   state: () => ({
-    operator: getOperator() || null, // { hospital, dept, name, phone, passcode, enabled, clinicianId }
-    unlocked: false
+    operator: getOperator() || null, // { hospital, dept, name, phone, enabled, clinicianId }
+    runtimePasscode: null,
+    unlocked: false,
   }),
   getters: {
     isEnabled: (s) => !!(s.operator && s.operator.enabled)
@@ -20,43 +22,44 @@ export const useOperatorStore = defineStore('operatorStore', {
         hospital, dept, name, phone, passcode
       }))
       setToken(`Bearer ${res.token}`)
-      this.operator = {
-        hospital, dept, name, phone, passcode, enabled: true,
-        clinicianId: res.clinician.id
-      }
+      this.operator = buildPersistentOperator({
+        hospital, dept, name, phone, enabled: true,
+      }, res.clinician)
       setOperator(this.operator)
+      this.runtimePasscode = passcode
       this.unlocked = true
       return res
     },
-    // 本地解锁（离线可用，纯本地比对，保留）
-    unlock(passcode) {
-      if (this.operator && passcode === this.operator.passcode) {
-        this.unlocked = true
-        return true
-      }
-      return false
-    },
-    // 静默换 token：用本地凭证调 /clinician/login，不弹登录页
-    async refreshToken() {
-      const o = this.operator
-      if (!o || !o.passcode) throw new Error('未启用，无法刷新 token')
-      const res = await clinicianLoginApi(buildLoginCredentials(o))
-      setToken(`Bearer ${res.token}`)
-      this.operator = {
-        hospital: o.hospital,
-        dept: o.dept,
-        name: o.name,
-        phone: o.phone,
-        passcode: o.passcode,
-        enabled: o.enabled,
-        clinicianId: res.clinician.id
-      }
+    // 解锁必须经服务端重新验证；口令仅保留在当前运行期内存。
+    async unlock(passcode) {
+      const authenticated = await authenticateOperator({
+        operator: this.operator,
+        passcode,
+        loginApi: clinicianLoginApi,
+      })
+      setToken(authenticated.token)
+      this.operator = authenticated.operator
       setOperator(this.operator)
-      return res
+      this.runtimePasscode = passcode
+      this.unlocked = true
+      return true
+    },
+    // 静默换 token：仅使用本运行期已验证的口令。
+    async refreshToken() {
+      const authenticated = await authenticateOperator({
+        operator: this.operator,
+        passcode: this.runtimePasscode,
+        loginApi: clinicianLoginApi,
+      })
+      setToken(authenticated.token)
+      this.operator = authenticated.operator
+      setOperator(this.operator)
+      return authenticated
     },
     hasToken() { return !!getToken() },
     reset() {
       this.operator = null
+      this.runtimePasscode = null
       this.unlocked = false
       clearOperator()
     },

@@ -7,7 +7,7 @@
     </view>
     <CaInput label="口令" icon="🔒" :password="true" placeholder="输入口令解锁" v-model="passcode" />
     <view class="btn" @tap="onUnlock">解锁</view>
-    <view class="hint">日常打开只需输一次口令。\n非本人？<text class="link" @tap="onReset">重新启用本机</text></view>
+    <view class="hint">日常打开需验证医生登录口令。\n非本人？<text class="link" @tap="onReset">重新注册</text></view>
   </view>
 </template>
 
@@ -22,14 +22,18 @@ const subtitle = computed(() => {
   const o = op.operator || {}
   return [o.hospital, o.dept, o.name].filter(Boolean).join(' · ')
 })
-function onUnlock() {
-  if (!op.unlock(passcode.value)) return uni.showToast({ title: '口令错误', icon: 'none' })
+async function onUnlock() {
+  try {
+    await op.unlock(passcode.value)
+  } catch (e) {
+    return uni.showToast({ title: '口令错误或网络异常', icon: 'none' })
+  }
   if (ps.current) uni.switchTab({ url: '/pages/home/home' })
   else uni.reLaunch({ url: '/pages/patient/select' })
 }
 function onReset() {
   uni.showModal({
-    title: '重新启用本机', content: '将清除本机操作员信息，确定？',
+    title: '重新注册', content: '将清除本机医生信息，确定？',
     success: (r) => { if (r.confirm) { op.reset(); uni.reLaunch({ url: '/pages/setup/enable' }) } }
   })
 }

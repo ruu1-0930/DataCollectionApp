@@ -1,18 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getOperator } from '../utils/clinicStorage'
+import { getOperator, setOperator } from '../utils/clinicStorage'
 
 afterEach(() => {
   vi.unstubAllGlobals()
 })
 
 describe('operator profile storage hydration', () => {
-  it('returns the same clean operator profile without rewriting storage', () => {
+  it('returns a clean operator profile without rewriting storage', () => {
     const storedOperator = {
       hospital: '协和医院',
       dept: '骨科',
       name: '王医生',
       phone: '13800000000',
-      passcode: '1234',
       enabled: true,
       clinicianId: 27,
     }
@@ -40,13 +39,12 @@ describe('operator profile storage hydration', () => {
     expect(setStorageSync).not.toHaveBeenCalled()
   })
 
-  it('removes legacy terminal identity and immediately rewrites every other field', () => {
+  it('removes legacy passcode and terminal identity before immediately rewriting storage', () => {
     const storedOperator = {
       hospital: '协和医院',
       dept: '骨科',
       name: '王医生',
       phone: '13800000000',
-      passcode: '1234',
       enabled: true,
       clinicianId: 27,
       preferences: { locale: 'zh-CN' },
@@ -57,7 +55,6 @@ describe('operator profile storage hydration', () => {
       dept: '骨科',
       name: '王医生',
       phone: '13800000000',
-      passcode: '1234',
       enabled: true,
       clinicianId: 27,
       preferences: { locale: 'zh-CN' },
@@ -70,5 +67,24 @@ describe('operator profile storage hydration', () => {
     expect(getStorageSync).toHaveBeenCalledWith('__operator__')
     expect(setStorageSync).toHaveBeenCalledOnce()
     expect(setStorageSync).toHaveBeenCalledWith('__operator__', expectedOperator)
+  })
+
+  it('strips passcode and exact legacy terminalCode before writing an operator profile', () => {
+    const setStorageSync = vi.fn()
+    vi.stubGlobal('uni', { setStorageSync })
+
+    setOperator({
+      hospital: '协和医院',
+      name: '王医生',
+      passcode: '1234',
+      terminalCode: 'legacy-terminal',
+      enabled: true,
+    })
+
+    expect(setStorageSync).toHaveBeenCalledWith('__operator__', {
+      hospital: '协和医院',
+      name: '王医生',
+      enabled: true,
+    })
   })
 })
