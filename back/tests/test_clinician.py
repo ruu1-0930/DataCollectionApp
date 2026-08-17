@@ -88,6 +88,12 @@ def test_enable_and_login_reject_non_object_json_as_bad_request(client, path, pa
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize("path", ["/clinician/enable", "/clinician/login"])
+def test_enable_and_login_reject_malformed_json_as_bad_request(client, path):
+    response = client.post(path, data="{", content_type="application/json")
+    assert response.status_code == 400
+
+
 @pytest.mark.parametrize(
     ("path", "payload"),
     [
@@ -128,6 +134,17 @@ def test_profile_update_rejects_empty_or_unknown_json_fields(client):
     ):
         response = client.put("/clinician/me", headers=headers, json=payload)
         assert response.status_code == 400
+
+
+def test_profile_update_rejects_malformed_json_as_bad_request(client):
+    token = _token(client)
+    response = client.put(
+        "/clinician/me",
+        headers={"Authorization": f"Bearer {token}"},
+        data="{",
+        content_type="application/json",
+    )
+    assert response.status_code == 400
 
 
 @pytest.mark.parametrize(
