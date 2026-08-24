@@ -1,4 +1,5 @@
 import re
+import threading
 
 from flask import Blueprint, current_app, request, jsonify, g
 from sqlalchemy.exc import IntegrityError
@@ -57,6 +58,10 @@ def _clinician_public(c):
 
 def _login_failure_key(hospital, phone):
     return request.remote_addr or '', hospital, phone
+
+
+def _login_failure_lock():
+    return current_app.extensions.setdefault('login_failure_lock', threading.Lock())
 
 
 def _login_failure_attempts(key, now):
@@ -140,19 +145,18 @@ def login():
     if not _PHONE_PATTERN.fullmatch(phone) or not _valid_passcode(passcode):
         return jsonify(Response.error(400, '手机号或口令格式无效')), 400
 
-    key = _login_failure_key(hospital, phone)
-    now = current_app.config['LOGIN_RATE_LIMIT_CLOCK']()
-    if _login_rate_limited(key, now):
-        return jsonify(Response.error(429, '登录尝试次数过多，请稍后再试')), 429
-
     c = Clinician.query.filter_by(hospital=hospital, phone=phone).first()
     passcode_hash = c.passcode_hash if c is not None else _DUMMY_PASSCODE_HASH
     passcode_matches = verify_passcode(passcode, passcode_hash)
-    if not c or name != c.name or not passcode_matches:
-        _record_login_failure(key, now)
-        return jsonify(Response.error(401, _LOGIN_FAILURE)), 401
-
-    _clear_login_failures(key)
+    key = _login_failure_key(hospital, phone)
+    now = current_app.config['LOGIN_RATE_LIMIT_CLOCK']()
+    with _login_failure_lock():
+        if _login_rate_limited(key, now):
+            return jsonify(Response.error(429, '登录尝试次数过多，请稍后再试')), 429
+        if not c or name != c.name or not passcode_matches:
+            _record_login_failure(key, now)
+            return jsonify(Response.error(401, _LOGIN_FAILURE)), 401
+        _clear_login_failures(key)
     return jsonify(Response.success(
         data={'token': issue_token(c.id), 'clinician': _clinician_public(c)},
         msg='登录成功'))

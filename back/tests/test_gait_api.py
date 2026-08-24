@@ -843,6 +843,76 @@ def test_frames_page_does_not_load_entire_session_as_raw_models(client):
     assert len(loaded_raw_ids) <= 6
 
 
+def test_frames_paginate_duplicate_timestamp_rows_as_logical_frames(client):
+    auth, patient_id = _setup(client, frame_count=3)
+    timestamp = _BASE_TIME.replace(microsecond=123456)
+    rows = (
+        DeviceRawData.query.filter_by(patient_id=patient_id)
+        .order_by(DeviceRawData.id.asc())
+        .all()
+    )
+    for index, row in enumerate(rows):
+        row.collected_at = timestamp
+        row.step_length = 0.51 + index / 100
+    db.session.commit()
+    session_id = _session_id(patient_id, timestamp)
+
+    pages = [
+        client.get(
+            f"/patients/{patient_id}/gait/sessions/{session_id}/frames",
+            headers=auth,
+            query_string={"page": page, "page_size": 1},
+        ).get_json()["data"]
+        for page in range(1, 4)
+    ]
+
+    assert [page["total"] for page in pages] == [3, 3, 3]
+    assert [len(page["items"]) for page in pages] == [1, 1, 1]
+    assert [
+        (
+            page["items"][0]["left"]["step_length_m"],
+            page["items"][0]["right"]["step_length_m"],
+        )
+        for page in pages
+    ] == [(0.51, 0.52), (0.53, 0.54), (0.55, 0.56)]
+
+
+def test_frames_small_page_does_not_materialize_a_large_session(client, monkeypatch):
+    auth, patient_id, session_id = _setup_session(client, frames=100)
+    finite_values = []
+    original_finite_or_none = gait_api._finite_or_none
+
+    def record_finite_values(value):
+        finite_values.append(value)
+        return original_finite_or_none(value)
+
+    monkeypatch.setattr(gait_api, "_finite_or_none", record_finite_values)
+    response = client.get(
+        f"/patients/{patient_id}/gait/sessions/{session_id}/frames",
+        headers=auth,
+        query_string={"page": 2, "page_size": 2},
+    )
+
+    assert response.status_code == 200
+    assert len(response.get_json()["data"]["items"]) == 2
+    assert len(finite_values) <= 152
+
+
+def test_frames_reject_legacy_millisecond_session_id_before_any_raw_query(client):
+    auth, patient_id, session_id = _setup_session(client)
+    legacy_session_id = session_id[:-6] + session_id[-6:-3]
+
+    response, statements = _capture_raw_selects(
+        lambda: client.get(
+            f"/patients/{patient_id}/gait/sessions/{legacy_session_id}/frames",
+            headers=auth,
+        )
+    )
+
+    assert response.status_code == 422
+    assert statements == []
+
+
 def test_session_list_queries_only_aggregation_columns(client):
     auth, patient_id, _ = _setup_session(client, frames=3)
     statements = []

@@ -1,3 +1,7 @@
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
 import pytest
 from sqlalchemy.exc import IntegrityError
 
@@ -426,3 +430,43 @@ def test_login_rate_limit_defaults_to_five_failures_per_ip_and_window(client):
     assert [response.status_code for response in first_ip] == [401, 401, 401, 401, 401, 429]
     assert other_ip.status_code == 401
     assert after_window.status_code == 401
+
+
+def test_concurrent_login_failures_atomically_rate_limit_sixth_attempt(client, monkeypatch):
+    client.application.config.update(
+        LOGIN_FAILURE_LIMIT=5,
+        LOGIN_RATE_LIMIT_CLOCK=lambda: 1000.0,
+    )
+    synchronization = threading.Barrier(6)
+    original_verify = clinician_api.verify_passcode
+
+    class MissingClinicianQuery:
+        def filter_by(self, **_kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    def verify_after_every_request_has_checked_the_limit(passcode, passcode_hash):
+        synchronization.wait()
+        return original_verify(passcode, passcode_hash)
+
+    monkeypatch.setattr(clinician_api.Clinician, "query", MissingClinicianQuery())
+    monkeypatch.setattr(
+        clinician_api,
+        "verify_passcode",
+        verify_after_every_request_has_checked_the_limit,
+    )
+
+    def failed_login():
+        with client.application.test_client() as concurrent_client:
+            return concurrent_client.post(
+                "/clinician/login",
+                json=_login_payload(phone="13000000000"),
+                environ_base={"REMOTE_ADDR": "192.0.2.10"},
+            ).status_code
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        status_codes = list(executor.map(lambda _index: failed_login(), range(6)))
+
+    assert Counter(status_codes) == Counter({401: 5, 429: 1})

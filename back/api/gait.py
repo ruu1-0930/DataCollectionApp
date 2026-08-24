@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import re
 
 from flask import Blueprint, g, jsonify, request
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 
 from config import db
 from models.models import DeviceRawData, Patient
@@ -68,6 +68,9 @@ def _fetch_rows(
     end=None,
     timestamps=None,
     ranges=None,
+    foot=None,
+    offset=None,
+    limit=None,
     include_sensors=False,
 ):
     """Load only the requested columns and stable session/page time range."""
@@ -95,10 +98,17 @@ def _fetch_rows(
         if not timestamps:
             return []
         query = query.filter(DeviceRawData.collected_at.in_(timestamps))
+    if foot is not None:
+        query = query.filter(DeviceRawData.foot == foot)
+    query = query.order_by(DeviceRawData.collected_at.asc(), DeviceRawData.id.asc())
+    if offset is not None:
+        query = query.offset(offset)
+    if limit is not None:
+        query = query.limit(limit)
 
     column_names = [column.key for column in columns]
     rows = []
-    for values in query.order_by(DeviceRawData.collected_at.asc(), DeviceRawData.id.asc()).all():
+    for values in query.all():
         row = dict(zip(column_names, values))
         for column in column_names:
             if column not in {"id", "collected_at", "foot"}:
@@ -419,6 +429,113 @@ def _session_for_bounds(patient_id, bounds, *, include_sensors):
     return sessions[0]
 
 
+def _frame_page_selections(patient_id, bounds, page, page_size):
+    """Select logical frame ordinals from per-timestamp, per-foot row counts."""
+    counts = (
+        db.session.query(
+            DeviceRawData.collected_at,
+            DeviceRawData.foot,
+            func.count(DeviceRawData.id),
+        )
+        .filter(DeviceRawData.patient_id == patient_id)
+        .filter(DeviceRawData.collected_at >= bounds[0])
+        .filter(DeviceRawData.collected_at <= bounds[1])
+        .group_by(DeviceRawData.collected_at, DeviceRawData.foot)
+        .order_by(DeviceRawData.collected_at.asc(), DeviceRawData.foot.asc())
+        .all()
+    )
+    by_timestamp = {}
+    for timestamp, foot, count in counts:
+        by_timestamp.setdefault(timestamp, {"L": 0, "R": 0})[foot] = count
+
+    total = sum(max(counts["L"], counts["R"]) for counts in by_timestamp.values())
+    offset = (page - 1) * page_size
+    page_end = offset + page_size
+    selections = []
+    cursor = 0
+    for timestamp, counts in by_timestamp.items():
+        frame_count = max(counts["L"], counts["R"])
+        start = max(offset - cursor, 0)
+        end = min(page_end - cursor, frame_count)
+        if start < end:
+            selections.append(
+                {
+                    "timestamp": timestamp,
+                    "start": start,
+                    "end": end,
+                    "left_count": counts["L"],
+                    "right_count": counts["R"],
+                }
+            )
+        cursor += frame_count
+        if cursor >= page_end:
+            break
+    return total, selections
+
+
+def _frame_page_rows(patient_id, selections):
+    """Load only the raw rows required for selected logical frame ordinals."""
+    rows_by_timestamp = {}
+    whole_timestamps = [
+        selection["timestamp"]
+        for selection in selections
+        if selection["start"] == 0
+        and selection["end"]
+        == max(selection["left_count"], selection["right_count"])
+    ]
+    if whole_timestamps:
+        for row in _fetch_rows(
+            patient_id,
+            timestamps=whole_timestamps,
+            include_sensors=True,
+        ):
+            rows_by_timestamp.setdefault(row["collected_at"], {"L": [], "R": []})[
+                row["foot"]
+            ].append(row)
+
+    for selection in selections:
+        if selection["timestamp"] in whole_timestamps:
+            continue
+        rows_by_timestamp[selection["timestamp"]] = {"L": [], "R": []}
+        for foot, count_key in (("L", "left_count"), ("R", "right_count")):
+            count = selection[count_key]
+            start = min(selection["start"], count)
+            end = min(selection["end"], count)
+            if start < end:
+                rows_by_timestamp[selection["timestamp"]][foot] = _fetch_rows(
+                    patient_id,
+                    timestamps=[selection["timestamp"]],
+                    foot=foot,
+                    offset=start,
+                    limit=end - start,
+                    include_sensors=True,
+                )
+    return rows_by_timestamp
+
+
+def _page_frames(selections, rows_by_timestamp):
+    frames = []
+    for selection in selections:
+        feet = rows_by_timestamp[selection["timestamp"]]
+        for ordinal in range(selection["start"], selection["end"]):
+            frames.append(
+                {
+                    "collected_at": selection["timestamp"],
+                    "L": (
+                        feet["L"][ordinal - selection["start"]]
+                        if ordinal < selection["left_count"]
+                        else None
+                    ),
+                    "R": (
+                        feet["R"][ordinal - selection["start"]]
+                        if ordinal < selection["right_count"]
+                        else None
+                    ),
+                }
+            )
+    return frames
+
+
 def _load_bounded_sessions(patient_id, target_ranges, *, history_before):
     """Load target ranges and only enough prior candidates for five usable sessions."""
     target_ranges = list(dict.fromkeys(target_ranges))
@@ -631,32 +748,8 @@ def get_gait_session_frames(patient_id, session_id):
 
     page = _page_arg("page", 1)
     page_size = _page_arg("page_size", _PAGE_SIZE_DEFAULT, _PAGE_SIZE_MAX)
-    timestamp_query = (
-        _timestamp_query(patient_id)
-        .filter(DeviceRawData.collected_at >= bounds[0])
-        .filter(DeviceRawData.collected_at <= bounds[1])
-        .distinct()
-    )
-    total = timestamp_query.count()
-    page_timestamps = [
-        row[0]
-        for row in (
-            timestamp_query.order_by(DeviceRawData.collected_at.asc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-            .all()
-        )
-    ]
-    page_rows = _fetch_rows(
-        patient_id,
-        timestamps=page_timestamps,
-        include_sensors=True,
-    )
-    frames = [
-        frame
-        for session in segment_sessions(page_rows, gap_seconds=_SESSION_GAP_SECONDS)
-        for frame in session["frames"]
-    ]
+    total, selections = _frame_page_selections(patient_id, bounds, page, page_size)
+    frames = _page_frames(selections, _frame_page_rows(patient_id, selections))
     items = [_frame_payload(frame) for frame in frames]
     return jsonify(
         Response.success(
