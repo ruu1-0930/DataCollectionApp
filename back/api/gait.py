@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import re
 
 from flask import Blueprint, g, jsonify, request
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, case, func, or_, select
 
 from config import db
 from models.models import DeviceRawData, Patient
@@ -430,47 +430,76 @@ def _session_for_bounds(patient_id, bounds, *, include_sensors):
 
 
 def _frame_page_selections(patient_id, bounds, page, page_size):
-    """Select logical frame ordinals from per-timestamp, per-foot row counts."""
+    """Select only timestamp groups whose logical frames overlap the page."""
     counts = (
         db.session.query(
-            DeviceRawData.collected_at,
-            DeviceRawData.foot,
-            func.count(DeviceRawData.id),
+            DeviceRawData.collected_at.label("timestamp"),
+            func.sum(case((DeviceRawData.foot == "L", 1), else_=0)).label(
+                "left_count"
+            ),
+            func.sum(case((DeviceRawData.foot == "R", 1), else_=0)).label(
+                "right_count"
+            ),
         )
         .filter(DeviceRawData.patient_id == patient_id)
         .filter(DeviceRawData.collected_at >= bounds[0])
         .filter(DeviceRawData.collected_at <= bounds[1])
-        .group_by(DeviceRawData.collected_at, DeviceRawData.foot)
-        .order_by(DeviceRawData.collected_at.asc(), DeviceRawData.foot.asc())
-        .all()
+        .group_by(DeviceRawData.collected_at)
+        .subquery("frame_counts")
     )
-    by_timestamp = {}
-    for timestamp, foot, count in counts:
-        by_timestamp.setdefault(timestamp, {"L": 0, "R": 0})[foot] = count
+    logical_count = case(
+        (counts.c.left_count >= counts.c.right_count, counts.c.left_count),
+        else_=counts.c.right_count,
+    )
+    total = db.session.query(
+        func.coalesce(func.sum(logical_count), 0)
+    ).select_from(counts).scalar()
 
-    total = sum(max(counts["L"], counts["R"]) for counts in by_timestamp.values())
     offset = (page - 1) * page_size
     page_end = offset + page_size
-    selections = []
-    cursor = 0
-    for timestamp, counts in by_timestamp.items():
-        frame_count = max(counts["L"], counts["R"])
-        start = max(offset - cursor, 0)
-        end = min(page_end - cursor, frame_count)
-        if start < end:
-            selections.append(
-                {
-                    "timestamp": timestamp,
-                    "start": start,
-                    "end": end,
-                    "left_count": counts["L"],
-                    "right_count": counts["R"],
-                }
-            )
-        cursor += frame_count
-        if cursor >= page_end:
-            break
-    return total, selections
+    current = counts.alias("current_counts")
+    prior = counts.alias("prior_counts")
+    current_logical_count = case(
+        (current.c.left_count >= current.c.right_count, current.c.left_count),
+        else_=current.c.right_count,
+    )
+    prior_logical_count = case(
+        (prior.c.left_count >= prior.c.right_count, prior.c.left_count),
+        else_=prior.c.right_count,
+    )
+    frame_offset = (
+        select(func.coalesce(func.sum(prior_logical_count), 0))
+        .select_from(prior)
+        .where(prior.c.timestamp < current.c.timestamp)
+        .correlate(current)
+        .scalar_subquery()
+    )
+    page_groups = (
+        db.session.query(
+            current.c.timestamp,
+            current.c.left_count,
+            current.c.right_count,
+            current_logical_count.label("frame_count"),
+            frame_offset.label("frame_offset"),
+        )
+        .filter(frame_offset < page_end)
+        .filter(frame_offset + current_logical_count > offset)
+        .order_by(current.c.timestamp.asc())
+        .limit(page_size)
+        .all()
+    )
+    selections = [
+        {
+            "timestamp": timestamp,
+            "start": max(offset - frame_offset_value, 0),
+            "end": min(page_end - frame_offset_value, frame_count),
+            "left_count": left_count,
+            "right_count": right_count,
+        }
+        for timestamp, left_count, right_count, frame_count, frame_offset_value
+        in page_groups
+    ]
+    return int(total), selections
 
 
 def _frame_page_rows(patient_id, selections):

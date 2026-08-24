@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import event
+from sqlalchemy.orm import Query
 
 from api import gait as gait_api
 from config import db
@@ -896,6 +897,32 @@ def test_frames_small_page_does_not_materialize_a_large_session(client, monkeypa
     assert response.status_code == 200
     assert len(response.get_json()["data"]["items"]) == 2
     assert len(finite_values) <= 152
+
+
+def test_frame_page_selection_materializes_only_page_timestamp_groups(client, monkeypatch):
+    _auth, patient_id, _session_id_value = _setup_session(client, frames=100)
+    materialized_row_counts = []
+    original_all = Query.all
+
+    def record_materialized_rows(query):
+        rows = original_all(query)
+        materialized_row_counts.append(len(rows))
+        return rows
+
+    monkeypatch.setattr(Query, "all", record_materialized_rows)
+    total, selections = gait_api._frame_page_selections(
+        patient_id,
+        (_BASE_TIME, _BASE_TIME + timedelta(seconds=99)),
+        page=1,
+        page_size=2,
+    )
+
+    assert total == 100
+    assert [selection["timestamp"] for selection in selections] == [
+        _BASE_TIME,
+        _BASE_TIME + timedelta(seconds=1),
+    ]
+    assert materialized_row_counts == [2]
 
 
 def test_frames_reject_legacy_millisecond_session_id_before_any_raw_query(client):
