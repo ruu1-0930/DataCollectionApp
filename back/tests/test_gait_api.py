@@ -73,7 +73,7 @@ def _setup(client, frame_count=1):
 
 
 def _session_id(patient_id, start):
-    return f"P{patient_id}-{start:%Y%m%dT%H%M%S}{start.microsecond // 1000:03d}"
+    return f"P{patient_id}-{start:%Y%m%dT%H%M%S}{start.microsecond:06d}"
 
 
 def _set_frame_times(patient_id, frame_times, walking_speeds=None):
@@ -461,8 +461,26 @@ def test_sessions_return_stable_ids_newest_first(client):
 
     assert [session["session_id"] for session in sessions] == list(reversed(session_ids))
     assert sessions[0]["start"] > sessions[1]["start"]
-    assert re.fullmatch(rf"P{patient_id}-\d{{8}}T\d{{9}}", sessions[0]["session_id"])
+    assert re.fullmatch(rf"P{patient_id}-\d{{8}}T\d{{12}}", sessions[0]["session_id"])
     assert "session_index" not in sessions[0]
+
+
+def test_fetch_rows_keeps_duplicate_timestamp_ids_in_stable_order(client):
+    auth, patient_id = _setup(client, frame_count=2)
+    timestamp = _BASE_TIME.replace(microsecond=123456)
+    rows = (
+        DeviceRawData.query.filter_by(patient_id=patient_id)
+        .order_by(DeviceRawData.id.asc())
+        .all()
+    )
+    for row in rows:
+        row.collected_at = timestamp
+    db.session.commit()
+
+    fetched = gait_api._fetch_rows(patient_id)
+
+    assert [row["id"] for row in fetched] == [row.id for row in rows]
+    assert [row["foot"] for row in fetched] == ["L", "R", "L", "R"]
 
 
 def test_exact_thirty_second_gap_stays_joined_and_one_microsecond_splits_across_chunk(

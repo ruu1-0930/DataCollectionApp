@@ -17,6 +17,7 @@ T0 = datetime(2026, 6, 28, 10, 0, 0)
 
 def row(ts, foot, **overrides):
     base = {
+        "id": 0,
         "collected_at": ts,
         "foot": foot,
         "step_length": 0.6,
@@ -67,6 +68,25 @@ def test_segment_pairs_left_and_right_by_timestamp():
     frame = sessions[0]["frames"][0]
     assert frame["L"]["foot"] == "L"
     assert frame["R"]["foot"] == "R"
+
+
+def test_segment_pairs_duplicate_timestamp_rows_by_per_foot_ordinal():
+    rows = [
+        row(T0, "L", id=10, step_length=0.51),
+        row(T0, "R", id=11, step_length=0.61),
+        row(T0, "L", id=12, step_length=0.52),
+        row(T0, "L", id=13, step_length=0.53),
+        row(T0, "R", id=14, step_length=0.62),
+    ]
+
+    frames = segment_sessions(rows, gap_seconds=30)[0]["frames"]
+
+    assert [frame["L"]["step_length"] if frame["L"] else None for frame in frames] == [
+        0.51, 0.52, 0.53
+    ]
+    assert [frame["R"]["step_length"] if frame["R"] else None for frame in frames] == [
+        0.61, 0.62, None
+    ]
 
 
 def test_segment_gap_splits_sessions():

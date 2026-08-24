@@ -34,9 +34,10 @@ _SESSION_BOUND_MAX_CHUNKS = 288
 _HISTORY_BATCH_SIZE = 5
 _DATE_ONLY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SESSION_ID_PATTERN = re.compile(
-    r"^P(?P<patient_id>\d+)-(?P<timestamp>\d{8}T\d{9})$"
+    r"^P(?P<patient_id>\d+)-(?P<timestamp>\d{8}T\d{12})$"
 )
 _AGGREGATE_COLS = (
+    DeviceRawData.id,
     DeviceRawData.collected_at,
     DeviceRawData.foot,
     DeviceRawData.step_length,
@@ -97,10 +98,10 @@ def _fetch_rows(
 
     column_names = [column.key for column in columns]
     rows = []
-    for values in query.order_by(DeviceRawData.collected_at.asc()).all():
+    for values in query.order_by(DeviceRawData.collected_at.asc(), DeviceRawData.id.asc()).all():
         row = dict(zip(column_names, values))
         for column in column_names:
-            if column not in {"collected_at", "foot"}:
+            if column not in {"id", "collected_at", "foot"}:
                 row[column] = _finite_or_none(row[column])
         rows.append(row)
     return rows
@@ -108,7 +109,7 @@ def _fetch_rows(
 
 def _fetch_pressure_rows_for_bounds(patient_id, bounds):
     """Load every raw pressure row for one resolved session in one bounded query."""
-    columns = (DeviceRawData.foot,) + tuple(
+    columns = (DeviceRawData.id, DeviceRawData.foot) + tuple(
         getattr(DeviceRawData, column) for column in _PRESSURE_COLS
     )
     query = (
@@ -129,8 +130,7 @@ def _fetch_pressure_rows_for_bounds(patient_id, bounds):
 
 
 def _session_id(patient_id, start):
-    milliseconds = start.microsecond // 1000
-    return f"P{patient_id}-{start:%Y%m%dT%H%M%S}{milliseconds:03d}"
+    return f"P{patient_id}-{start:%Y%m%dT%H%M%S}{start.microsecond:06d}"
 
 
 def _session_summary(session, patient_id, history):

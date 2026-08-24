@@ -1,6 +1,6 @@
 import re
 
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, current_app, request, jsonify, g
 from sqlalchemy.exc import IntegrityError
 
 from config import db
@@ -12,6 +12,7 @@ clinician_bp = Blueprint('clinician', __name__)
 
 _PHONE_PATTERN = re.compile(r'^1\d{10}$')
 _LOGIN_FAILURE = '登录凭证不匹配'
+_DUMMY_PASSCODE_HASH = '$2b$12$gouvJor73kG.F3wLSOsJV.HoeEmpe2dQ/mOst3SFP/smhqimC1456'
 _ENABLE_FIELDS = frozenset({'hospital', 'dept', 'name', 'phone', 'passcode'})
 _LOGIN_FIELDS = frozenset({'hospital', 'name', 'phone', 'passcode'})
 _PROFILE_FIELDS = frozenset({'hospital', 'dept', 'name', 'phone'})
@@ -52,6 +53,35 @@ def _account_conflict():
 def _clinician_public(c):
     return {'id': c.id, 'hospital': c.hospital, 'dept': c.dept,
             'name': c.name, 'phone': c.phone}
+
+
+def _login_failure_key(hospital, phone):
+    return request.remote_addr or '', hospital, phone
+
+
+def _login_failure_attempts(key, now):
+    window = current_app.config['LOGIN_FAILURE_WINDOW_SECONDS']
+    attempts = current_app.extensions['login_failure_windows'].get(key, [])
+    attempts = [attempt for attempt in attempts if attempt > now - window]
+    if attempts:
+        current_app.extensions['login_failure_windows'][key] = attempts
+    else:
+        current_app.extensions['login_failure_windows'].pop(key, None)
+    return attempts
+
+
+def _login_rate_limited(key, now):
+    return len(_login_failure_attempts(key, now)) >= current_app.config['LOGIN_FAILURE_LIMIT']
+
+
+def _record_login_failure(key, now):
+    attempts = _login_failure_attempts(key, now)
+    attempts.append(now)
+    current_app.extensions['login_failure_windows'][key] = attempts
+
+
+def _clear_login_failures(key):
+    current_app.extensions['login_failure_windows'].pop(key, None)
 
 
 @clinician_bp.route('/clinician/enable', methods=['POST'])
@@ -110,10 +140,19 @@ def login():
     if not _PHONE_PATTERN.fullmatch(phone) or not _valid_passcode(passcode):
         return jsonify(Response.error(400, '手机号或口令格式无效')), 400
 
+    key = _login_failure_key(hospital, phone)
+    now = current_app.config['LOGIN_RATE_LIMIT_CLOCK']()
+    if _login_rate_limited(key, now):
+        return jsonify(Response.error(429, '登录尝试次数过多，请稍后再试')), 429
+
     c = Clinician.query.filter_by(hospital=hospital, phone=phone).first()
-    if not c or name != c.name or not verify_passcode(passcode, c.passcode_hash):
+    passcode_hash = c.passcode_hash if c is not None else _DUMMY_PASSCODE_HASH
+    passcode_matches = verify_passcode(passcode, passcode_hash)
+    if not c or name != c.name or not passcode_matches:
+        _record_login_failure(key, now)
         return jsonify(Response.error(401, _LOGIN_FAILURE)), 401
 
+    _clear_login_failures(key)
     return jsonify(Response.success(
         data={'token': issue_token(c.id), 'clinician': _clinician_public(c)},
         msg='登录成功'))

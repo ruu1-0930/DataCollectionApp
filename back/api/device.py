@@ -25,10 +25,8 @@ def register_device():
 
     existing = Device.query.filter_by(device_code=device_code).first()
     if existing:
-        existing.clinician_id = g.clinician_id
-        if data.get('device_name'):
-            existing.device_name = data['device_name']
-        db.session.commit()
+        if existing.clinician_id != g.clinician_id:
+            return jsonify(Response.error(403, "无权注册该设备")), 403
         return jsonify(Response.success(data=_device_public(existing), msg="设备已注册"))
 
     d = Device(device_code=device_code, device_name=data.get('device_name'),

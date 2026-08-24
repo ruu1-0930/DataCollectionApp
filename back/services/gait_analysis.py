@@ -67,7 +67,7 @@ def segment_sessions(rows, gap_seconds=30):
     if not rows:
         return []
 
-    ordered = sorted(rows, key=lambda row: row["collected_at"])
+    ordered = sorted(rows, key=lambda row: (row["collected_at"], row["id"]))
     groups = [[ordered[0]]]
     for previous, current in zip(ordered, ordered[1:]):
         gap = abs((current["collected_at"] - previous["collected_at"]).total_seconds())
@@ -80,21 +80,31 @@ def segment_sessions(rows, gap_seconds=30):
 
 
 def _build_session(index, rows):
-    frames = {}
+    rows_by_timestamp = {}
     timestamps = []
     for row in rows:
         timestamp = row["collected_at"]
-        if timestamp not in frames:
-            frames[timestamp] = {"collected_at": timestamp, "L": None, "R": None}
+        if timestamp not in rows_by_timestamp:
+            rows_by_timestamp[timestamp] = {"L": [], "R": []}
             timestamps.append(timestamp)
-        frames[timestamp][row["foot"]] = row
+        rows_by_timestamp[timestamp][row["foot"]].append(row)
+
+    frames = []
+    for timestamp in timestamps:
+        feet = rows_by_timestamp[timestamp]
+        for ordinal in range(max(len(feet["L"]), len(feet["R"]))):
+            frames.append({
+                "collected_at": timestamp,
+                "L": feet["L"][ordinal] if ordinal < len(feet["L"]) else None,
+                "R": feet["R"][ordinal] if ordinal < len(feet["R"]) else None,
+            })
 
     return {
         "session_index": index,
         "start": timestamps[0],
         "end": timestamps[-1],
-        "frame_count": len(timestamps),
-        "frames": [frames[timestamp] for timestamp in timestamps],
+        "frame_count": len(frames),
+        "frames": frames,
     }
 
 

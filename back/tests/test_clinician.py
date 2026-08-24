@@ -1,6 +1,7 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from api import clinician as clinician_api
 from auth import hash_passcode
 from config import db
 from models.models import Clinician
@@ -353,3 +354,75 @@ def test_profile_update_reraises_integrity_error_without_conflict(client, monkey
 def test_me_requires_token(client):
     resp = client.get('/clinician/me')
     assert resp.status_code == 401
+
+
+def test_missing_account_verifies_against_fixed_dummy_bcrypt_hash(client, monkeypatch):
+    verified_hashes = []
+    original_verify = clinician_api.verify_passcode
+
+    def observe_verification(passcode, passcode_hash):
+        verified_hashes.append(passcode_hash)
+        return original_verify(passcode, passcode_hash)
+
+    monkeypatch.setattr(clinician_api, 'verify_passcode', observe_verification)
+    response = client.post('/clinician/login', json=_login_payload(phone='13000000000'))
+
+    assert response.status_code == 401
+    assert verified_hashes == [clinician_api._DUMMY_PASSCODE_HASH]
+
+
+def test_login_rate_limit_uses_injected_clock_and_success_clears_failures(client):
+    clock = [1000.0]
+    client.application.config.update(
+        LOGIN_FAILURE_LIMIT=2,
+        LOGIN_FAILURE_WINDOW_SECONDS=10,
+        LOGIN_RATE_LIMIT_CLOCK=lambda: clock[0],
+    )
+    client.post('/clinician/enable', json=_enable_payload())
+
+    first_failure = client.post(
+        '/clinician/login', json=_login_payload(passcode='9999'),
+        environ_base={'REMOTE_ADDR': '192.0.2.10'},
+    )
+    successful_login = client.post(
+        '/clinician/login', json=_login_payload(),
+        environ_base={'REMOTE_ADDR': '192.0.2.10'},
+    )
+    subsequent_failures = [
+        client.post(
+            '/clinician/login', json=_login_payload(passcode='9999'),
+            environ_base={'REMOTE_ADDR': '192.0.2.10'},
+        )
+        for _ in range(3)
+    ]
+
+    assert first_failure.status_code == 401
+    assert successful_login.status_code == 200
+    assert [response.status_code for response in subsequent_failures] == [401, 401, 429]
+
+
+def test_login_rate_limit_defaults_to_five_failures_per_ip_and_window(client):
+    clock = [1000.0]
+    client.application.config['LOGIN_RATE_LIMIT_CLOCK'] = lambda: clock[0]
+    payload = _login_payload(phone='13000000000')
+
+    first_ip = [
+        client.post(
+            '/clinician/login', json=payload,
+            environ_base={'REMOTE_ADDR': '192.0.2.10'},
+        )
+        for _ in range(6)
+    ]
+    other_ip = client.post(
+        '/clinician/login', json=payload,
+        environ_base={'REMOTE_ADDR': '192.0.2.11'},
+    )
+    clock[0] += 301
+    after_window = client.post(
+        '/clinician/login', json=payload,
+        environ_base={'REMOTE_ADDR': '192.0.2.10'},
+    )
+
+    assert [response.status_code for response in first_ip] == [401, 401, 401, 401, 401, 429]
+    assert other_ip.status_code == 401
+    assert after_window.status_code == 401
