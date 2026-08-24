@@ -96,3 +96,48 @@ The runner also emitted the existing Vite CJS deprecation and npm update notices
 ### Fix Round 1 Code Commit
 
 `32725079871045cb307a686c3db06aa5f15a9bf6` (`fix(app): make explicit authentication latest-wins`)
+
+## Fix Round 2
+
+### Finding
+
+The setup pages treated every resolved store Promise as committed authentication. A stale `enable()` result (`null`) and an invalidated `unlock()` result (`false`) therefore still navigated away, even though no credentials had been committed. The enable page also lacked the existing submission gate used by unlock.
+
+### Fix
+
+- Added `runCommittedSubmission`, which invokes navigation only when the gated submit result is truthy.
+- Wired both enable and unlock navigation through the helper, so stale/invalidated results remain on the setup page without false success navigation.
+- Wired enable to `createSubmissionGate`, including a disabled button and `启用中…` label while pending.
+- Kept enable loading inside the accepted gated task, so a rejected duplicate cannot hide the first request's loading state.
+
+### TDD Evidence
+
+1. Added executable tests for stale enable (`null`), invalidated unlock (`false`), and deferred duplicate enable submission, plus setup-page wiring assertions.
+2. Focused test failed before production changes: 4 expected failures with 2 existing tests passing (`runCommittedSubmission` and page wiring were absent).
+3. After the minimal helper and page wiring, focused and full suites passed.
+
+```text
+cd D:\ME5001\DataCollectionApp\蓝牙uniapp
+npm.cmd test -- tests/submissionGate.test.js tests/operatorSession.test.js
+PASS: 2 files, 19 tests
+
+npm.cmd test
+PASS: 11 files, 64 tests
+
+cd D:\ME5001\DataCollectionApp
+git diff --check
+PASS: no whitespace errors; Git emitted only existing LF-to-CRLF warnings
+```
+
+The runner also emitted the existing Vite CJS deprecation and npm update notices.
+
+### Self Review
+
+- Navigation suppression is exercised through the real submission helper; page source checks only verify that both SFC callers use that tested boundary.
+- The duplicate enable test uses a deferred Promise and no timer or sleep.
+- Store/runtime authentication and runtime-only passcode handling are unchanged.
+- The code commit contains only both setup pages, the small submission helper, and its tests. The user-owned staged `utils/request.js` and all other staged/untracked files were not modified or committed.
+
+### Fix Round 2 Code Commit
+
+`0a9b4e25dea883bccea61a701ce09ba4113bc256` (`fix(app): suppress stale auth navigation`)
