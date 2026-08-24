@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   authenticateOperator,
   buildPersistentOperator,
+  createOperatorSessionRuntime,
+  refreshOperatorSession,
   resetOperatorSession,
 } from '../utils/operatorSession'
 
@@ -69,10 +71,11 @@ describe('operator runtime authentication', () => {
       runtimePasscode: 'runtime-secret',
       unlocked: true,
     }
+    const runtime = createOperatorSessionRuntime()
     const clearOperator = vi.fn()
     const clearToken = vi.fn()
 
-    resetOperatorSession({ state, clearOperator, clearToken })
+    resetOperatorSession({ state, runtime, clearOperator, clearToken })
 
     expect(state).toEqual({
       operator: null,
@@ -81,6 +84,125 @@ describe('operator runtime authentication', () => {
     })
     expect(clearOperator).toHaveBeenCalledOnce()
     expect(clearToken).toHaveBeenCalledOnce()
+  })
+
+  it('does not restore credentials when reset wins over an in-flight refresh', async () => {
+    const login = deferred()
+    const state = {
+      operator: profile,
+      runtimePasscode: 'runtime-secret',
+      unlocked: true,
+    }
+    const runtime = createOperatorSessionRuntime()
+    const setToken = vi.fn()
+    const setOperator = vi.fn()
+    const clearOperator = vi.fn()
+    const clearToken = vi.fn()
+
+    const refresh = refreshOperatorSession({
+      state,
+      runtime,
+      loginApi: () => login.promise,
+      setToken,
+      setOperator,
+    })
+
+    resetOperatorSession({ state, runtime, clearOperator, clearToken })
+    login.resolve({ token: 'late-token', clinician: { id: 41 } })
+
+    await expect(refresh).resolves.toBeNull()
+    expect(state).toEqual({
+      operator: null,
+      runtimePasscode: null,
+      unlocked: false,
+    })
+    expect(setToken).not.toHaveBeenCalled()
+    expect(setOperator).not.toHaveBeenCalled()
+    expect(clearOperator).toHaveBeenCalledOnce()
+    expect(clearToken).toHaveBeenCalledOnce()
+  })
+
+  it('shares one in-flight refresh for concurrent 401 handlers and releases it afterward', async () => {
+    const login = deferred()
+    const state = {
+      operator: profile,
+      runtimePasscode: 'runtime-secret',
+      unlocked: true,
+    }
+    const runtime = createOperatorSessionRuntime()
+    const loginApi = vi.fn(() => login.promise)
+    const setToken = vi.fn()
+    const setOperator = vi.fn()
+
+    const first = refreshOperatorSession({ state, runtime, loginApi, setToken, setOperator })
+    const second = refreshOperatorSession({ state, runtime, loginApi, setToken, setOperator })
+
+    expect(first).toBe(second)
+    expect(loginApi).toHaveBeenCalledOnce()
+
+    login.resolve({ token: 'renewed-token', clinician: { id: 41 } })
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      {
+        token: 'Bearer renewed-token',
+        operator: { ...profile, clinicianId: 41 },
+      },
+      {
+        token: 'Bearer renewed-token',
+        operator: { ...profile, clinicianId: 41 },
+      },
+    ])
+    expect(setToken).toHaveBeenCalledWith('Bearer renewed-token')
+    expect(setOperator).toHaveBeenCalledWith({ ...profile, clinicianId: 41 })
+
+    await expect(refreshOperatorSession({ state, runtime, loginApi, setToken, setOperator }))
+      .resolves.toEqual({
+        token: 'Bearer renewed-token',
+        operator: { ...profile, clinicianId: 41 },
+      })
+    expect(loginApi).toHaveBeenCalledTimes(2)
+  })
+
+  it('releases a rejected refresh so a later 401 can retry', async () => {
+    const firstLogin = deferred()
+    const secondLogin = deferred()
+    const state = {
+      operator: profile,
+      runtimePasscode: 'runtime-secret',
+      unlocked: true,
+    }
+    const runtime = createOperatorSessionRuntime()
+    const loginApi = vi
+      .fn(() => firstLogin.promise)
+      .mockImplementationOnce(() => firstLogin.promise)
+      .mockImplementationOnce(() => secondLogin.promise)
+    const setToken = vi.fn()
+    const setOperator = vi.fn()
+
+    const failedRefresh = refreshOperatorSession({
+      state,
+      runtime,
+      loginApi,
+      setToken,
+      setOperator,
+    })
+    firstLogin.reject(new Error('unauthorized'))
+    await expect(failedRefresh).rejects.toThrow('unauthorized')
+
+    const retriedRefresh = refreshOperatorSession({
+      state,
+      runtime,
+      loginApi,
+      setToken,
+      setOperator,
+    })
+    expect(loginApi).toHaveBeenCalledTimes(2)
+
+    secondLogin.resolve({ token: 'retry-token', clinician: { id: 41 } })
+    await expect(retriedRefresh).resolves.toEqual({
+      token: 'Bearer retry-token',
+      operator: { ...profile, clinicianId: 41 },
+    })
   })
 
   it('wires the Pinia store to asynchronous runtime authentication', () => {
@@ -104,4 +226,14 @@ function readSource(relativePath) {
     new URL(relativePath, import.meta.url),
     'utf8',
   )
+}
+
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
 }
