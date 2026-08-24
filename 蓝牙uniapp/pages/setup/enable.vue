@@ -10,30 +10,43 @@
     <CaInput label="医生姓名" icon="👤" placeholder="请输入您的姓名" v-model="f.name" />
     <CaInput label="联系方式" icon="📞" type="number" placeholder="手机号" v-model="f.phone" />
     <CaInput label="设置登录口令" icon="🔒" :password="true" placeholder="设置医生登录口令" v-model="f.passcode" />
-    <view class="btn" @tap="onEnable">注册并启用</view>
+    <view class="btn" :class="{ disabled: submitting }" @tap="onEnable">
+      {{ submitting ? '启用中…' : '注册并启用' }}
+    </view>
     <view class="hint">注册后，重启应用或令牌失效时需重新输入登录口令。\n口令仅在当前运行期用于身份验证。</view>
   </view>
 </template>
 
 <script setup>
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { isValidPhone } from '@/utils/patient'
+import { createSubmissionGate, runCommittedSubmission } from '@/utils/submissionGate'
 const op = useOperatorStoreWithOut()
 const f = reactive({ hospital: '', dept: '', name: '', phone: '', passcode: '' })
+const submitting = ref(false)
+const submissionGate = createSubmissionGate((value) => {
+  submitting.value = value
+})
 async function onEnable() {
   if (!f.hospital || !f.dept || !f.name) return uni.showToast({ title: '请填写医院/科室/姓名', icon: 'none' })
   if (!isValidPhone(f.phone)) return uni.showToast({ title: '请输入正确手机号', icon: 'none' })
   if (!f.passcode || f.passcode.length < 4) return uni.showToast({ title: '口令至少 4 位', icon: 'none' })
-  uni.showLoading({ title: '启用中', mask: true })
-  try {
-    await op.enable({ ...f })
-    uni.hideLoading()
-    uni.reLaunch({ url: '/pages/patient/select' })
-  } catch (e) {
-    uni.hideLoading()
-    uni.showToast({ title: '启用失败：请检查网络后重试', icon: 'none', duration: 2500 })
-  }
+  return runCommittedSubmission({
+    gate: submissionGate,
+    submit: async () => {
+      uni.showLoading({ title: '启用中', mask: true })
+      try {
+        return await op.enable({ ...f })
+      } catch (e) {
+        uni.showToast({ title: '启用失败：请检查网络后重试', icon: 'none', duration: 2500 })
+        return null
+      } finally {
+        uni.hideLoading()
+      }
+    },
+    onCommitted: () => uni.reLaunch({ url: '/pages/patient/select' }),
+  })
 }
 </script>
 
@@ -44,5 +57,6 @@ async function onEnable() {
 .h1 { font-size: 38rpx; font-weight: 800; color: $ca-t1; margin-top: 24rpx; }
 .h2 { font-size: 25rpx; color: $ca-t2; margin-top: 10rpx; }
 .btn { margin-top: 40rpx; background: $ca-primary; color: #fff; font-size: 30rpx; font-weight: 700; text-align: center; padding: 28rpx; border-radius: 26rpx; }
+.btn.disabled { opacity: 0.6; pointer-events: none; }
 .hint { font-size: 22rpx; color: $ca-t3; text-align: center; margin-top: 24rpx; line-height: 1.6; white-space: pre-line; }
 </style>

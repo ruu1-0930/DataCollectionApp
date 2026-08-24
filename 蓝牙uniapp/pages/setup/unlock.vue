@@ -17,7 +17,7 @@
 import { ref, computed } from 'vue'
 import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { usePatientStoreWithOut } from '@/store/modules/patient'
-import { createSubmissionGate } from '@/utils/submissionGate'
+import { createSubmissionGate, runCommittedSubmission } from '@/utils/submissionGate'
 const op = useOperatorStoreWithOut()
 const ps = usePatientStoreWithOut()
 const passcode = ref('')
@@ -30,16 +30,20 @@ const subtitle = computed(() => {
   return [o.hospital, o.dept, o.name].filter(Boolean).join(' · ')
 })
 async function onUnlock() {
-  return submissionGate.run(async () => {
-    try {
-      await op.unlock(passcode.value)
-    } catch (e) {
-      uni.showToast({ title: '口令错误或网络异常', icon: 'none' })
-      return false
-    }
-    if (ps.current) uni.switchTab({ url: '/pages/home/home' })
-    else uni.reLaunch({ url: '/pages/patient/select' })
-    return true
+  return runCommittedSubmission({
+    gate: submissionGate,
+    submit: async () => {
+      try {
+        return await op.unlock(passcode.value)
+      } catch (e) {
+        uni.showToast({ title: '口令错误或网络异常', icon: 'none' })
+        return false
+      }
+    },
+    onCommitted: () => {
+      if (ps.current) uni.switchTab({ url: '/pages/home/home' })
+      else uni.reLaunch({ url: '/pages/patient/select' })
+    },
   })
 }
 function onReset() {

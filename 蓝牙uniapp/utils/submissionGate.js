@@ -19,3 +19,13 @@ export function createSubmissionGate(onStateChange = () => {}) {
     },
   }
 }
+
+export function runCommittedSubmission({ gate, submit, onCommitted }) {
+  return gate.run(async () => {
+    const result = await submit()
+    if (!result) return false
+
+    await onCommitted(result)
+    return true
+  })
+}
