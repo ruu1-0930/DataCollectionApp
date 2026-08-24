@@ -3,8 +3,10 @@ import {
   authenticateOperator,
   buildPersistentOperator,
   createOperatorSessionRuntime,
+  enableOperatorSession,
   refreshOperatorSession,
   resetOperatorSession,
+  unlockOperatorSession,
 } from '../utils/operatorSession'
 
 const profile = {
@@ -205,11 +207,168 @@ describe('operator runtime authentication', () => {
     })
   })
 
+  it('prevents an old refresh from overwriting a replacement unlock', async () => {
+    const oldRefreshLogin = deferred()
+    const replacementLogin = deferred()
+    const state = {
+      operator: profile,
+      runtimePasscode: 'old-secret',
+      unlocked: true,
+    }
+    const runtime = createOperatorSessionRuntime()
+    const setToken = vi.fn()
+    const setOperator = vi.fn()
+
+    const oldRefresh = refreshOperatorSession({
+      state,
+      runtime,
+      loginApi: () => oldRefreshLogin.promise,
+      setToken,
+      setOperator,
+    })
+    const replacementUnlock = unlockOperatorSession({
+      state,
+      runtime,
+      passcode: 'replacement-secret',
+      loginApi: () => replacementLogin.promise,
+      setToken,
+      setOperator,
+    })
+
+    replacementLogin.resolve({ token: 'replacement-token', clinician: { id: 52 } })
+    await expect(replacementUnlock).resolves.toBe(true)
+    oldRefreshLogin.resolve({ token: 'stale-token', clinician: { id: 41 } })
+    await expect(oldRefresh).resolves.toBeNull()
+
+    expect(state).toEqual({
+      operator: { ...profile, clinicianId: 52 },
+      runtimePasscode: 'replacement-secret',
+      unlocked: true,
+    })
+    expect(setToken).toHaveBeenCalledOnce()
+    expect(setToken).toHaveBeenCalledWith('Bearer replacement-token')
+    expect(setOperator).toHaveBeenCalledOnce()
+    expect(setOperator).toHaveBeenCalledWith({ ...profile, clinicianId: 52 })
+  })
+
+  it('prevents an old refresh from overwriting a replacement enable', async () => {
+    const oldRefreshLogin = deferred()
+    const replacementEnable = deferred()
+    const state = {
+      operator: profile,
+      runtimePasscode: 'old-secret',
+      unlocked: true,
+    }
+    const runtime = createOperatorSessionRuntime()
+    const setToken = vi.fn()
+    const setOperator = vi.fn()
+    const replacementCredentials = {
+      hospital: '人民医院',
+      dept: '康复科',
+      name: '李医生',
+      phone: '13900000000',
+      passcode: 'replacement-secret',
+    }
+
+    const oldRefresh = refreshOperatorSession({
+      state,
+      runtime,
+      loginApi: () => oldRefreshLogin.promise,
+      setToken,
+      setOperator,
+    })
+    const enabled = enableOperatorSession({
+      state,
+      runtime,
+      credentials: replacementCredentials,
+      enableApi: () => replacementEnable.promise,
+      setToken,
+      setOperator,
+    })
+
+    replacementEnable.resolve({ token: 'replacement-token', clinician: { id: 63 } })
+    await expect(enabled).resolves.toEqual({
+      token: 'replacement-token',
+      clinician: { id: 63 },
+    })
+    oldRefreshLogin.resolve({ token: 'stale-token', clinician: { id: 41 } })
+    await expect(oldRefresh).resolves.toBeNull()
+
+    expect(state).toEqual({
+      operator: {
+        hospital: '人民医院',
+        dept: '康复科',
+        name: '李医生',
+        phone: '13900000000',
+        enabled: true,
+        clinicianId: 63,
+      },
+      runtimePasscode: 'replacement-secret',
+      unlocked: true,
+    })
+    expect(setToken).toHaveBeenCalledOnce()
+    expect(setToken).toHaveBeenCalledWith('Bearer replacement-token')
+    expect(setOperator).toHaveBeenCalledOnce()
+    expect(setOperator).toHaveBeenCalledWith({
+      hospital: '人民医院',
+      dept: '康复科',
+      name: '李医生',
+      phone: '13900000000',
+      enabled: true,
+      clinicianId: 63,
+    })
+  })
+
+  it('allows only the latest overlapping explicit authentication to commit', async () => {
+    const firstLogin = deferred()
+    const secondLogin = deferred()
+    const state = {
+      operator: profile,
+      runtimePasscode: null,
+      unlocked: false,
+    }
+    const runtime = createOperatorSessionRuntime()
+    const setToken = vi.fn()
+    const setOperator = vi.fn()
+
+    const firstUnlock = unlockOperatorSession({
+      state,
+      runtime,
+      passcode: 'first-secret',
+      loginApi: () => firstLogin.promise,
+      setToken,
+      setOperator,
+    })
+    const secondUnlock = unlockOperatorSession({
+      state,
+      runtime,
+      passcode: 'second-secret',
+      loginApi: () => secondLogin.promise,
+      setToken,
+      setOperator,
+    })
+
+    secondLogin.resolve({ token: 'second-token', clinician: { id: 72 } })
+    await expect(secondUnlock).resolves.toBe(true)
+    firstLogin.resolve({ token: 'first-token', clinician: { id: 71 } })
+    await expect(firstUnlock).resolves.toBe(false)
+
+    expect(state).toEqual({
+      operator: { ...profile, clinicianId: 72 },
+      runtimePasscode: 'second-secret',
+      unlocked: true,
+    })
+    expect(setToken).toHaveBeenCalledOnce()
+    expect(setToken).toHaveBeenCalledWith('Bearer second-token')
+    expect(setOperator).toHaveBeenCalledOnce()
+    expect(setOperator).toHaveBeenCalledWith({ ...profile, clinicianId: 72 })
+  })
+
   it('wires the Pinia store to asynchronous runtime authentication', () => {
     const source = readSource('../store/modules/operator.js')
     expect(source).toContain('runtimePasscode: null')
-    expect(source).toContain('async unlock(passcode)')
-    expect(source).toContain('authenticateOperator')
+    expect(source).toContain('unlockOperatorSession')
+    expect(source).toContain('enableOperatorSession')
     expect(source).toContain('resetOperatorSession')
   })
 

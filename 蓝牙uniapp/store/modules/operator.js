@@ -1,15 +1,14 @@
 import { defineStore } from 'pinia'
 import { store } from '@/store'
 import { getOperator, setOperator, clearOperator } from '@/utils/clinicStorage'
-import { buildEnableCredentials } from '@/utils/clinicianCredentials'
 import { clearToken, setToken, getToken } from '@/utils/auth'
 import { clinicianEnableApi, clinicianLoginApi } from '@/api'
 import {
-  authenticateOperator,
-  buildPersistentOperator,
   createOperatorSessionRuntime,
+  enableOperatorSession,
   refreshOperatorSession,
   resetOperatorSession,
+  unlockOperatorSession,
 } from '@/utils/operatorSession'
 
 export const useOperatorStore = defineStore('operatorStore', {
@@ -24,36 +23,26 @@ export const useOperatorStore = defineStore('operatorStore', {
   },
   actions: {
     // 首次启用：POST /clinician/enable → 存 token + 本地档案
-    async enable({ hospital, dept, name, phone, passcode }) {
-      const authEpoch = this.authRuntime.authEpoch
-      const res = await clinicianEnableApi(buildEnableCredentials({
-        hospital, dept, name, phone, passcode
-      }))
-      if (!this.isCurrentAuthEpoch(authEpoch)) return null
-      setToken(`Bearer ${res.token}`)
-      this.operator = buildPersistentOperator({
-        hospital, dept, name, phone, enabled: true,
-      }, res.clinician)
-      setOperator(this.operator)
-      this.runtimePasscode = passcode
-      this.unlocked = true
-      return res
+    enable(credentials) {
+      return enableOperatorSession({
+        state: this,
+        runtime: this.authRuntime,
+        credentials,
+        enableApi: clinicianEnableApi,
+        setToken,
+        setOperator,
+      })
     },
     // 解锁必须经服务端重新验证；口令仅保留在当前运行期内存。
-    async unlock(passcode) {
-      const authEpoch = this.authRuntime.authEpoch
-      const authenticated = await authenticateOperator({
-        operator: this.operator,
+    unlock(passcode) {
+      return unlockOperatorSession({
+        state: this,
+        runtime: this.authRuntime,
         passcode,
         loginApi: clinicianLoginApi,
+        setToken,
+        setOperator,
       })
-      if (!this.isCurrentAuthEpoch(authEpoch)) return false
-      setToken(authenticated.token)
-      this.operator = authenticated.operator
-      setOperator(this.operator)
-      this.runtimePasscode = passcode
-      this.unlocked = true
-      return true
     },
     // 静默换 token：仅使用本运行期已验证的口令。
     refreshToken() {
@@ -65,7 +54,6 @@ export const useOperatorStore = defineStore('operatorStore', {
         setOperator,
       })
     },
-    isCurrentAuthEpoch(authEpoch) { return this.authRuntime.authEpoch === authEpoch },
     hasToken() { return !!getToken() },
     reset() {
       resetOperatorSession({
