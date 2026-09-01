@@ -429,6 +429,26 @@ def _session_for_bounds(patient_id, bounds, *, include_sensors):
     return sessions[0]
 
 
+def _materialize_frame_page_selections(total, page_groups, *, offset, page_end):
+    """Normalize SQL aggregates before Python pagination and JSON output."""
+    selections = []
+    for timestamp, left_count, right_count, frame_count, frame_offset in page_groups:
+        left_count = int(left_count or 0)
+        right_count = int(right_count or 0)
+        frame_count = int(frame_count or 0)
+        frame_offset = int(frame_offset or 0)
+        selections.append(
+            {
+                "timestamp": timestamp,
+                "start": max(offset - frame_offset, 0),
+                "end": min(page_end - frame_offset, frame_count),
+                "left_count": left_count,
+                "right_count": right_count,
+            }
+        )
+    return int(total or 0), selections
+
+
 def _frame_page_selections(patient_id, bounds, page, page_size):
     """Select only timestamp groups whose logical frames overlap the page."""
     counts = (
@@ -488,18 +508,12 @@ def _frame_page_selections(patient_id, bounds, page, page_size):
         .limit(page_size)
         .all()
     )
-    selections = [
-        {
-            "timestamp": timestamp,
-            "start": max(offset - frame_offset_value, 0),
-            "end": min(page_end - frame_offset_value, frame_count),
-            "left_count": left_count,
-            "right_count": right_count,
-        }
-        for timestamp, left_count, right_count, frame_count, frame_offset_value
-        in page_groups
-    ]
-    return int(total), selections
+    return _materialize_frame_page_selections(
+        total,
+        page_groups,
+        offset=offset,
+        page_end=page_end,
+    )
 
 
 def _frame_page_rows(patient_id, selections):

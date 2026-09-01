@@ -432,6 +432,132 @@ def test_login_rate_limit_defaults_to_five_failures_per_ip_and_window(client):
     assert after_window.status_code == 401
 
 
+def test_existing_account_enable_rate_limits_the_sixth_failure(client):
+    client.application.config['LOGIN_RATE_LIMIT_CLOCK'] = lambda: 1000.0
+    client.post('/clinician/enable', json=_enable_payload())
+
+    responses = [
+        client.post(
+            '/clinician/enable',
+            json=_enable_payload(passcode='9999'),
+            environ_base={'REMOTE_ADDR': '192.0.2.20'},
+        )
+        for _ in range(6)
+    ]
+
+    assert [response.status_code for response in responses] == [401, 401, 401, 401, 401, 429]
+
+
+def test_existing_enable_and_login_share_failures_and_successful_enable_clears_them(client):
+    client.application.config.update(
+        LOGIN_FAILURE_LIMIT=2,
+        LOGIN_RATE_LIMIT_CLOCK=lambda: 1000.0,
+    )
+    client.post('/clinician/enable', json=_enable_payload())
+    remote = {'REMOTE_ADDR': '192.0.2.21'}
+
+    first_enable_failure = client.post(
+        '/clinician/enable',
+        json=_enable_payload(passcode='9999'),
+        environ_base=remote,
+    )
+    second_login_failure = client.post(
+        '/clinician/login',
+        json=_login_payload(passcode='9999'),
+        environ_base=remote,
+    )
+    limited_enable = client.post(
+        '/clinician/enable',
+        json=_enable_payload(passcode='9999'),
+        environ_base=remote,
+    )
+
+    assert first_enable_failure.status_code == 401
+    assert second_login_failure.status_code == 401
+    assert limited_enable.status_code == 429
+
+    client.application.extensions['login_failure_windows'].clear()
+    assert client.post(
+        '/clinician/login',
+        json=_login_payload(passcode='9999'),
+        environ_base=remote,
+    ).status_code == 401
+    assert client.post(
+        '/clinician/enable',
+        json=_enable_payload(),
+        environ_base=remote,
+    ).status_code == 200
+    after_success = [
+        client.post(
+            '/clinician/login',
+            json=_login_payload(passcode='9999'),
+            environ_base=remote,
+        ).status_code
+        for _ in range(3)
+    ]
+    assert after_success == [401, 401, 429]
+
+
+def test_new_account_enable_is_not_counted_as_a_failed_login(client):
+    client.application.config.update(
+        LOGIN_FAILURE_LIMIT=1,
+        LOGIN_RATE_LIMIT_CLOCK=lambda: 1000.0,
+    )
+    remote = {'REMOTE_ADDR': '192.0.2.22'}
+
+    created = client.post('/clinician/enable', json=_enable_payload(), environ_base=remote)
+    first_failure = client.post(
+        '/clinician/login',
+        json=_login_payload(passcode='9999'),
+        environ_base=remote,
+    )
+    limited = client.post(
+        '/clinician/login',
+        json=_login_payload(passcode='9999'),
+        environ_base=remote,
+    )
+
+    assert created.status_code == 200
+    assert first_failure.status_code == 401
+    assert limited.status_code == 429
+
+
+def test_enable_integrity_race_failure_shares_the_login_rate_limit(client, monkeypatch):
+    client.application.config.update(
+        LOGIN_FAILURE_LIMIT=1,
+        LOGIN_RATE_LIMIT_CLOCK=lambda: 1000.0,
+    )
+    original_commit = db.session.commit
+
+    def commit_after_mismatched_account_wins():
+        db.session.rollback()
+        db.session.add(Clinician(
+            hospital='协和医院',
+            dept='骨科',
+            name='其他医生',
+            phone='13700000000',
+            passcode_hash=hash_passcode('1234'),
+        ))
+        original_commit()
+        raise IntegrityError('simulated unique conflict', None, None)
+
+    monkeypatch.setattr(db.session, 'commit', commit_after_mismatched_account_wins)
+    remote = {'REMOTE_ADDR': '192.0.2.23'}
+    raced = client.post(
+        '/clinician/enable',
+        json=_enable_payload(phone='13700000000'),
+        environ_base=remote,
+    )
+    following_login = client.post(
+        '/clinician/login',
+        json=_login_payload(phone='13700000000'),
+        environ_base=remote,
+    )
+
+    assert raced.status_code == 401
+    assert following_login.status_code == 429
+
+
 def test_concurrent_login_failures_atomically_rate_limit_sixth_attempt(client, monkeypatch):
     client.application.config.update(
         LOGIN_FAILURE_LIMIT=5,

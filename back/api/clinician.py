@@ -89,6 +89,27 @@ def _clear_login_failures(key):
     current_app.extensions['login_failure_windows'].pop(key, None)
 
 
+def _existing_account_auth_error(clinician, hospital, name, phone, passcode):
+    passcode_hash = (
+        clinician.passcode_hash if clinician is not None else _DUMMY_PASSCODE_HASH
+    )
+    passcode_matches = verify_passcode(passcode, passcode_hash)
+    key = _login_failure_key(hospital, phone)
+    now = current_app.config['LOGIN_RATE_LIMIT_CLOCK']()
+    with _login_failure_lock():
+        if _login_rate_limited(key, now):
+            return jsonify(Response.error(429, '登录尝试次数过多，请稍后再试')), 429
+        if (
+            clinician is None
+            or name != clinician.name
+            or not passcode_matches
+        ):
+            _record_login_failure(key, now)
+            return jsonify(Response.error(401, _LOGIN_FAILURE)), 401
+        _clear_login_failures(key)
+    return None
+
+
 @clinician_bp.route('/clinician/enable', methods=['POST'])
 def enable():
     data = _json_object_with_allowed_fields(_ENABLE_FIELDS, exact=True)
@@ -106,8 +127,11 @@ def enable():
 
     existing = Clinician.query.filter_by(hospital=hospital, phone=phone).first()
     if existing:
-        if name != existing.name or not verify_passcode(passcode, existing.passcode_hash):
-            return jsonify(Response.error(401, _LOGIN_FAILURE)), 401
+        auth_error = _existing_account_auth_error(
+            existing, hospital, name, phone, passcode
+        )
+        if auth_error is not None:
+            return auth_error
         return jsonify(Response.success(
             data={'token': issue_token(existing.id), 'clinician': _clinician_public(existing)},
             msg='账户已启用'))
@@ -121,8 +145,11 @@ def enable():
     except IntegrityError:
         db.session.rollback()
         existing = Clinician.query.filter_by(hospital=hospital, phone=phone).first()
-        if not existing or name != existing.name or not verify_passcode(passcode, existing.passcode_hash):
-            return jsonify(Response.error(401, _LOGIN_FAILURE)), 401
+        auth_error = _existing_account_auth_error(
+            existing, hospital, name, phone, passcode
+        )
+        if auth_error is not None:
+            return auth_error
         return jsonify(Response.success(
             data={'token': issue_token(existing.id), 'clinician': _clinician_public(existing)},
             msg='账户已启用'))
@@ -146,17 +173,9 @@ def login():
         return jsonify(Response.error(400, '手机号或口令格式无效')), 400
 
     c = Clinician.query.filter_by(hospital=hospital, phone=phone).first()
-    passcode_hash = c.passcode_hash if c is not None else _DUMMY_PASSCODE_HASH
-    passcode_matches = verify_passcode(passcode, passcode_hash)
-    key = _login_failure_key(hospital, phone)
-    now = current_app.config['LOGIN_RATE_LIMIT_CLOCK']()
-    with _login_failure_lock():
-        if _login_rate_limited(key, now):
-            return jsonify(Response.error(429, '登录尝试次数过多，请稍后再试')), 429
-        if not c or name != c.name or not passcode_matches:
-            _record_login_failure(key, now)
-            return jsonify(Response.error(401, _LOGIN_FAILURE)), 401
-        _clear_login_failures(key)
+    auth_error = _existing_account_auth_error(c, hospital, name, phone, passcode)
+    if auth_error is not None:
+        return auth_error
     return jsonify(Response.success(
         data={'token': issue_token(c.id), 'clinician': _clinician_public(c)},
         msg='登录成功'))

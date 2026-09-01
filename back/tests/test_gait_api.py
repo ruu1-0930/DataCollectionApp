@@ -5,6 +5,7 @@ import json
 import math
 import re
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import event
@@ -923,6 +924,61 @@ def test_frame_page_selection_materializes_only_page_timestamp_groups(client, mo
         _BASE_TIME + timedelta(seconds=1),
     ]
     assert materialized_row_counts == [2]
+
+
+def test_frame_page_selection_normalizes_mysql_decimal_aggregates_to_int():
+    second_timestamp = _BASE_TIME + timedelta(seconds=1)
+    total, selections = gait_api._materialize_frame_page_selections(
+        Decimal("7"),
+        [
+            (_BASE_TIME, Decimal("3"), Decimal("2"), Decimal("3"), Decimal("0")),
+            (
+                second_timestamp,
+                Decimal("4"),
+                Decimal("4"),
+                Decimal("4"),
+                Decimal("3"),
+            ),
+        ],
+        offset=2,
+        page_end=5,
+    )
+
+    assert type(total) is int
+    assert total == 7
+    assert selections == [
+        {
+            "timestamp": _BASE_TIME,
+            "start": 2,
+            "end": 3,
+            "left_count": 3,
+            "right_count": 2,
+        },
+        {
+            "timestamp": second_timestamp,
+            "start": 0,
+            "end": 2,
+            "left_count": 4,
+            "right_count": 4,
+        },
+    ]
+    assert all(
+        type(selection[key]) is int
+        for selection in selections
+        for key in ("start", "end", "left_count", "right_count")
+    )
+
+    frames = gait_api._page_frames(
+        selections,
+        {
+            _BASE_TIME: {"L": [{"id": 3}], "R": []},
+            second_timestamp: {
+                "L": [{"id": 4}, {"id": 5}],
+                "R": [{"id": 6}, {"id": 7}],
+            },
+        },
+    )
+    assert len(frames) == 3
 
 
 def test_frames_reject_legacy_millisecond_session_id_before_any_raw_query(client):
