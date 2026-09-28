@@ -45,6 +45,8 @@
 
 ### 临床步态数据工作台（跨仓只读链路，当前证据）
 
+- **Agent v2 Stage 1 / T01（隔离分支 `refactor/sarcogait-snapshot-v1`，仅持久化契约）**：B 在 `back/models/models.py` 新增七张 snapshot/revision/audit/outbox 表；`back/migrations/002_gait_snapshot_v1.sql` 为只向前的现有库 DDL，`back/database_schema_mysql.sql` 镜像绿场建表，`back/contracts/gait_snapshot_v1.schema.json` 提供五类严格 JSON Schema 2020-12 DTO。此提交未部署/执行生产迁移，不新增 API、服务或 Agent 数据流；原有六张临床表、38 字段摄取和只读链路保持原状。隔离 SQLite 的旧模型+新契约测试 `109 passed`；B 全量 `329 passed, 8 failed`，8 项全部是精确基线 `2413da4` 已带的孤立 `test_lead.py`（基线缺 `Lead`/路由）。MySQL 仅 dialect 编译/DDL 静态审计，未在 MySQL/RDS 执行。命令与边界见架构方案 T01 小节。
+
 - 当前链路是 `Project Streamlit -> Project FastAPI /api/clinical/* -> 本仓库 Flask /patients/*/gait/* -> device_raw_data`。A 原样透传当前 clinician Bearer JWT；B 校验 JWT，并在所有患者、会话、详情、逐帧和比较接口执行 clinician 归属检查。登录链路只使用医院、姓名、手机号、口令，不再使用终端身份；`enable`/`login` 仅接受精确 JSON 字段集，未知字段、`terminal_code`、非对象或畸形 JSON 返回 400，口令至少 4 字符且 UTF-8 编码不超过 72 字节。
 - B 是规范数据源，负责 30 秒 gap 会话切分、稳定 session ID、8 个规范指标、数据质量、关注项、会话详情、最多 500 点图表序列、分页逐帧数据，以及同一患者 2–5 次会话比较。`gait_bp` 注册修复已提交为 `d3bf301`；步长始终保持固件语义 `step_length`，不得改称 stride length。`stride_time_cv_pct` 使用 `2 * step_length / walking_speed` 序列计算 CV，公式披露修复见 `ae3728c`。
 - 当前 locked hardening：设备读写均受 clinician ownership 约束；登录限流为进程内原子 5/300（生产仍需网关或共享 limiter）；session ID 使用六微秒精度；详情 raw 查询保留同脚同时间戳重复行，logical-frame pagination 有边界。采集端 refresh 使用 single-flight、auth epoch 和 stale-navigation suppression；持久化 profile 仍不保存 passcode。最大压力差 marker 保留原始支持证据；A 仅接收 strict public clinician DTO，Redis 日志目标安全。

@@ -1,0 +1,1678 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sarcogait.local/contracts/gait_snapshot_v1.schema.json",
+  "title": "Gait snapshot v1 provider contracts",
+  "description": "Strict B snapshot and projection DTOs. Six-decimal DTO scalars do not truncate raw fingerprint source values. UTC timestamps serialize to exactly milliseconds; database event/ingest bounds may preserve microseconds.",
+  "$defs": {
+    "Decimal6": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+      "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+    },
+    "UUID": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "Hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "TimestampUTC": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+    },
+    "StatisticsV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mean_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "median_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "std_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cv_pct_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "n",
+        "mean_decimal",
+        "median_decimal",
+        "std_decimal",
+        "cv_pct_decimal"
+      ]
+    },
+    "MetricEvidenceV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "metric_id": {
+          "type": "string",
+          "enum": [
+            "walking_speed_mps",
+            "step_length_m",
+            "single_support_time_s",
+            "double_support_time_s",
+            "cadence_spm",
+            "step_length_asymmetry_pct",
+            "stride_time_cv_pct",
+            "double_support_ratio_pct"
+          ]
+        },
+        "value_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "m/s",
+            "m",
+            "s",
+            "steps/min",
+            "%"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "firmware",
+            "derived"
+          ]
+        },
+        "left_value_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "right_value_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "statistics": {
+          "$ref": "#/$defs/StatisticsV1"
+        },
+        "formula": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_field": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_level": {
+          "type": "string",
+          "enum": [
+            "clinical_reference",
+            "exploratory",
+            "firmware_measurement",
+            "insufficient"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "minItems": 0,
+          "maxItems": 32
+        }
+      },
+      "required": [
+        "evidence_id",
+        "metric_id",
+        "value_decimal",
+        "unit",
+        "source",
+        "left_value_decimal",
+        "right_value_decimal",
+        "statistics",
+        "formula",
+        "source_field",
+        "evidence_level",
+        "reason_codes"
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "metric_id": {
+              "const": "walking_speed_mps"
+            },
+            "unit": {
+              "const": "m/s"
+            },
+            "source": {
+              "const": "firmware"
+            },
+            "formula": {
+              "type": "null"
+            },
+            "source_field": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        {
+          "properties": {
+            "metric_id": {
+              "const": "step_length_m"
+            },
+            "unit": {
+              "const": "m"
+            },
+            "source": {
+              "const": "firmware"
+            },
+            "formula": {
+              "type": "null"
+            },
+            "source_field": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        {
+          "properties": {
+            "metric_id": {
+              "const": "single_support_time_s"
+            },
+            "unit": {
+              "const": "s"
+            },
+            "source": {
+              "const": "firmware"
+            },
+            "formula": {
+              "type": "null"
+            },
+            "source_field": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        {
+          "properties": {
+            "metric_id": {
+              "const": "double_support_time_s"
+            },
+            "unit": {
+              "const": "s"
+            },
+            "source": {
+              "const": "firmware"
+            },
+            "formula": {
+              "type": "null"
+            },
+            "source_field": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        {
+          "properties": {
+            "metric_id": {
+              "const": "cadence_spm"
+            },
+            "unit": {
+              "const": "steps/min"
+            },
+            "source": {
+              "const": "derived"
+            },
+            "formula": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "source_field": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "metric_id": {
+              "const": "step_length_asymmetry_pct"
+            },
+            "unit": {
+              "const": "%"
+            },
+            "source": {
+              "const": "derived"
+            },
+            "formula": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "source_field": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "metric_id": {
+              "const": "stride_time_cv_pct"
+            },
+            "unit": {
+              "const": "%"
+            },
+            "source": {
+              "const": "derived"
+            },
+            "formula": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "source_field": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "metric_id": {
+              "const": "double_support_ratio_pct"
+            },
+            "unit": {
+              "const": "%"
+            },
+            "source": {
+              "const": "derived"
+            },
+            "formula": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "source_field": {
+              "type": "null"
+            }
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "value_decimal": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "value_decimal"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason_codes": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "description": "Canonical metric units/source are bound to metric_id; null value requires a quality reason."
+    },
+    "Metrics8": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/MetricEvidenceV1"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "properties": {
+              "metric_id": {
+                "const": "walking_speed_mps"
+              }
+            },
+            "required": [
+              "metric_id"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "metric_id": {
+                "const": "step_length_m"
+              }
+            },
+            "required": [
+              "metric_id"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "metric_id": {
+                "const": "single_support_time_s"
+              }
+            },
+            "required": [
+              "metric_id"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "metric_id": {
+                "const": "double_support_time_s"
+              }
+            },
+            "required": [
+              "metric_id"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "metric_id": {
+                "const": "cadence_spm"
+              }
+            },
+            "required": [
+              "metric_id"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "metric_id": {
+                "const": "step_length_asymmetry_pct"
+              }
+            },
+            "required": [
+              "metric_id"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "metric_id": {
+                "const": "stride_time_cv_pct"
+              }
+            },
+            "required": [
+              "metric_id"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "metric_id": {
+                "const": "double_support_ratio_pct"
+              }
+            },
+            "required": [
+              "metric_id"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
+    },
+    "ProvenanceV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_schema_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "analyzer_set_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "threshold_profile_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "closure_policy_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "snapshot_schema_version",
+        "analyzer_set_version",
+        "threshold_profile_version",
+        "closure_policy_version"
+      ]
+    },
+    "QualityV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "usable",
+            "limited"
+          ]
+        },
+        "gate": {
+          "type": "string",
+          "enum": [
+            "eligible",
+            "partial",
+            "withheld"
+          ]
+        },
+        "total_frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "paired_frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "paired_frame_rate_pct_decimal": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+          "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+        },
+        "missing_required_values": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "minItems": 0,
+          "maxItems": 32
+        }
+      },
+      "required": [
+        "status",
+        "gate",
+        "total_frames",
+        "paired_frames",
+        "paired_frame_rate_pct_decimal",
+        "missing_required_values",
+        "reason_codes"
+      ]
+    },
+    "ExclusionV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason_code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "reason_code",
+        "count"
+      ]
+    },
+    "FlagV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "metric_id": {
+          "type": "string",
+          "enum": [
+            "walking_speed_mps",
+            "step_length_m",
+            "single_support_time_s",
+            "double_support_time_s",
+            "cadence_spm",
+            "step_length_asymmetry_pct",
+            "stride_time_cv_pct",
+            "double_support_ratio_pct"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "low",
+            "normal",
+            "high",
+            "unknown"
+          ]
+        },
+        "evidence_level": {
+          "type": "string",
+          "enum": [
+            "clinical_reference",
+            "exploratory",
+            "firmware_measurement",
+            "insufficient"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "minItems": 0,
+          "maxItems": 32
+        }
+      },
+      "required": [
+        "evidence_id",
+        "metric_id",
+        "status",
+        "evidence_level",
+        "message",
+        "reason_codes"
+      ]
+    },
+    "EvidencePointerV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "field_path": {
+          "type": "string",
+          "pattern": "^/(metrics|flags|pressure_summary|data_quality)(/[A-Za-z0-9_~\\-/]+)*$",
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "evidence_id",
+        "field_path"
+      ]
+    },
+    "AnalyzerStatusesV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spatiotemporal": {
+          "type": "string",
+          "enum": [
+            "success",
+            "partial",
+            "empty",
+            "failed",
+            "withheld"
+          ]
+        },
+        "data_quality": {
+          "type": "string",
+          "enum": [
+            "success",
+            "partial",
+            "empty",
+            "failed",
+            "withheld"
+          ]
+        },
+        "pressure": {
+          "type": "string",
+          "enum": [
+            "success",
+            "partial",
+            "empty",
+            "failed",
+            "withheld"
+          ]
+        }
+      },
+      "required": [
+        "spatiotemporal",
+        "data_quality",
+        "pressure"
+      ]
+    },
+    "PressureSensorV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mean_adc_decimal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decimal6"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "valid_samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_samples": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "mean_adc_decimal",
+        "valid_samples",
+        "total_samples"
+      ]
+    },
+    "PressureSensorsV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "p1": {
+          "$ref": "#/$defs/PressureSensorV1"
+        },
+        "p2": {
+          "$ref": "#/$defs/PressureSensorV1"
+        },
+        "p3": {
+          "$ref": "#/$defs/PressureSensorV1"
+        },
+        "p4": {
+          "$ref": "#/$defs/PressureSensorV1"
+        },
+        "p5": {
+          "$ref": "#/$defs/PressureSensorV1"
+        },
+        "p6": {
+          "$ref": "#/$defs/PressureSensorV1"
+        },
+        "p7": {
+          "$ref": "#/$defs/PressureSensorV1"
+        },
+        "p8": {
+          "$ref": "#/$defs/PressureSensorV1"
+        },
+        "p9": {
+          "$ref": "#/$defs/PressureSensorV1"
+        }
+      },
+      "required": [
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9"
+      ]
+    },
+    "PressureSideV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sensors": {
+          "$ref": "#/$defs/PressureSensorsV1"
+        }
+      },
+      "required": [
+        "sensors"
+      ]
+    },
+    "PressureMatchedSensorV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "difference_adc_decimal": {
+          "$ref": "#/$defs/Decimal6"
+        },
+        "asymmetry_pct_decimal": {
+          "$ref": "#/$defs/Decimal6"
+        },
+        "higher_side": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "left",
+                "right"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "difference_adc_decimal",
+        "asymmetry_pct_decimal",
+        "higher_side"
+      ]
+    },
+    "PressureMatchedSensorsV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "p1": {
+          "$ref": "#/$defs/PressureMatchedSensorV1"
+        },
+        "p2": {
+          "$ref": "#/$defs/PressureMatchedSensorV1"
+        },
+        "p3": {
+          "$ref": "#/$defs/PressureMatchedSensorV1"
+        },
+        "p4": {
+          "$ref": "#/$defs/PressureMatchedSensorV1"
+        },
+        "p5": {
+          "$ref": "#/$defs/PressureMatchedSensorV1"
+        },
+        "p6": {
+          "$ref": "#/$defs/PressureMatchedSensorV1"
+        },
+        "p7": {
+          "$ref": "#/$defs/PressureMatchedSensorV1"
+        },
+        "p8": {
+          "$ref": "#/$defs/PressureMatchedSensorV1"
+        },
+        "p9": {
+          "$ref": "#/$defs/PressureMatchedSensorV1"
+        }
+      },
+      "required": []
+    },
+    "PressureAggregateV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "nonzero_mean_v1"
+          ]
+        },
+        "unit": {
+          "const": "ADC"
+        },
+        "threshold_profile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "left": {"$ref": "#/$defs/PressureSideV1"},
+        "right": {"$ref": "#/$defs/PressureSideV1"},
+        "matched_sensors": {"$ref": "#/$defs/PressureMatchedSensorsV1"},
+        "matched_sensor_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
+        },
+        "left_load_proxy_adc_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "right_load_proxy_adc_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left_load_share_pct_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "right_load_share_pct_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "load_asymmetry_pct_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attention": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "level": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "normal",
+                    "mild",
+                    "moderate",
+                    "high"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "quality": {
+              "type": "string",
+              "enum": [
+                "usable",
+                "partial",
+                "insufficient"
+              ]
+            },
+            "reason_codes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "minItems": 0,
+              "maxItems": 32
+            }
+          },
+          "required": [
+            "level",
+            "quality",
+            "reason_codes"
+          ]
+        },
+        "limitation": {
+          "const": "pressure_adc_uncalibrated"
+        }
+      },
+      "required": [
+        "method",
+        "unit",
+        "threshold_profile",
+        "left",
+        "right",
+        "matched_sensors",
+        "matched_sensor_count",
+        "left_load_proxy_adc_decimal",
+        "right_load_proxy_adc_decimal",
+        "left_load_share_pct_decimal",
+        "right_load_share_pct_decimal",
+        "load_asymmetry_pct_decimal",
+        "attention",
+        "limitation"
+      ]
+    },
+    "ClosureV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "closed_by_inactivity"
+        },
+        "closed_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+        },
+        "policy_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "gap_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "later_accepted_row",
+            "device_quiet_period"
+          ]
+        },
+        "evidence_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+        },
+        "next_row_id": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "closed_at",
+        "policy_version",
+        "gap_ms",
+        "reason",
+        "evidence_at",
+        "next_row_id"
+      ]
+    },
+    "SessionBoundsV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+        },
+        "end_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+        },
+        "first_row_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "last_row_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ordered_row_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 1,
+          "maxItems": 1000000
+        },
+        "row_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "last_accepted_row_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "raw_data_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "closure": {
+          "$ref": "#/$defs/ClosureV1"
+        }
+      },
+      "required": [
+        "start_at",
+        "end_at",
+        "first_row_id",
+        "last_row_id",
+        "ordered_row_ids",
+        "row_count",
+        "last_accepted_row_id",
+        "raw_data_fingerprint",
+        "closure"
+      ]
+    },
+    "ChartPointV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "t_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "walking_speed_mps_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "step_length_m_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "single_support_time_s_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "double_support_time_s_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pressure_left_adc_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pressure_right_adc_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "imu_magnitude_raw_unscaled_decimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)\\.[0-9]{6}$",
+              "description": "Signed fixed-point decimal, exactly six fractional digits, no exponent or negative zero. Derived DTO display precision only; raw fingerprint must retain every consumed source value at original precision."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "t_ms",
+        "walking_speed_mps_decimal",
+        "step_length_m_decimal",
+        "single_support_time_s_decimal",
+        "double_support_time_s_decimal",
+        "pressure_left_adc_decimal",
+        "pressure_right_adc_decimal",
+        "imu_magnitude_raw_unscaled_decimal"
+      ]
+    },
+    "AnalysisSnapshotV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "patient_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "snapshot_state_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "provenance": {
+          "$ref": "#/$defs/ProvenanceV1"
+        },
+        "data_quality": {
+          "$ref": "#/$defs/QualityV1"
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExclusionV1"
+          },
+          "minItems": 0,
+          "maxItems": 128
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FlagV1"
+          },
+          "minItems": 0,
+          "maxItems": 128
+        },
+        "metrics": {
+          "$ref": "#/$defs/Metrics8"
+        },
+        "pressure_summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PressureAggregateV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_index": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidencePointerV1"
+          },
+          "minItems": 0,
+          "maxItems": 128
+        },
+        "analyzer_statuses": {
+          "$ref": "#/$defs/AnalyzerStatusesV1"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "schema_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "snapshot_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "session_revision_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "published",
+            "superseded"
+          ]
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "created_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionBoundsV1"
+        },
+        "chart_series": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChartPointV1"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "patient_id",
+        "session_id",
+        "snapshot_state_version",
+        "provenance",
+        "data_quality",
+        "exclusions",
+        "flags",
+        "metrics",
+        "pressure_summary",
+        "evidence_index",
+        "analyzer_statuses",
+        "limitations",
+        "schema_version",
+        "snapshot_id",
+        "session_revision_id",
+        "state",
+        "content_hash",
+        "created_at",
+        "session",
+        "chart_series"
+      ]
+    },
+    "AgentSnapshotProjectionV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "patient_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "snapshot_state_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "provenance": {
+          "$ref": "#/$defs/ProvenanceV1"
+        },
+        "data_quality": {
+          "$ref": "#/$defs/QualityV1"
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExclusionV1"
+          },
+          "minItems": 0,
+          "maxItems": 128
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FlagV1"
+          },
+          "minItems": 0,
+          "maxItems": 128
+        },
+        "metrics": {
+          "$ref": "#/$defs/Metrics8"
+        },
+        "pressure_summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PressureAggregateV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_index": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidencePointerV1"
+          },
+          "minItems": 0,
+          "maxItems": 128
+        },
+        "analyzer_statuses": {
+          "$ref": "#/$defs/AnalyzerStatusesV1"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "projection_schema_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "projection_content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "snapshot_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "snapshot_content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "patient_id",
+        "session_id",
+        "snapshot_state_version",
+        "provenance",
+        "data_quality",
+        "exclusions",
+        "flags",
+        "metrics",
+        "pressure_summary",
+        "evidence_index",
+        "analyzer_statuses",
+        "limitations",
+        "projection_schema_version",
+        "projection_content_hash",
+        "snapshot_id",
+        "snapshot_content_hash"
+      ]
+    },
+    "SnapshotPublicationClaimV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "snapshot_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "snapshot_state_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "workflow_run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "candidate_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "actor_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "claimed_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+        }
+      },
+      "required": [
+        "claim_id",
+        "snapshot_id",
+        "snapshot_state_version",
+        "workflow_run_id",
+        "candidate_hash",
+        "actor_id",
+        "claimed_at"
+      ]
+    },
+    "ErrorDetailsV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replacement_snapshot_available": {
+          "type": "boolean"
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "retry_after_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": []
+    },
+    "ErrorV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "invalid_request",
+            "unauthorized",
+            "forbidden",
+            "patient_not_found",
+            "session_not_found",
+            "snapshot_not_found",
+            "run_not_found",
+            "report_not_found",
+            "collection_in_progress",
+            "session_superseded",
+            "snapshot_building",
+            "snapshot_superseded",
+            "stale_snapshot",
+            "claim_conflict",
+            "idempotency_conflict",
+            "run_in_progress",
+            "scope_mismatch",
+            "snapshot_unavailable",
+            "unsupported_intent",
+            "capability_not_enabled",
+            "artifact_schema_invalid",
+            "clinical_backend_unavailable",
+            "authorization_unavailable",
+            "model_use_not_approved",
+            "provider_unavailable",
+            "internal_invariant_failed",
+            "publication_failed"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "trace_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "details": {
+          "$ref": "#/$defs/ErrorDetailsV1"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "trace_id",
+        "retryable",
+        "details"
+      ]
+    },
+    "ErrorEnvelopeV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorV1"
+        }
+      },
+      "required": [
+        "error"
+      ]
+    }
+  }
+}

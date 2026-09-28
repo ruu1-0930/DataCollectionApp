@@ -16,6 +16,8 @@ unpackage/
 # Python
 __pycache__/
 *.pyc
+back/.test-deps/
+.pytest_cache/
 
 # Log files
 npm-debug.log*
