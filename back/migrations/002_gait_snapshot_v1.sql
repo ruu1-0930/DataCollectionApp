@@ -29,6 +29,7 @@ CREATE TABLE gait_session_revision (
   created_at DATETIME(3) NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_session_revision (patient_id, session_key, revision),
+  UNIQUE KEY uq_session_revision_patient (id, patient_id),
   KEY ix_session_device (device_id),
   KEY ix_session_first_row (first_row_id),
   KEY ix_session_last_row (last_row_id),
@@ -77,10 +78,10 @@ CREATE TABLE analysis_snapshot (
   PRIMARY KEY (id),
   UNIQUE KEY uq_snapshot_identity (patient_id, session_revision_id, raw_data_fingerprint, snapshot_schema_version, analyzer_set_version, threshold_profile_version),
   UNIQUE KEY uq_snapshot_identity_fingerprint (identity_fingerprint),
-  KEY ix_snapshot_revision (session_revision_id),
+  KEY ix_snapshot_revision_patient (session_revision_id, patient_id),
   KEY ix_snapshot_superseded_by (superseded_by_snapshot_id),
   CONSTRAINT fk_snapshot_patient FOREIGN KEY (patient_id) REFERENCES patients(id),
-  CONSTRAINT fk_snapshot_revision FOREIGN KEY (session_revision_id) REFERENCES gait_session_revision(id),
+  CONSTRAINT fk_snapshot_revision_patient FOREIGN KEY (session_revision_id, patient_id) REFERENCES gait_session_revision(id, patient_id),
   CONSTRAINT fk_snapshot_superseded_by FOREIGN KEY (superseded_by_snapshot_id) REFERENCES analysis_snapshot(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -152,6 +153,13 @@ CREATE TABLE integration_outbox (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 DELIMITER $$
+
+CREATE TRIGGER trg_gait_session_revision_frozen BEFORE UPDATE ON gait_session_revision
+FOR EACH ROW BEGIN
+  IF NOT (BINARY NEW.id <=> BINARY OLD.id) OR NOT (BINARY NEW.patient_id <=> BINARY OLD.patient_id) OR NOT (BINARY NEW.device_id <=> BINARY OLD.device_id) OR NOT (BINARY NEW.session_key <=> BINARY OLD.session_key) OR NOT (BINARY NEW.revision <=> BINARY OLD.revision) OR NOT (BINARY NEW.created_at <=> BINARY OLD.created_at) OR (OLD.state <> 'collecting' AND (NOT (BINARY NEW.ordered_row_ids_canonical <=> BINARY OLD.ordered_row_ids_canonical) OR NOT (BINARY NEW.first_row_id <=> BINARY OLD.first_row_id) OR NOT (BINARY NEW.last_row_id <=> BINARY OLD.last_row_id) OR NOT (BINARY NEW.row_count <=> BINARY OLD.row_count) OR NOT (BINARY NEW.last_accepted_row_id <=> BINARY OLD.last_accepted_row_id) OR NOT (BINARY NEW.event_start_at <=> BINARY OLD.event_start_at) OR NOT (BINARY NEW.event_end_at <=> BINARY OLD.event_end_at) OR NOT (BINARY NEW.ingest_start_at <=> BINARY OLD.ingest_start_at) OR NOT (BINARY NEW.ingest_end_at <=> BINARY OLD.ingest_end_at) OR NOT (BINARY NEW.closure_policy_version <=> BINARY OLD.closure_policy_version) OR NOT (BINARY NEW.closure_evidence_canonical <=> BINARY OLD.closure_evidence_canonical) OR NOT (BINARY NEW.closed_at <=> BINARY OLD.closed_at))) OR (OLD.state <> 'collecting' AND NEW.state = 'collecting') THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'frozen session revision';
+  END IF;
+END$$
 
 CREATE TRIGGER trg_analysis_snapshot_immutable BEFORE UPDATE ON analysis_snapshot
 FOR EACH ROW BEGIN

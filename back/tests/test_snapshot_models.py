@@ -54,6 +54,12 @@ def store():
                             walking_speed=1, single_support_time=1, double_support_time=1)
         db.session.add(raw)
         db.session.flush()
+        other_raw = DeviceRawData(**{
+            column.name: getattr(raw, column.name)
+            for column in DeviceRawData.__table__.columns if column.name != 'id'
+        })
+        db.session.add(other_raw)
+        db.session.flush()
         revision = GaitSessionRevision(
             id=UUID, patient_id=p.id, device_id=d.id, session_key='synthetic-session',
             revision=1, state='closed_by_inactivity', ordered_row_ids_canonical='[1]',
@@ -69,7 +75,8 @@ def store():
             state='published', state_version=1, created_at=NOW, published_at=NOW)
         db.session.add(snapshot)
         db.session.commit()
-        yield {'patient': p.id, 'device': d.id, 'actor': c.id, 'raw': raw.id}
+        yield {'patient': p.id, 'device': d.id, 'actor': c.id,
+               'raw': raw.id, 'other_raw': other_raw.id}
         db.session.remove()
         db.drop_all()
 
@@ -117,6 +124,78 @@ def test_every_foreign_key_is_enforced(store, model, field):
     values[field] = 999999 if isinstance(model.__table__.c[field].type, db.Integer) else 'f'*36
     db.session.add(model(**values))
     with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()
+
+
+def test_snapshot_rejects_valid_revision_belonging_to_another_patient(store):
+    other_patient = Patient(clinician_id=store['actor'], subject_id='#other-synthetic')
+    db.session.add(other_patient)
+    db.session.commit()
+    values = records(store)[AnalysisSnapshot]
+    values['patient_id'] = other_patient.id
+    # Both patient ID and revision ID exist; only the pair is invalid.
+    assert db.session.get(Patient, other_patient.id)
+    assert db.session.get(GaitSessionRevision, UUID)
+    db.session.add(AnalysisSnapshot(**values))
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()
+
+
+FROZEN_REVISION_FIELDS = (
+    ('ordered_row_ids_canonical', '[1,2]'),
+    ('first_row_id', 'other_raw'), ('last_row_id', 'other_raw'),
+    ('row_count', 2), ('last_accepted_row_id', 'other_raw'),
+    ('event_start_at', NOW + datetime.timedelta(seconds=1)),
+    ('event_end_at', NOW + datetime.timedelta(seconds=1)),
+    ('ingest_start_at', NOW + datetime.timedelta(seconds=1)),
+    ('ingest_end_at', NOW + datetime.timedelta(seconds=1)),
+    ('closure_policy_version', 'other-policy'),
+    ('closure_evidence_canonical', '{"changed":true}'),
+    ('closed_at', NOW + datetime.timedelta(seconds=1)),
+)
+
+
+@pytest.mark.parametrize('state', ['closed_by_inactivity', 'superseded'])
+@pytest.mark.parametrize('field,value', FROZEN_REVISION_FIELDS)
+def test_closed_or_superseded_revision_rejects_bulk_evidence_rewrite(store, state, field, value):
+    if state == 'superseded':
+        db.session.execute(text('UPDATE gait_session_revision SET state=:state WHERE id=:id'),
+                           {'state': state, 'id': UUID})
+        db.session.commit()
+    if value == 'other_raw':
+        value = store['other_raw']  # valid FK, so failure proves the freeze trigger
+    with pytest.raises(IntegrityError):
+        db.session.execute(text(f'UPDATE gait_session_revision SET {field}=:value WHERE id=:id'),
+                           {'value': value, 'id': UUID})
+        db.session.commit()
+    db.session.rollback()
+
+
+def test_collecting_revision_can_build_evidence_then_cannot_reopen(store):
+    db.session.add(GaitSessionRevision(**records(store)[GaitSessionRevision]))
+    db.session.commit()
+    db.session.execute(text('UPDATE gait_session_revision SET ordered_row_ids_canonical=:rows, '
+                            'row_count=2 WHERE id=:id'), {'rows': '[1,2]', 'id': OTHER})
+    db.session.commit()
+    db.session.execute(text("UPDATE gait_session_revision SET state='closed_by_inactivity', "
+                            'closure_evidence_canonical=:evidence, closed_at=:closed WHERE id=:id'),
+                       {'evidence': '{}', 'closed': NOW, 'id': OTHER})
+    db.session.commit()
+    with pytest.raises(IntegrityError):
+        db.session.execute(text("UPDATE gait_session_revision SET state='collecting' WHERE id=:id"),
+                           {'id': OTHER})
+        db.session.commit()
+    db.session.rollback()
+
+
+def test_revision_identity_is_immutable_even_while_collecting(store):
+    db.session.add(GaitSessionRevision(**records(store)[GaitSessionRevision]))
+    db.session.commit()
+    with pytest.raises(IntegrityError):
+        db.session.execute(text('UPDATE gait_session_revision SET session_key=:key WHERE id=:id'),
+                           {'key': 'rewritten-key', 'id': OTHER})
         db.session.commit()
     db.session.rollback()
 
@@ -408,6 +487,12 @@ def test_mysql_dialect_ddl_and_migration_mirror():
     assert 'LONGTEXT' in str(CreateTable(AnalysisSnapshot.__table__).compile(dialect=mysql.dialect()))
     assert 'DATETIME(3)' in str(CreateTable(AnalysisSnapshot.__table__).compile(dialect=mysql.dialect()))
     assert 'BINARY NEW.canonical_payload' in migration
+    assert 'UNIQUE KEY uq_session_revision_patient (id, patient_id)' in migration
+    assert ('FOREIGN KEY (session_revision_id, patient_id) '
+            'REFERENCES gait_session_revision(id, patient_id)') in migration
+    assert 'trg_gait_session_revision_frozen' in migration
+    assert "OLD.state <> 'collecting'" in migration
+    assert 'BINARY NEW.closure_evidence_canonical' in migration
     for table in ('gait_session_revision', 'snapshot_build_attempt', 'analysis_snapshot',
                   'snapshot_publication_claim', 'integration_outbox'):
         assert f'trg_{table}_positive_insert' in migration

@@ -155,6 +155,7 @@ class GaitSessionRevision(db.Model):
     created_at = db.Column(_utc_time, nullable=False, default=datetime.datetime.utcnow)
     __table_args__ = (
         db.UniqueConstraint('patient_id', 'session_key', 'revision', name='uq_session_revision'),
+        db.UniqueConstraint('id', 'patient_id', name='uq_session_revision_patient'),
         db.CheckConstraint('revision >= 1 AND row_count >= 1', name='ck_revision_positive'),
         {'mysql_engine': 'InnoDB', 'mysql_charset': 'utf8mb4'},
     )
@@ -183,7 +184,7 @@ class AnalysisSnapshot(db.Model):
     __tablename__ = 'analysis_snapshot'
     id = db.Column(_identity(36), primary_key=True)
     patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False)
-    session_revision_id = db.Column(_identity(36), db.ForeignKey('gait_session_revision.id'), nullable=False)
+    session_revision_id = db.Column(_identity(36), nullable=False)
     raw_data_fingerprint = db.Column(_identity(64), nullable=False)
     identity_fingerprint = db.Column(_identity(64), nullable=False, unique=True)
     snapshot_schema_version = db.Column(_identity(32), nullable=False)
@@ -198,6 +199,9 @@ class AnalysisSnapshot(db.Model):
     published_at = db.Column(_utc_time, nullable=False)
     superseded_at = db.Column(_utc_time)
     __table_args__ = (
+        db.ForeignKeyConstraint(('session_revision_id', 'patient_id'),
+                                ('gait_session_revision.id', 'gait_session_revision.patient_id'),
+                                name='fk_snapshot_revision_patient'),
         db.UniqueConstraint('patient_id', 'session_revision_id', 'raw_data_fingerprint',
             'snapshot_schema_version', 'analyzer_set_version', 'threshold_profile_version',
             name='uq_snapshot_identity'),
@@ -287,6 +291,29 @@ def _install_trigger(model, name, operation, sqlite_body, mysql_body):
         event.listen(table, 'after_create', DDL(
             f'CREATE TRIGGER {name} BEFORE {operation} ON {table.name} '
             f'FOR EACH ROW {body}').execute_if(dialect=dialect))
+
+
+_REVISION_IDENTITY_FIELDS = ('id', 'patient_id', 'device_id', 'session_key', 'revision', 'created_at')
+_REVISION_EVIDENCE_FIELDS = (
+    'ordered_row_ids_canonical', 'first_row_id', 'last_row_id', 'row_count',
+    'last_accepted_row_id', 'event_start_at', 'event_end_at', 'ingest_start_at',
+    'ingest_end_at', 'closure_policy_version', 'closure_evidence_canonical', 'closed_at',
+)
+_sqlite_identity = ' OR '.join(
+    f'NEW.{field} IS NOT OLD.{field}' for field in _REVISION_IDENTITY_FIELDS)
+_sqlite_evidence = ' OR '.join(
+    f'NEW.{field} IS NOT OLD.{field}' for field in _REVISION_EVIDENCE_FIELDS)
+_mysql_identity = ' OR '.join(
+    f'NOT (BINARY NEW.{field} <=> BINARY OLD.{field})' for field in _REVISION_IDENTITY_FIELDS)
+_mysql_evidence = ' OR '.join(
+    f'NOT (BINARY NEW.{field} <=> BINARY OLD.{field})' for field in _REVISION_EVIDENCE_FIELDS)
+_install_trigger(GaitSessionRevision, 'trg_gait_session_revision_frozen', 'UPDATE',
+    "WHEN " + _sqlite_identity + " OR (OLD.state <> 'collecting' AND (" +
+    _sqlite_evidence + ")) OR (OLD.state <> 'collecting' AND NEW.state = 'collecting') " +
+    "BEGIN SELECT RAISE(ABORT, 'frozen session revision'); END",
+    "BEGIN IF " + _mysql_identity + " OR (OLD.state <> 'collecting' AND (" +
+    _mysql_evidence + ")) OR (OLD.state <> 'collecting' AND NEW.state = 'collecting') " +
+    "THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'frozen session revision'; END IF; END")
 
 
 for _model, _fields in _IMMUTABLE_FIELDS.items():
