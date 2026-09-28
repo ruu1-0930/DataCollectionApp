@@ -17,6 +17,7 @@ from services.gait_analysis import (
 )
 from services.gait_comparison import compare_session_summaries
 from services.pressure_analysis import summarize_pressure_rows
+from services.gait_session_revision import _session_id as _revision_session_id, parse_session_start
 from utils import Response, token_required
 
 
@@ -140,7 +141,7 @@ def _fetch_pressure_rows_for_bounds(patient_id, bounds):
 
 
 def _session_id(patient_id, start):
-    return f"P{patient_id}-{start:%Y%m%dT%H%M%S}{start.microsecond:06d}"
+    return _revision_session_id(patient_id, start)
 
 
 def _session_summary(session, patient_id, history):
@@ -406,14 +407,7 @@ def _previous_session_bounds(patient_id, before):
 
 
 def _parse_session_start(patient_id, session_id):
-    match = _SESSION_ID_PATTERN.fullmatch(session_id)
-    if match is None or match.group("patient_id") != str(patient_id):
-        return None
-    try:
-        start = datetime.strptime(match.group("timestamp"), "%Y%m%dT%H%M%S%f")
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return start if _session_id(patient_id, start) == session_id else None
+    return parse_session_start(patient_id, session_id)
 
 
 def _session_for_bounds(patient_id, bounds, *, include_sensors):
