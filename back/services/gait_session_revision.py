@@ -136,7 +136,8 @@ def _idle_seconds(observed_at: datetime, last_accepted_at: datetime) -> Decimal:
 class GaitSessionRevisionService:
     """Resolve a closed, single-device revision without changing the upload protocol."""
 
-    def __init__(self, *, policy_version=_SESSION_POLICY_VERSION, gap_seconds=_SESSION_GAP_SECONDS):
+    def __init__(self, *, policy_version=_SESSION_POLICY_VERSION, gap_seconds=_SESSION_GAP_SECONDS, session=None):
+        self.session = session if session is not None else db.session
         self.policy_version = policy_version
         self.gap_seconds = gap_seconds
         self._gap = timedelta(seconds=gap_seconds)
@@ -154,7 +155,7 @@ class GaitSessionRevisionService:
             rows=source_rows,
         )
         latest = (
-            GaitSessionRevision.query.filter_by(patient_id=patient_id, session_key=session_id)
+            self.session.query(GaitSessionRevision).filter_by(patient_id=patient_id, session_key=session_id)
             .order_by(GaitSessionRevision.revision.desc())
             .first()
         )
@@ -204,17 +205,17 @@ class GaitSessionRevisionService:
             closure_evidence_canonical=evidence_canonical,
             closed_at=now,
         )
-        db.session.add(revision)
-        db.session.flush()
+        self.session.add(revision)
+        self.session.flush()
         if latest is not None and latest.state == "closed_by_inactivity":
             latest.state = "superseded"
             latest.superseded_by_revision_id = revision.id
-            db.session.flush()
+            self.session.flush()
         return GaitSessionRevisionResult(revision, fingerprint, evidence)
 
     def _resolve_source_scope(self, patient_id, start):
         prior = (
-            db.session.query(DeviceRawData.collected_at).filter(
+            self.session.query(DeviceRawData.collected_at).filter(
                 DeviceRawData.patient_id == patient_id,
                 DeviceRawData.collected_at < start,
             )
@@ -225,7 +226,7 @@ class GaitSessionRevisionService:
             raise SessionResolutionError("session_not_found")
 
         anchor_rows = (
-            db.session.query(DeviceRawData.device_id)
+            self.session.query(DeviceRawData.device_id)
             .filter_by(patient_id=patient_id, collected_at=start)
             .order_by(DeviceRawData.id.asc())
             .all()
@@ -244,7 +245,7 @@ class GaitSessionRevisionService:
         for _ in range(_SESSION_BOUND_MAX_CHUNKS):
             upper = cursor + timedelta(minutes=_SESSION_BOUND_CHUNK_MINUTES)
             candidates = (
-                db.session.query(
+                self.session.query(
                     DeviceRawData.id, DeviceRawData.collected_at, DeviceRawData.device_id
                 )
                 .filter(
@@ -276,7 +277,7 @@ class GaitSessionRevisionService:
             raise SessionResolutionError("session_not_found")
 
         range_devices = (
-            db.session.query(DeviceRawData.device_id)
+            self.session.query(DeviceRawData.device_id)
             .filter(
                 DeviceRawData.patient_id == patient_id,
                 DeviceRawData.collected_at >= start,
@@ -288,7 +289,7 @@ class GaitSessionRevisionService:
         if {row[0] for row in range_devices} != {device_id}:
             raise SessionResolutionError("scope_mismatch")
         scoped_rows = (
-            DeviceRawData.query.filter(
+            self.session.query(DeviceRawData).filter(
                 DeviceRawData.patient_id == patient_id,
                 DeviceRawData.device_id == device_id,
                 DeviceRawData.collected_at >= start,
@@ -311,7 +312,7 @@ class GaitSessionRevisionService:
                 next_accepted_row_id=next_accepted_row_id,
             )
         latest_device_acceptance = (
-            db.session.query(DeviceRawData.uploaded_at)
+            self.session.query(DeviceRawData.uploaded_at)
             .filter(DeviceRawData.device_id == device_id)
             .order_by(DeviceRawData.uploaded_at.desc(), DeviceRawData.id.desc())
             .first()
@@ -330,7 +331,7 @@ class GaitSessionRevisionService:
 
     def _fingerprint_for_revision(self, revision):
         rows = (
-            DeviceRawData.query.filter(
+            self.session.query(DeviceRawData).filter(
                 DeviceRawData.patient_id == revision.patient_id,
                 DeviceRawData.device_id == revision.device_id,
                 DeviceRawData.id.in_(self._row_ids(revision)),

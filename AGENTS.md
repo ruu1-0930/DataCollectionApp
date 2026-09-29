@@ -45,6 +45,8 @@
 
 ### 临床步态数据工作台（跨仓只读链路，当前证据）
 
+- **Agent v2 Stage 1 / T04（事务 snapshot 服务，隔离实现）**：`AnalysisSnapshotService` 提供 ensure/full/projection/claim，入口均验证 clinician/patient ownership。`AnalysisSnapshotRepository` 独立 Session + SQLite `BEGIN IMMEDIATE` / MySQL InnoDB `READ COMMITTED`、patient `FOR UPDATE` 协调；running attempt 先提交，分析不持写事务，并发仅返回 `snapshot_building`，无重复 analyzer 执行。发布前新事务重查来源；六字段 full identity 与独立 `(snapshot_id, projection_schema_version)` 子键分离，目前 projection 仅支持真实 v1。payload/hash 冻结，发布和审计共事务；supersession/state version/audit/outbox 原子提交，失效覆盖旧 revision 的所有快照。ensure/read/projection/claim **访问时同步**检查晚到数据；不声称上传时主动失效。中断 running attempt 不自动接管，须确认原执行终止后由后续恢复方案处理。T04 不含新路由、生产迁移、MySQL 实库或 outbox consumer。宿主 Python 3.14.4 + 隔离 `.test-deps` 合并验证 **263 passed, 883 warnings in 14.56s**；自审补齐 replacement 正反例后仅复测 repository **13 passed, 43 warnings in 2.50s**。命令和边界见架构方案 T04 小节。
+
 - **T03 修复轮 1 验证**：本轮整项完成后仅运行受影响 `test_snapshot_pipeline.py`、`test_snapshot_models.py`、`test_gait_session_revision.py`，宿主 Python 3.14.4 + 隔离 `back/.test-deps`，结果 `221 passed, 700 warnings in 12.16s`。SQLite synthetic upload→revision→snapshot 证明四时间字段跨日 UTC、raw fingerprint 不变与重复 hash 稳定；无需重跑未改动全量。warnings 包含既有 utcnow/SQLite adapter/SVC/Query.get，新增端到端路径触发后两处 Query.get 提示。
 
 - **T03 审查修复轮 1（C1 / I1–I3）**：DTO 边界将上传链路遗留 naive 时钟明确解释为 UTC+08:00 后转 UTC；aware 时钟正常 normalize，不改 raw 存储或 T02 指纹。所有 build 入口（含注入 loader）在 hash/filter 前核对冻结有序 IDs、计数、事件/摄取上下界、last accepted row 和 patient/device scope，拒绝 missing/extra/duplicate/out-of-order。withheld 保留 metric/reason 与压力聚合证据，全部解释 flags 输出 unknown，pressure attention level 抑制为 null。内部及公开 DTO 均严格记录五节点状态与 reason；evidence index 为 required，失败/空均 unavailable；pressure/chart failed/empty 明确降级。节点执行成功与 data_quality.gate 分离。M1 缺失数值审计保持 T08 范围，本轮不扩展；未部署、push 或修改上传协议。
