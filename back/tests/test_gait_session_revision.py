@@ -9,6 +9,7 @@ from services.gait_session_revision import (
     GaitSessionRevisionService,
     SessionResolutionError,
     _session_id,
+    raw_rows_fingerprint,
 )
 
 
@@ -123,6 +124,34 @@ def test_order_and_duplicate_rows_change_the_fingerprint_and_supersede(revision_
     assert replacement.revision.revision == 2
     assert replacement.revision.ordered_row_ids_canonical == f"[{first.id},{second.id},{duplicate.id}]"
     assert replacement.raw_data_fingerprint != original.raw_data_fingerprint
+
+
+def test_raw_fingerprint_tags_nonfinite_values_before_snapshot_filtering():
+    base = {
+        "id": 1,
+        "foot": "L",
+        "collected_at": T0,
+        "uploaded_at": T0,
+        **{f"p{index}": 1.0 for index in range(1, 10)},
+        "ax": 1.0, "ay": 2.0, "az": 3.0, "gx": 4.0, "gy": 5.0, "gz": 6.0,
+        "step_length": 0.6, "walking_speed": 1.1,
+        "single_support_time": 0.4, "double_support_time": 0.2,
+    }
+    nan = dict(base, walking_speed=float("nan"))
+    positive_infinity = dict(base, walking_speed=float("inf"))
+
+    nan_hash = raw_rows_fingerprint(
+        patient_id=1, device_id=2, session_id="synthetic", rows=[nan]
+    )
+    infinity_hash = raw_rows_fingerprint(
+        patient_id=1, device_id=2, session_id="synthetic", rows=[positive_infinity]
+    )
+    changed_value_hash = raw_rows_fingerprint(
+        patient_id=1, device_id=2, session_id="synthetic", rows=[dict(base, p1=2.0)]
+    )
+
+    assert nan_hash != infinity_hash
+    assert changed_value_hash != nan_hash
 
 
 def test_invalid_or_cross_patient_session_id_queries_no_raw_rows(revision_scope):

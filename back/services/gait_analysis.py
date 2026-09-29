@@ -79,6 +79,19 @@ def segment_sessions(rows, gap_seconds=30):
     return [_build_session(index, group) for index, group in enumerate(groups)]
 
 
+def build_snapshot_frames(rows):
+    """Build the one frozen revision's paired frames without modifying source rows."""
+    sessions = segment_sessions(rows)
+    if len(sessions) != 1:
+        raise ValueError("frozen revision rows must resolve to one session")
+    return tuple(sessions[0]["frames"])
+
+
+def snapshot_frame_value(frame, field):
+    """Expose the existing finite per-frame aggregation for snapshot chart assembly."""
+    return _frame_value(frame, field)
+
+
 def _build_session(index, rows):
     rows_by_timestamp = {}
     timestamps = []

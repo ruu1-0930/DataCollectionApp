@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 import json
+import math
 import re
+from collections.abc import Mapping, Sequence
 from uuid import uuid4
 
 from config import db
@@ -63,15 +65,64 @@ def parse_session_start(patient_id: int, session_id: str):
     return start if _session_id(patient_id, start) == session_id else None
 
 
-def _decimal_from_float(value: float) -> Decimal:
-    """Keep every stored binary-float bit rather than applying DTO display rounding."""
-    return Decimal.from_float(value)
+def _raw_numeric_for_fingerprint(value) -> Decimal | dict[str, str]:
+    """Encode source numerics losslessly, including explicit non-finite markers.
+
+    The tags are fingerprint-only source evidence.  They are never valid DTO
+    numbers and are removed by the snapshot pipeline before analysis output.
+    """
+    if value is None:
+        return {"missing_numeric": "true"}
+    if isinstance(value, bool):
+        raise ValueError("boolean is not a raw numeric value")
+    if isinstance(value, float):
+        if math.isnan(value):
+            return {"invalid_numeric": "nan"}
+        if math.isinf(value):
+            return {"invalid_numeric": "positive_infinity" if value > 0 else "negative_infinity"}
+        return Decimal.from_float(value)
+    if isinstance(value, Decimal):
+        if value.is_nan():
+            return {"invalid_numeric": "nan"}
+        if value.is_infinite():
+            return {"invalid_numeric": "positive_infinity" if value > 0 else "negative_infinity"}
+        return value
+    if isinstance(value, int):
+        return Decimal(value)
+    raise ValueError("raw numeric value has unsupported type")
 
 
 def _source_timestamp(value: datetime) -> str:
     # Raw source timestamps are legacy naive server-ingestion columns.  Do not falsely
     # label them UTC or coerce them to the millisecond DTO representation here.
     return value.isoformat(timespec="microseconds")
+
+
+def _row_value(row, field):
+    return row[field] if isinstance(row, Mapping) else getattr(row, field)
+
+
+def raw_rows_fingerprint(*, patient_id: int, device_id: int, session_id: str,
+                         rows: Sequence[Mapping[str, object] | DeviceRawData]) -> str:
+    """Hash ordered pre-filter source rows with the T02 canonical representation."""
+    def fingerprint_row(row):
+        return {
+            "id": _row_value(row, "id"),
+            "foot": _row_value(row, "foot"),
+            "collected_at": _source_timestamp(_row_value(row, "collected_at")),
+            "uploaded_at": _source_timestamp(_row_value(row, "uploaded_at")),
+            "values": {
+                column: _raw_numeric_for_fingerprint(_row_value(row, column))
+                for column in _RAW_VALUE_COLUMNS
+            },
+        }
+
+    return sha256_hex(canonical_json_bytes({
+        "patient_id": patient_id,
+        "device_id": device_id,
+        "session_id": session_id,
+        "rows": [fingerprint_row(row) for row in rows],
+    }))
 
 
 def _idle_seconds(observed_at: datetime, last_accepted_at: datetime) -> Decimal:
@@ -96,12 +147,12 @@ class GaitSessionRevisionService:
             raise SessionResolutionError("invalid_session_id")
 
         source_rows, device_id, end, next_row = self._resolve_source_scope(patient_id, start)
-        fingerprint = sha256_hex(canonical_json_bytes({
-            "patient_id": patient_id,
-            "device_id": device_id,
-            "session_id": session_id,
-            "rows": [self._fingerprint_row(row) for row in source_rows],
-        }))
+        fingerprint = raw_rows_fingerprint(
+            patient_id=patient_id,
+            device_id=device_id,
+            session_id=session_id,
+            rows=source_rows,
+        )
         latest = (
             GaitSessionRevision.query.filter_by(patient_id=patient_id, session_key=session_id)
             .order_by(GaitSessionRevision.revision.desc())
@@ -277,19 +328,6 @@ class GaitSessionRevisionService:
             reason="device_quiet_period",
         )
 
-    @staticmethod
-    def _fingerprint_row(row):
-        return {
-            "id": row.id,
-            "foot": row.foot,
-            "collected_at": _source_timestamp(row.collected_at),
-            "uploaded_at": _source_timestamp(row.uploaded_at),
-            "values": {
-                column: _decimal_from_float(getattr(row, column))
-                for column in _RAW_VALUE_COLUMNS
-            },
-        }
-
     def _fingerprint_for_revision(self, revision):
         rows = (
             DeviceRawData.query.filter(
@@ -300,12 +338,12 @@ class GaitSessionRevisionService:
             .order_by(DeviceRawData.collected_at.asc(), DeviceRawData.id.asc())
             .all()
         )
-        return sha256_hex(canonical_json_bytes({
-            "patient_id": revision.patient_id,
-            "device_id": revision.device_id,
-            "session_id": revision.session_key,
-            "rows": [self._fingerprint_row(row) for row in rows],
-        }))
+        return raw_rows_fingerprint(
+            patient_id=revision.patient_id,
+            device_id=revision.device_id,
+            session_id=revision.session_key,
+            rows=rows,
+        )
 
     @staticmethod
     def _row_ids(revision):

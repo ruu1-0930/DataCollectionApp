@@ -674,6 +674,7 @@
             "low",
             "normal",
             "high",
+            "attention",
             "unknown"
           ]
         },
@@ -1147,15 +1148,6 @@
           "type": "integer",
           "minimum": 1
         },
-        "ordered_row_ids": {
-          "type": "array",
-          "items": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "minItems": 1,
-          "maxItems": 1000000
-        },
         "row_count": {
           "type": "integer",
           "minimum": 1
@@ -1177,7 +1169,6 @@
         "end_at",
         "first_row_id",
         "last_row_id",
-        "ordered_row_ids",
         "row_count",
         "last_accepted_row_id",
         "raw_data_fingerprint",
@@ -1287,6 +1278,52 @@
         "pressure_right_adc_decimal",
         "imu_magnitude_raw_unscaled_decimal"
       ]
+    },
+    "SnapshotBuildFullV1": {
+      "description": "Internal T03 build payload only. T04 adds publication identity/state metadata before validating AnalysisSnapshotV1.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "patient_id": {"type": "integer", "minimum": 1},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "provenance": {"$ref": "#/$defs/ProvenanceV1"},
+        "data_quality": {"$ref": "#/$defs/QualityV1"},
+        "exclusions": {"type": "array", "items": {"$ref": "#/$defs/ExclusionV1"}, "minItems": 0, "maxItems": 128},
+        "flags": {"type": "array", "items": {"$ref": "#/$defs/FlagV1"}, "minItems": 0, "maxItems": 128},
+        "metrics": {"$ref": "#/$defs/Metrics8"},
+        "pressure_summary": {"anyOf": [{"$ref": "#/$defs/PressureAggregateV1"}, {"type": "null"}]},
+        "evidence_index": {"type": "array", "items": {"$ref": "#/$defs/EvidencePointerV1"}, "minItems": 0, "maxItems": 128},
+        "analyzer_statuses": {"$ref": "#/$defs/AnalyzerStatusesV1"},
+        "limitations": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "minItems": 1, "maxItems": 32},
+        "schema_version": {"type": "string", "minLength": 1, "maxLength": 32},
+        "session_revision_id": {"$ref": "#/$defs/UUID"},
+        "content_hash": {"$ref": "#/$defs/Hash"},
+        "session": {"$ref": "#/$defs/SessionBoundsV1"},
+        "chart_series": {"type": "array", "items": {"$ref": "#/$defs/ChartPointV1"}, "minItems": 0, "maxItems": 500}
+      },
+      "required": ["patient_id", "session_id", "provenance", "data_quality", "exclusions", "flags", "metrics", "pressure_summary", "evidence_index", "analyzer_statuses", "limitations", "schema_version", "session_revision_id", "content_hash", "session", "chart_series"]
+    },
+    "SnapshotBuildAgentProjectionV1": {
+      "description": "Internal T03 Agent-safe build payload only. T04 adds snapshot ID/state metadata before validating AgentSnapshotProjectionV1.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "patient_id": {"type": "integer", "minimum": 1},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "provenance": {"$ref": "#/$defs/ProvenanceV1"},
+        "data_quality": {"$ref": "#/$defs/QualityV1"},
+        "exclusions": {"type": "array", "items": {"$ref": "#/$defs/ExclusionV1"}, "minItems": 0, "maxItems": 128},
+        "flags": {"type": "array", "items": {"$ref": "#/$defs/FlagV1"}, "minItems": 0, "maxItems": 128},
+        "metrics": {"$ref": "#/$defs/Metrics8"},
+        "pressure_summary": {"anyOf": [{"$ref": "#/$defs/PressureAggregateV1"}, {"type": "null"}]},
+        "evidence_index": {"type": "array", "items": {"$ref": "#/$defs/EvidencePointerV1"}, "minItems": 0, "maxItems": 128},
+        "analyzer_statuses": {"$ref": "#/$defs/AnalyzerStatusesV1"},
+        "limitations": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "minItems": 1, "maxItems": 32},
+        "projection_schema_version": {"type": "string", "minLength": 1, "maxLength": 32},
+        "snapshot_content_hash": {"$ref": "#/$defs/Hash"},
+        "projection_content_hash": {"$ref": "#/$defs/Hash"}
+      },
+      "required": ["patient_id", "session_id", "provenance", "data_quality", "exclusions", "flags", "metrics", "pressure_summary", "evidence_index", "analyzer_statuses", "limitations", "projection_schema_version", "snapshot_content_hash", "projection_content_hash"]
     },
     "AnalysisSnapshotV1": {
       "type": "object",

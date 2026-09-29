@@ -233,3 +233,8 @@ def summarize_pressure_rows(rows):
         [row for row in rows if row.get("foot") == "L"],
         [row for row in rows if row.get("foot") == "R"],
     )
+
+
+def summarize_snapshot_pressure_rows(rows):
+    """Name the full frozen-row entrypoint used by snapshot assembly."""
+    return summarize_pressure_rows(rows)

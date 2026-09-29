@@ -362,7 +362,7 @@ def full_snapshot():
     result.update(schema_version='1', content_hash=HASH, session_revision_id=UUID,
         state='published', created_at='2026-09-27T00:00:00.000Z',
         session=dict(start_at='2026-09-27T00:00:00.000Z', end_at='2026-09-27T00:00:00.000Z',
-            first_row_id=1, last_row_id=1, ordered_row_ids=[1], row_count=1,
+            first_row_id=1, last_row_id=1, row_count=1,
             last_accepted_row_id=1, raw_data_fingerprint=HASH,
             closure=dict(state='closed_by_inactivity', closed_at='2026-09-27T00:00:30.000Z',
                 policy_version='gap-v1', gap_ms=30000, reason='device_quiet_period',
