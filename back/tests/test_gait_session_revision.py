@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import event
@@ -69,6 +70,50 @@ def _resolve(scope, *, now, session_start=T0):
         session_id=_session_id(scope["patient"].id, session_start),
         now=now,
     )
+
+
+def test_uploaded_utc_plus_eight_clock_freezes_then_renders_four_utc_snapshot_times(
+    revision_scope, client, monkeypatch,
+):
+    from api import device as device_api
+    from auth import issue_token
+    from services.snapshot_pipeline import SnapshotPipeline
+
+    local_start = datetime(2026, 9, 29, 0, 30, 0, 123456)
+    class UploadClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz == timezone(timedelta(hours=8))
+            return local_start.replace(tzinfo=tz)
+
+    monkeypatch.setattr(device_api, "datetime", SimpleNamespace(
+        datetime=UploadClock, timezone=timezone, timedelta=timedelta,
+    ))
+    monkeypatch.setattr(device_api, "analyze", lambda *_args: (1, 1, 1, 1, 1))
+    body = {field: 1.0 for field in (*device_api._LEFT_SRC.values(), *device_api._RIGHT_SRC.values())}
+    body["patient_id"] = revision_scope["patient"].id
+    token = issue_token(revision_scope["clinician"].id)
+    response = client.post(
+        "/devices/device-one/raw_data", json=body,
+        headers={"Authorization": "Bearer " + token},
+    )
+    assert response.status_code == 200
+    source = DeviceRawData.query.order_by(DeviceRawData.collected_at, DeviceRawData.id).all()
+    assert all(row.collected_at == row.uploaded_at == local_start for row in source)
+    result = _resolve(revision_scope, now=local_start + timedelta(seconds=30), session_start=local_start)
+    assert result.revision.event_start_at == result.revision.event_end_at == local_start
+    assert result.revision.closed_at == local_start + timedelta(seconds=30)
+
+    product = SnapshotPipeline().build_from_revision(result.revision)
+    session = product.full_snapshot["session"]
+    assert session["start_at"] == session["end_at"] == "2026-09-28T16:30:00.123Z"
+    assert session["closure"]["closed_at"] == "2026-09-28T16:30:30.123Z"
+    assert session["closure"]["evidence_at"] == "2026-09-28T16:30:30.123Z"
+    assert session["raw_data_fingerprint"] == result.raw_data_fingerprint
+    repeated = SnapshotPipeline().build_from_revision(result.revision)
+    assert repeated.full_snapshot == product.full_snapshot
+    assert repeated.agent_projection == product.agent_projection
+    assert all(row.collected_at == row.uploaded_at == local_start for row in source)
 
 
 def test_latest_session_closes_only_after_more_than_thirty_seconds_of_device_quiet(revision_scope):

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from flask import Flask
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, ValidationError
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.schema import CreateTable
@@ -351,7 +351,10 @@ def projection():
                           reason_codes=[]), exclusions=[], flags=[],
         metrics=[metric(*args) for args in METRICS], pressure_summary=None,
         evidence_index=[dict(evidence_id='metric.walking_speed_mps', field_path='/metrics/0')],
-        analyzer_statuses=dict(spatiotemporal='success', data_quality='success', pressure='empty'),
+        analyzer_statuses=dict(spatiotemporal='success', data_quality='success', pressure='empty',
+                               chart='empty', evidence_index='success'),
+        analyzer_status_reasons=dict(spatiotemporal=None, data_quality=None,
+            pressure='no_pressure_samples', chart='no_chart_points', evidence_index=None),
         limitations=['synthetic_only', 'pressure_adc_uncalibrated'])
 
 
@@ -395,6 +398,43 @@ def test_schema_is_valid_and_every_object_is_closed():
             for child in value:
                 walk(child)
     walk(schema())
+
+
+@pytest.mark.parametrize('name,factory', [
+    ('AnalysisSnapshotV1', full_snapshot),
+    ('AgentSnapshotProjectionV1', projection),
+    ('SnapshotBuildFullV1', full_snapshot),
+    ('SnapshotBuildAgentProjectionV1', projection),
+])
+@pytest.mark.parametrize('change', ['missing_chart', 'missing_evidence', 'invalid_state',
+    'extra_node', 'missing_reasons', 'missing_chart_reason', 'extra_reason',
+    'empty_evidence', 'failed_evidence'])
+def test_all_snapshot_schemas_require_strict_node_statuses_and_evidence(name, factory, change):
+    payload = factory()
+    if name.startswith('SnapshotBuild'):
+        for field in ('snapshot_id', 'snapshot_state_version', 'state', 'created_at'):
+            payload.pop(field, None)
+    validator(name).validate(payload)
+    if change == 'missing_chart':
+        payload['analyzer_statuses'].pop('chart')
+    elif change == 'missing_evidence':
+        payload['analyzer_statuses'].pop('evidence_index')
+    elif change == 'invalid_state':
+        payload['analyzer_statuses']['chart'] = 'unknown'
+    elif change == 'extra_node':
+        payload['analyzer_statuses']['unknown_node'] = 'success'
+    elif change == 'missing_reasons':
+        payload.pop('analyzer_status_reasons')
+    elif change == 'missing_chart_reason':
+        payload['analyzer_status_reasons'].pop('chart')
+    elif change == 'extra_reason':
+        payload['analyzer_status_reasons']['unknown_node'] = None
+    elif change == 'empty_evidence':
+        payload['evidence_index'] = []
+    elif change == 'failed_evidence':
+        payload['analyzer_statuses']['evidence_index'] = 'failed'
+    with pytest.raises(ValidationError):
+        validator(name).validate(payload)
 
 
 @pytest.mark.parametrize('change', [

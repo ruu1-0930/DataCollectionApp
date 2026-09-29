@@ -4,7 +4,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 import json
 import math
@@ -42,6 +42,7 @@ _SOURCE_COLUMNS = (
     "id", "patient_id", "device_id", "foot", "collected_at", "uploaded_at", *_NUMERIC_COLUMNS
 )
 _ANALYZER_ORDER = ("metrics", "quality", "pressure", "chart", "evidence_index")
+_LEGACY_SOURCE_TIMEZONE = timezone(timedelta(hours=8))
 
 
 def _decimal6(value: object) -> str | None:
@@ -60,10 +61,10 @@ def _decimal6(value: object) -> str | None:
 
 
 def _timestamp(value: datetime) -> str:
+    """Render legacy UTC+08 naive source values as strict UTC DTO timestamps."""
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    else:
-        value = value.astimezone(timezone.utc)
+        value = value.replace(tzinfo=_LEGACY_SOURCE_TIMEZONE)
+    value = value.astimezone(timezone.utc)
     return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
@@ -128,15 +129,18 @@ def _quality_dto(quality: Mapping[str, object]) -> dict[str, object]:
     }
 
 
-def _flag_dto(metrics: Mapping[str, Mapping[str, object]]) -> list[dict[str, object]]:
+def _flag_dto(metrics: Mapping[str, Mapping[str, object]], *, withheld: bool) -> list[dict[str, object]]:
     return [
         {
             "evidence_id": "flag." + flag["metric_key"],
             "metric_id": flag["metric_key"],
-            "status": flag["status"],
+            "status": "unknown" if withheld else flag["status"],
             "evidence_level": flag["evidence_level"],
-            "message": flag["message"],
-            "reason_codes": [] if flag["status"] != "unknown" else ["value_unavailable"],
+            "message": "数据质量受限，解释已抑制" if withheld else flag["message"],
+            "reason_codes": (
+                ["data_quality_withheld"]
+                if withheld else [] if flag["status"] != "unknown" else ["value_unavailable"]
+            ),
         }
         for flag in build_session_flags(metrics)
     ]
@@ -214,6 +218,7 @@ class AnalyzerFunctions:
     quality: Callable[[Sequence[Mapping[str, object]], Sequence[Mapping[str, object]]], Mapping[str, object]]
     pressure: Callable[[Sequence[Mapping[str, object]], Sequence[Mapping[str, object]]], Mapping[str, object]]
     chart: Callable[[Sequence[Mapping[str, object]], Sequence[Mapping[str, object]]], list[dict[str, object]]]
+    evidence_index: Callable[..., list[dict[str, str]]] | None = None
 
     @classmethod
     def defaults(cls):
@@ -222,6 +227,7 @@ class AnalyzerFunctions:
             quality=lambda _rows, frames: session_data_quality(frames),
             pressure=lambda rows, _frames: summarize_snapshot_pressure_rows(rows),
             chart=lambda _rows, frames: _chart_dto(frames),
+            evidence_index=_evidence_index,
         )
 
 
@@ -235,13 +241,14 @@ class SnapshotPipeline:
 
     def build_from_revision(self, revision) -> SnapshotBuildProduct:
         """Perform the one revision-bounded fetch, filter it once, then build."""
+        self._require_closed_revision(revision)
         source_rows = self._row_loader(revision)
         return self.build(revision=revision, filtered_rows=source_rows)
 
     def build(self, *, revision, filtered_rows: Sequence[Mapping[str, object]]) -> SnapshotBuildProduct:
         """Build from the caller's bounded rows; this method never reads the database."""
         self._require_closed_revision(revision)
-        raw_rows = self._ordered_source_rows(revision, filtered_rows)
+        raw_rows = self._validated_source_rows(revision, filtered_rows)
         raw_fingerprint = raw_rows_fingerprint(
             patient_id=revision.patient_id,
             device_id=revision.device_id,
@@ -261,23 +268,41 @@ class SnapshotPipeline:
 
         metrics = _metric_dto(results["metrics"]["metrics"])
         quality = _quality_dto(results["quality"])
-        flags = _flag_dto(results["metrics"]["metrics"])
-        pressure = _pressure_dto(results["pressure"]) if statuses["pressure"].state != "failed" else None
+        flags = _flag_dto(
+            results["metrics"]["metrics"], withheld=quality["gate"] == "withheld"
+        )
+        pressure = _pressure_dto(results["pressure"]) if results.get("pressure") is not None else None
+        if pressure is not None and quality["gate"] == "withheld":
+            pressure["attention"] = {
+                "level": None, "quality": "insufficient",
+                "reason_codes": ["data_quality_withheld"],
+            }
         chart = results["chart"] if statuses["chart"].state != "failed" else []
         evidence, evidence_status = self._run_evidence_index(metrics, flags, pressure, quality)
         statuses["evidence_index"] = evidence_status
+        if evidence_status.state != "success":
+            raise SnapshotUnavailableError(evidence_status.reason_code)
         limitations = ["pressure_adc_uncalibrated"]
         if quality["gate"] == "withheld":
             limitations.append("data_quality_withheld")
-        if statuses["pressure"].state == "failed":
+        if statuses["pressure"].state in {"failed", "empty"}:
             limitations.append("pressure_unavailable")
-        if statuses["chart"].state == "failed":
+        if statuses["chart"].state in {"failed", "empty"}:
             limitations.append("chart_unavailable")
 
         status_mapping = {
             "spatiotemporal": statuses["metrics"].state,
             "data_quality": statuses["quality"].state,
             "pressure": statuses["pressure"].state,
+            "chart": statuses["chart"].state,
+            "evidence_index": statuses["evidence_index"].state,
+        }
+        status_reasons = {
+            "spatiotemporal": statuses["metrics"].reason_code,
+            "data_quality": statuses["quality"].reason_code,
+            "pressure": statuses["pressure"].reason_code,
+            "chart": statuses["chart"].reason_code,
+            "evidence_index": statuses["evidence_index"].reason_code,
         }
         session = self._session_dto(revision, raw_fingerprint)
         full = {
@@ -297,6 +322,7 @@ class SnapshotPipeline:
             "pressure_summary": pressure,
             "evidence_index": evidence,
             "analyzer_statuses": status_mapping,
+            "analyzer_status_reasons": status_reasons,
             "limitations": limitations,
             "schema_version": "1",
             "session_revision_id": revision.id,
@@ -308,7 +334,8 @@ class SnapshotPipeline:
             key: full[key]
             for key in (
                 "patient_id", "session_id", "provenance", "data_quality", "exclusions", "flags",
-                "metrics", "pressure_summary", "evidence_index", "analyzer_statuses", "limitations",
+                "metrics", "pressure_summary", "evidence_index", "analyzer_statuses",
+                "analyzer_status_reasons", "limitations",
             )
         }
         projection["projection_schema_version"] = "1"
@@ -333,7 +360,7 @@ class SnapshotPipeline:
             raise SnapshotUnavailableError("revision_not_closed")
 
     @staticmethod
-    def _ordered_source_rows(revision, source_rows):
+    def _validated_source_rows(revision, source_rows):
         normalized = [_as_mapping(row) for row in source_rows]
         for row in normalized:
             missing = [column for column in _SOURCE_COLUMNS if column not in row]
@@ -341,7 +368,34 @@ class SnapshotPipeline:
                 raise SnapshotUnavailableError("source_row_missing_fields")
             if row["patient_id"] != revision.patient_id or row["device_id"] != revision.device_id:
                 raise SnapshotUnavailableError("revision_scope_mismatch")
-        return tuple(sorted(normalized, key=lambda row: (row["collected_at"], row["id"])))
+        try:
+            expected_ids = json.loads(revision.ordered_row_ids_canonical)
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise SnapshotUnavailableError("revision_manifest_invalid") from error
+        actual_ids = [row["id"] for row in normalized]
+        if (
+            not isinstance(expected_ids, list)
+            or any(type(row_id) is not int or row_id < 1 for row_id in expected_ids)
+            or any(type(row_id) is not int or row_id < 1 for row_id in actual_ids)
+            or len(expected_ids) != revision.row_count
+            or not expected_ids
+            or expected_ids[0] != revision.first_row_id
+            or expected_ids[-1] != revision.last_row_id
+            or len(set(expected_ids)) != len(expected_ids)
+            or actual_ids != expected_ids
+        ):
+            raise SnapshotUnavailableError("revision_row_manifest_mismatch")
+        if (
+            normalized[0]["collected_at"] != revision.event_start_at
+            or normalized[-1]["collected_at"] != revision.event_end_at
+            or normalized != sorted(normalized, key=lambda row: (row["collected_at"], row["id"]))
+            or min(row["uploaded_at"] for row in normalized) != revision.ingest_start_at
+            or max(row["uploaded_at"] for row in normalized) != revision.ingest_end_at
+            or max(normalized, key=lambda row: (row["uploaded_at"], row["id"]))["id"]
+            != revision.last_accepted_row_id
+        ):
+            raise SnapshotUnavailableError("revision_bounds_mismatch")
+        return tuple(normalized)
 
     @staticmethod
     def _filter_rows(revision, raw_rows):
@@ -376,22 +430,38 @@ class SnapshotPipeline:
             for name in ("metrics", "quality", "pressure", "chart"):
                 try:
                     results[name] = futures[name].result()
-                    state = "empty" if name == "chart" and not results[name] else "success"
-                    statuses[name] = AnalyzerStatus(name, state, name in {"metrics", "quality"})
+                    empty = name == "chart" and not results[name]
+                    if name == "pressure":
+                        empty = results[name] is None or not any(
+                            sensor["valid_samples"]
+                            for side in ("left", "right")
+                            for sensor in results[name][side]["sensors"].values()
+                        )
+                    statuses[name] = AnalyzerStatus(
+                        name,
+                        "empty" if empty else "success",
+                        name in {"metrics", "quality"},
+                        {"chart": "no_chart_points", "pressure": "no_pressure_samples"}[name]
+                        if empty else None,
+                    )
                 except Exception:
+                    results.pop(name, None)
                     statuses[name] = AnalyzerStatus(
                         name, "failed", name in {"metrics", "quality"}, name + "_failed"
                     )
         return results, statuses
 
-    @staticmethod
-    def _run_evidence_index(metrics, flags, pressure, quality):
+    def _run_evidence_index(self, metrics, flags, pressure, quality):
         try:
-            return _evidence_index(metrics, flags, pressure, quality), AnalyzerStatus(
-                "evidence_index", "success", False
+            builder = self._analyzers.evidence_index or _evidence_index
+            evidence = builder(metrics, flags, pressure, quality)
+            if not evidence:
+                return [], AnalyzerStatus("evidence_index", "empty", True, "evidence_index_empty")
+            return evidence, AnalyzerStatus(
+                "evidence_index", "success", True
             )
         except Exception:
-            return [], AnalyzerStatus("evidence_index", "failed", False, "evidence_index_failed")
+            return [], AnalyzerStatus("evidence_index", "failed", True, "evidence_index_failed")
 
     @staticmethod
     def _session_dto(revision, raw_fingerprint):

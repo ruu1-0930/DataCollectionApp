@@ -733,6 +733,7 @@
       ]
     },
     "AnalyzerStatusesV1": {
+      "description": "Node execution/evidence availability, independent of data_quality.gate; successful quality analysis can yield a withheld gate. Evidence indexing is required for a build product.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -765,13 +766,35 @@
             "failed",
             "withheld"
           ]
+        },
+        "chart": {
+          "type": "string",
+          "enum": ["success", "partial", "empty", "failed", "withheld"]
+        },
+        "evidence_index": {
+          "const": "success"
         }
       },
       "required": [
         "spatiotemporal",
         "data_quality",
-        "pressure"
+        "pressure",
+        "chart",
+        "evidence_index"
       ]
+    },
+    "AnalyzerStatusReasonsV1": {
+      "description": "Safe node-specific reason codes; null for successful nodes without a degradation reason.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spatiotemporal": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+        "data_quality": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+        "pressure": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+        "chart": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+        "evidence_index": {"type": "null"}
+      },
+      "required": ["spatiotemporal", "data_quality", "pressure", "chart", "evidence_index"]
     },
     "PressureSensorV1": {
       "type": "object",
@@ -1292,8 +1315,9 @@
         "flags": {"type": "array", "items": {"$ref": "#/$defs/FlagV1"}, "minItems": 0, "maxItems": 128},
         "metrics": {"$ref": "#/$defs/Metrics8"},
         "pressure_summary": {"anyOf": [{"$ref": "#/$defs/PressureAggregateV1"}, {"type": "null"}]},
-        "evidence_index": {"type": "array", "items": {"$ref": "#/$defs/EvidencePointerV1"}, "minItems": 0, "maxItems": 128},
+        "evidence_index": {"type": "array", "items": {"$ref": "#/$defs/EvidencePointerV1"}, "minItems": 1, "maxItems": 128},
         "analyzer_statuses": {"$ref": "#/$defs/AnalyzerStatusesV1"},
+        "analyzer_status_reasons": {"$ref": "#/$defs/AnalyzerStatusReasonsV1"},
         "limitations": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "minItems": 1, "maxItems": 32},
         "schema_version": {"type": "string", "minLength": 1, "maxLength": 32},
         "session_revision_id": {"$ref": "#/$defs/UUID"},
@@ -1301,7 +1325,7 @@
         "session": {"$ref": "#/$defs/SessionBoundsV1"},
         "chart_series": {"type": "array", "items": {"$ref": "#/$defs/ChartPointV1"}, "minItems": 0, "maxItems": 500}
       },
-      "required": ["patient_id", "session_id", "provenance", "data_quality", "exclusions", "flags", "metrics", "pressure_summary", "evidence_index", "analyzer_statuses", "limitations", "schema_version", "session_revision_id", "content_hash", "session", "chart_series"]
+      "required": ["patient_id", "session_id", "provenance", "data_quality", "exclusions", "flags", "metrics", "pressure_summary", "evidence_index", "analyzer_statuses", "analyzer_status_reasons", "limitations", "schema_version", "session_revision_id", "content_hash", "session", "chart_series"]
     },
     "SnapshotBuildAgentProjectionV1": {
       "description": "Internal T03 Agent-safe build payload only. T04 adds snapshot ID/state metadata before validating AgentSnapshotProjectionV1.",
@@ -1316,14 +1340,15 @@
         "flags": {"type": "array", "items": {"$ref": "#/$defs/FlagV1"}, "minItems": 0, "maxItems": 128},
         "metrics": {"$ref": "#/$defs/Metrics8"},
         "pressure_summary": {"anyOf": [{"$ref": "#/$defs/PressureAggregateV1"}, {"type": "null"}]},
-        "evidence_index": {"type": "array", "items": {"$ref": "#/$defs/EvidencePointerV1"}, "minItems": 0, "maxItems": 128},
+        "evidence_index": {"type": "array", "items": {"$ref": "#/$defs/EvidencePointerV1"}, "minItems": 1, "maxItems": 128},
         "analyzer_statuses": {"$ref": "#/$defs/AnalyzerStatusesV1"},
+        "analyzer_status_reasons": {"$ref": "#/$defs/AnalyzerStatusReasonsV1"},
         "limitations": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "minItems": 1, "maxItems": 32},
         "projection_schema_version": {"type": "string", "minLength": 1, "maxLength": 32},
         "snapshot_content_hash": {"$ref": "#/$defs/Hash"},
         "projection_content_hash": {"$ref": "#/$defs/Hash"}
       },
-      "required": ["patient_id", "session_id", "provenance", "data_quality", "exclusions", "flags", "metrics", "pressure_summary", "evidence_index", "analyzer_statuses", "limitations", "projection_schema_version", "snapshot_content_hash", "projection_content_hash"]
+      "required": ["patient_id", "session_id", "provenance", "data_quality", "exclusions", "flags", "metrics", "pressure_summary", "evidence_index", "analyzer_statuses", "analyzer_status_reasons", "limitations", "projection_schema_version", "snapshot_content_hash", "projection_content_hash"]
     },
     "AnalysisSnapshotV1": {
       "type": "object",
@@ -1382,11 +1407,14 @@
           "items": {
             "$ref": "#/$defs/EvidencePointerV1"
           },
-          "minItems": 0,
+          "minItems": 1,
           "maxItems": 128
         },
         "analyzer_statuses": {
           "$ref": "#/$defs/AnalyzerStatusesV1"
+        },
+        "analyzer_status_reasons": {
+          "$ref": "#/$defs/AnalyzerStatusReasonsV1"
         },
         "limitations": {
           "type": "array",
@@ -1450,6 +1478,7 @@
         "pressure_summary",
         "evidence_index",
         "analyzer_statuses",
+        "analyzer_status_reasons",
         "limitations",
         "schema_version",
         "snapshot_id",
@@ -1518,11 +1547,14 @@
           "items": {
             "$ref": "#/$defs/EvidencePointerV1"
           },
-          "minItems": 0,
+          "minItems": 1,
           "maxItems": 128
         },
         "analyzer_statuses": {
           "$ref": "#/$defs/AnalyzerStatusesV1"
+        },
+        "analyzer_status_reasons": {
+          "$ref": "#/$defs/AnalyzerStatusReasonsV1"
         },
         "limitations": {
           "type": "array",
@@ -1564,6 +1596,7 @@
         "pressure_summary",
         "evidence_index",
         "analyzer_statuses",
+        "analyzer_status_reasons",
         "limitations",
         "projection_schema_version",
         "projection_content_hash",
