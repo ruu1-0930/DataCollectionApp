@@ -53,8 +53,12 @@ def write_audit(session, *, actor_id, patient_id, trace_id, action, result, now,
     previous = (session.query(ClinicalAuditEvent).filter_by(patient_id=patient_id)
                 .order_by(ClinicalAuditEvent.created_at.desc()).first())
     created = utc_naive(now)
+    # DATETIME(3) and canonical RFC3339 both persist milliseconds. The caller's
+    # patient lock makes a whole-millisecond advance a durable chain total order.
+    created = created.replace(microsecond=created.microsecond // 1000 * 1000)
     if previous is not None and created <= previous.created_at:
-        created = previous.created_at + timedelta(microseconds=1)
+        created = previous.created_at.replace(microsecond=previous.created_at.microsecond // 1000 * 1000)
+        created += timedelta(milliseconds=1)
     event_id = str(uuid4())
     body = dict(event_id=event_id, trace_id=str(trace_id), actor_id=actor_id,
                 patient_id=patient_id, session_revision_id=session_revision_id,

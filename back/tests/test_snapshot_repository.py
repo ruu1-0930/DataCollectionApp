@@ -89,6 +89,57 @@ def test_audit_hash_chain_and_whitelist(scope):
                         details={"patient_name": "never persist"})
 
 
+@pytest.mark.parametrize("storage_precision", ["round", "truncate"])
+@pytest.mark.parametrize("clock_direction", ["same", "backward"])
+def test_audit_chain_total_order_survives_datetime3_session_reloads(
+    scope, storage_precision, clock_direction,
+):
+    """Database precision must not collapse adjacent committed chain positions."""
+    from datetime import datetime, timedelta
+    from services.clinical_audit import write_audit
+
+    svc = service()
+    clock = UTC_NOW.replace(microsecond=123789)
+    hashes = []
+
+    def datetime3_storage(_conn, _cursor, statement, parameters, context, _many):
+        if statement.startswith("INSERT INTO clinical_audit_event"):
+            position = context.compiled.positiontup.index("created_at")
+            stored = datetime.fromisoformat(parameters[position])
+            if storage_precision == "round":
+                stored += timedelta(microseconds=500)
+            stored = stored.replace(microsecond=stored.microsecond // 1000 * 1000)
+            parameters = list(parameters)
+            parameters[position] = stored.isoformat(sep=" ", timespec="microseconds")
+            parameters = tuple(parameters)
+        return statement, parameters
+
+    event.listen(db.engine, "before_cursor_execute", datetime3_storage, retval=True)
+    try:
+        for index in range(5):
+            now = clock if clock_direction == "same" else clock - timedelta(seconds=index)
+            with svc.repository.transaction(actor_id=scope["actor_id"], patient_id=scope["patient_id"]) as repo:
+                row = write_audit(
+                    repo.session, actor_id=scope["actor_id"], patient_id=scope["patient_id"],
+                    trace_id=str(uuid4()), action="snapshot.read", result="ok", now=now,
+                )
+                event_id = row.id
+            # Reload from storage in another Session, not the writer's identity map.
+            with svc.repository.transaction(actor_id=scope["actor_id"], patient_id=scope["patient_id"]) as repo:
+                stored = repo.session.get(ClinicalAuditEvent, event_id)
+                body = json.loads(stored.canonical_payload)
+                assert stored.previous_event_hash == (hashes[-1] if hashes else None)
+                assert body["previous_event_hash"] == stored.previous_event_hash
+                assert stored.created_at == datetime(2026, 9, 28, 16, 31, 0, 123000) + timedelta(milliseconds=index)
+                assert datetime.fromisoformat(body["created_at"].replace("Z", "+00:00")).replace(tzinfo=None) == stored.created_at
+                hashes.append(stored.event_hash)
+                tail = (repo.session.query(ClinicalAuditEvent).filter_by(patient_id=scope["patient_id"])
+                        .order_by(ClinicalAuditEvent.created_at.desc()).first())
+                assert tail.id == event_id
+    finally:
+        event.remove(db.engine, "before_cursor_execute", datetime3_storage)
+
+
 def test_replacement_reference_is_same_patient_same_session_published(scope):
     from services.snapshot_repository import SnapshotVersions
     version = SnapshotVersions(analyzer_set_version="replacement-producer")
