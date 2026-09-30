@@ -7,6 +7,7 @@ from uuid import UUID
 
 from flask import Blueprint, current_app, g, jsonify, request
 from jwt import InvalidTokenError
+from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
 from auth import decode_token
 from models.models import Clinician
@@ -19,6 +20,11 @@ snapshot_bp = Blueprint("snapshot", __name__)
 
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _HASH = re.compile(r"[0-9a-f]{64}")
+_MAX_BODY_BYTES = 2048
+_SNAPSHOT_PATHS = (
+    re.compile(r"/patients/[1-9][0-9]*/gait/sessions/[^/]+/snapshots:ensure"),
+    re.compile(r"/patients/[1-9][0-9]*/gait/snapshots/[^/]+(?:/status|/agent-projection|/publication-claims)?"),
+)
 _STATUS = {
     "invalid_request": 400, "unauthorized": 401, "forbidden": 403,
     "patient_not_found": 404, "session_not_found": 404, "snapshot_not_found": 404,
@@ -78,6 +84,15 @@ def _route(fn):
         except Exception:
             return _error("publication_failed")
     return wrapped
+
+
+@snapshot_bp.app_errorhandler(405)
+def _snapshot_method_error(exc):
+    # Flask resolves methods before a blueprint is selected. Limit the global
+    # handler to exact new snapshot route shapes; legacy Flask 405s stay intact.
+    if any(pattern.fullmatch(request.path) for pattern in _SNAPSHOT_PATHS):
+        return _error("invalid_request")
+    return exc
 
 
 @snapshot_bp.before_request
@@ -142,8 +157,15 @@ def _invalid_constant(_value):
 
 
 def _body(*, optional=False):
-    raw = request.get_data(cache=True)
-    if len(raw) > 2048:
+    # A declared size fails before any read. Missing/chunked lengths still have
+    # a hard read cap, so a client cannot make us buffer an arbitrary body.
+    if request.content_length is not None and request.content_length > _MAX_BODY_BYTES:
+        raise SnapshotError("invalid_request")
+    try:
+        raw = request.stream.read(_MAX_BODY_BYTES + 1)
+    except (BadRequest, RequestEntityTooLarge):
+        raise SnapshotError("invalid_request") from None
+    if len(raw) > _MAX_BODY_BYTES:
         raise SnapshotError("invalid_request")
     if optional and not raw:
         return {}

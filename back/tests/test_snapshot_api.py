@@ -1,6 +1,7 @@
 """Strict HTTP boundary for the B snapshot service."""
 
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from uuid import uuid4
 
 import pytest
@@ -244,6 +245,57 @@ def test_malformed_json_query_keys_and_no_internal_exception_text(client, scope,
         raise RuntimeError("owner-secret p1=123")
     monkeypatch.setattr(snapshot_api, "_service", broken)
     error(client.get(full, headers=auth(scope)), "publication_failed", 500)
+
+
+class ReadSpy(BytesIO):
+    def __init__(self, body):
+        super().__init__(body)
+        self.requested = []
+
+    def read(self, size=-1):
+        self.requested.append(size)
+        return super().read(size)
+
+
+@pytest.mark.parametrize("route", ["ensure", "claim"])
+def test_oversize_known_length_rejected_before_stream_read(client, scope, route):
+    path = ensure_url(scope) if route == "ensure" else snapshot_url(scope, str(uuid4()), "/publication-claims")
+    body = b"{" + b"x" * 100_000 + b"}"
+    stream = ReadSpy(body)
+    response = client.open(path, method="POST", headers=auth(scope), content_type="application/json",
+                           environ_overrides={"wsgi.input": stream, "CONTENT_LENGTH": str(len(body))})
+    error(response, "invalid_request", 400)
+    assert stream.requested == []
+
+
+@pytest.mark.parametrize("route", ["ensure", "claim"])
+def test_oversize_unknown_length_reads_at_most_limit_plus_one(client, scope, route):
+    path = ensure_url(scope) if route == "ensure" else snapshot_url(scope, str(uuid4()), "/publication-claims")
+    stream = ReadSpy(b"{" + b"x" * 100_000 + b"}")
+    response = client.open(path, method="POST", headers=auth(scope), content_type="application/json",
+                           environ_overrides={"wsgi.input": stream, "wsgi.input_terminated": True,
+                                              "CONTENT_LENGTH": ""})
+    error(response, "invalid_request", 400)
+    assert stream.requested and all(0 <= size <= 2049 for size in stream.requested)
+    assert stream.tell() <= 2049
+
+
+@pytest.mark.parametrize("route", ["ensure", "full", "status", "projection", "claim"])
+def test_wrong_method_on_known_snapshot_path_has_strict_error(client, scope, route):
+    snapshot_id = str(uuid4())
+    path = {"ensure": ensure_url(scope), "full": snapshot_url(scope, snapshot_id),
+            "status": snapshot_url(scope, snapshot_id, "/status"),
+            "projection": snapshot_url(scope, snapshot_id, "/agent-projection"),
+            "claim": snapshot_url(scope, snapshot_id, "/publication-claims")}[route]
+    method = client.get if route in {"ensure", "claim"} else client.post
+    error(method(path), "invalid_request", 400)
+
+
+def test_wrong_method_on_legacy_and_unknown_paths_keeps_flask_behavior(client, scope):
+    legacy = client.post(f"/patients/{scope['patient_id']}/gait/sessions")
+    unknown = client.get("/not-a-snapshot-route")
+    assert legacy.status_code == 405 and legacy.json is None
+    assert unknown.status_code == 404 and unknown.json is None
 
 
 @pytest.mark.parametrize("code,status", [

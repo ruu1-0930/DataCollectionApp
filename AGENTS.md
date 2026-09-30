@@ -46,6 +46,7 @@
 ### 临床步态数据工作台（跨仓只读链路，当前证据）
 
 - **Agent v2 Stage 1 / T05（B snapshot HTTP）**：独立 `snapshot_bp` 提供 ensure、full、status、Agent projection、publication claim 五条接口。actor 仅取已校验 clinician JWT；所有快照读取经 T04 service 患者锁/归属检查。成功 DTO 复用严格 v1 schema，状态只返回 `SnapshotStatusV1` 五项元数据；全量历史读取仅显式 `include_superseded=true`。新接口错误统一严格 `ErrorEnvelopeV1`，旧 gait 端点和 token 行为不变。测试细节见架构方案 T05 小节；未做 MySQL/生产验证。
+- **T05 审查修复轮 1**：snapshot POST body 限制为 2048 字节：已知 `Content-Length` 超限时读取前拒绝，未知/分块长度只读取至 2049 字节作判定；五条已知 snapshot 路径的错误方法返回严格 `400 invalid_request` envelope，旧端点 405 和未知路径 404 不变。定向 API 复测 `50 passed, 388 warnings`；未重跑完整 B。
 
 - **T04 审查修复轮 1（I1）**：audit 时刻在患者事务锁内先量化到毫秒；同刻/回退时至少推进一毫秒，使 `DATETIME(3)` 落库精度、canonical 时间和患者内 hash-chain 顺序一致。SQLite 参数边界模拟 MySQL 舍入/截断，跨独立 Session/事务重载验证紧邻 hash 链接。仅复测 repository+service：`49 passed, 222 warnings in 7.01s`；无 schema/迁移变更，仍未在 MySQL 实库运行。
 
