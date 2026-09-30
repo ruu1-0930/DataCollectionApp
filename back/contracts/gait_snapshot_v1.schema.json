@@ -1604,6 +1604,20 @@
         "snapshot_content_hash"
       ]
     },
+    "SnapshotStatusV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_id": {"$ref": "#/$defs/UUID"},
+        "state": {"type": "string", "enum": ["published", "superseded"]},
+        "snapshot_state_version": {"type": "integer", "minimum": 1},
+        "content_hash": {"$ref": "#/$defs/Hash"},
+        "superseded_by": {
+          "anyOf": [{"$ref": "#/$defs/UUID"}, {"type": "null"}]
+        }
+      },
+      "required": ["snapshot_id", "state", "snapshot_state_version", "content_hash", "superseded_by"]
+    },
     "SnapshotPublicationClaimV1": {
       "type": "object",
       "additionalProperties": false,

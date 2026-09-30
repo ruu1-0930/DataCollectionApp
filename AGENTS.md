@@ -45,6 +45,8 @@
 
 ### 临床步态数据工作台（跨仓只读链路，当前证据）
 
+- **Agent v2 Stage 1 / T05（B snapshot HTTP）**：独立 `snapshot_bp` 提供 ensure、full、status、Agent projection、publication claim 五条接口。actor 仅取已校验 clinician JWT；所有快照读取经 T04 service 患者锁/归属检查。成功 DTO 复用严格 v1 schema，状态只返回 `SnapshotStatusV1` 五项元数据；全量历史读取仅显式 `include_superseded=true`。新接口错误统一严格 `ErrorEnvelopeV1`，旧 gait 端点和 token 行为不变。测试细节见架构方案 T05 小节；未做 MySQL/生产验证。
+
 - **T04 审查修复轮 1（I1）**：audit 时刻在患者事务锁内先量化到毫秒；同刻/回退时至少推进一毫秒，使 `DATETIME(3)` 落库精度、canonical 时间和患者内 hash-chain 顺序一致。SQLite 参数边界模拟 MySQL 舍入/截断，跨独立 Session/事务重载验证紧邻 hash 链接。仅复测 repository+service：`49 passed, 222 warnings in 7.01s`；无 schema/迁移变更，仍未在 MySQL 实库运行。
 
 - **Agent v2 Stage 1 / T04（事务 snapshot 服务，隔离实现）**：`AnalysisSnapshotService` 提供 ensure/full/projection/claim，入口均验证 clinician/patient ownership。`AnalysisSnapshotRepository` 独立 Session + SQLite `BEGIN IMMEDIATE` / MySQL InnoDB `READ COMMITTED`、patient `FOR UPDATE` 协调；running attempt 先提交，分析不持写事务，并发仅返回 `snapshot_building`，无重复 analyzer 执行。发布前新事务重查来源；六字段 full identity 与独立 `(snapshot_id, projection_schema_version)` 子键分离，目前 projection 仅支持真实 v1。payload/hash 冻结，发布和审计共事务；supersession/state version/audit/outbox 原子提交，失效覆盖旧 revision 的所有快照。ensure/read/projection/claim **访问时同步**检查晚到数据；不声称上传时主动失效。中断 running attempt 不自动接管，须确认原执行终止后由后续恢复方案处理。T04 不含新路由、生产迁移、MySQL 实库或 outbox consumer。宿主 Python 3.14.4 + 隔离 `.test-deps` 合并验证 **263 passed, 883 warnings in 14.56s**；自审补齐 replacement 正反例后仅复测 repository **13 passed, 43 warnings in 2.50s**。命令和边界见架构方案 T04 小节。

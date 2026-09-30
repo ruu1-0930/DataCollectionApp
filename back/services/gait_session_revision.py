@@ -55,6 +55,8 @@ def _session_id(patient_id: int, start: datetime) -> str:
 
 def parse_session_start(patient_id: int, session_id: str):
     """Validate the legacy public identifier before any source-row access."""
+    if not isinstance(session_id, str):
+        return None
     match = _SESSION_ID_PATTERN.fullmatch(session_id)
     if match is None or match.group("patient_id") != str(patient_id):
         return None

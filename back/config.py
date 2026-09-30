@@ -67,5 +67,8 @@ def create_app(test_config=None):
     from api.gait import gait_bp
     app.register_blueprint(gait_bp)
 
+    from api.snapshot import snapshot_bp
+    app.register_blueprint(snapshot_bp)
+
     return app
 

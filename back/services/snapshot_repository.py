@@ -201,6 +201,13 @@ class AnalysisSnapshotRepository:
         _validator("AgentSnapshotProjectionV1").validate(payload)
         return payload
 
+    def status_dto(self, row):
+        payload = dict(snapshot_id=row.id, state=row.state,
+                       snapshot_state_version=row.state_version, content_hash=row.content_hash,
+                       superseded_by=row.superseded_by_snapshot_id)
+        _validator("SnapshotStatusV1").validate(payload)
+        return payload
+
     def load_revision_rows(self, revision):
         with Session(self.engine) as session:
             return session.query(DeviceRawData).filter(

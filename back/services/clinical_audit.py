@@ -8,7 +8,7 @@ from models.models import ClinicalAuditEvent
 from services.canonical_json import canonical_json_bytes, sha256_hex
 
 _ACTIONS = {
-    "snapshot.build", "snapshot.publish", "snapshot.read", "snapshot.projection_read",
+    "snapshot.build", "snapshot.publish", "snapshot.read", "snapshot.status_read", "snapshot.projection_read",
     "snapshot.claim", "snapshot.superseded", "session.superseded",
 }
 _RESULTS = {

@@ -52,6 +52,11 @@ class SnapshotReadResult:
 
 
 @dataclass(frozen=True)
+class SnapshotStatusResult:
+    status: dict
+
+
+@dataclass(frozen=True)
 class ProjectionReadResult:
     projection: dict
 
@@ -199,14 +204,33 @@ class AnalysisSnapshotService:
             self._finish_failed(repo, actor_id, patient_id, attempt_id, trace_id, code)
 
     @_safe_boundary
-    def get_snapshot(self, *, actor_id: int, patient_id: int, snapshot_id: UUID) -> SnapshotReadResult:
-        return SnapshotReadResult(self._read(actor_id, patient_id, snapshot_id, projection=False))
+    def get_snapshot(self, *, actor_id: int, patient_id: int, snapshot_id: UUID,
+                     include_superseded: bool = False) -> SnapshotReadResult:
+        if type(include_superseded) is not bool:
+            raise SnapshotError("invalid_request")
+        return SnapshotReadResult(self._read(actor_id, patient_id, snapshot_id,
+                                             projection=False, include_superseded=include_superseded))
 
     @_safe_boundary
     def get_projection(self, *, actor_id: int, patient_id: int, snapshot_id: UUID) -> ProjectionReadResult:
         return ProjectionReadResult(self._read(actor_id, patient_id, snapshot_id, projection=True))
 
-    def _read(self, actor_id, patient_id, snapshot_id, *, projection):
+    @_safe_boundary
+    def get_status(self, *, actor_id: int, patient_id: int, snapshot_id: UUID) -> SnapshotStatusResult:
+        _scope(actor_id, patient_id)
+        snapshot_id = _uuid(snapshot_id)
+        trace_id = str(uuid4())
+        with self.repository.transaction(actor_id=actor_id, patient_id=patient_id) as repo:
+            row = repo.snapshot(snapshot_id, patient_id)
+            revision = repo.session.get(GaitSessionRevision, row.session_revision_id)
+            self._refresh(repo, actor_id=actor_id, patient_id=patient_id,
+                          session_id=revision.session_key, trace_id=trace_id)
+            status = repo.status_dto(row)
+            write_audit(repo.session, actor_id=actor_id, patient_id=patient_id, snapshot_id=row.id,
+                        trace_id=trace_id, action="snapshot.status_read", result="ok", now=self.clock())
+        return SnapshotStatusResult(status)
+
+    def _read(self, actor_id, patient_id, snapshot_id, *, projection, include_superseded=False):
         _scope(actor_id, patient_id)
         snapshot_id = _uuid(snapshot_id)
         trace_id, error, payload = str(uuid4()), None, None
@@ -214,7 +238,7 @@ class AnalysisSnapshotService:
             row = repo.snapshot(snapshot_id, patient_id)
             revision = repo.session.get(GaitSessionRevision, row.session_revision_id)
             self._refresh(repo, actor_id=actor_id, patient_id=patient_id, session_id=revision.session_key, trace_id=trace_id)
-            if row.state != "published":
+            if row.state != "published" and not include_superseded:
                 error = SnapshotError("snapshot_superseded", trace_id=trace_id)
             else:
                 payload = repo.projection_dto(row, self.versions.projection_schema_version) if projection else repo.full_dto(row)
