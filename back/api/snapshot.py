@@ -22,8 +22,8 @@ _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 _HASH = re.compile(r"[0-9a-f]{64}")
 _MAX_BODY_BYTES = 2048
 _SNAPSHOT_PATHS = (
-    re.compile(r"/patients/[1-9][0-9]*/gait/sessions/[^/]+/snapshots:ensure"),
-    re.compile(r"/patients/[1-9][0-9]*/gait/snapshots/[^/]+(?:/status|/agent-projection|/publication-claims)?"),
+    re.compile(r"/patients/[^/]+/gait/sessions/[^/]+/snapshots:ensure"),
+    re.compile(r"/patients/[^/]+/gait/snapshots/[^/]+(?:/status|/agent-projection|/publication-claims)?"),
 )
 _STATUS = {
     "invalid_request": 400, "unauthorized": 401, "forbidden": 403,

@@ -291,11 +291,26 @@ def test_wrong_method_on_known_snapshot_path_has_strict_error(client, scope, rou
     error(method(path), "invalid_request", 400)
 
 
+@pytest.mark.parametrize("patient_id", ["abc", "0", "-1", "01"])
+@pytest.mark.parametrize("route", ["ensure", "full", "status", "projection", "claim"])
+def test_wrong_method_with_invalid_patient_id_still_has_snapshot_envelope(client, scope, patient_id, route):
+    snapshot_id = str(uuid4())
+    path = {"ensure": ensure_url(scope, patient_id=patient_id),
+            "full": snapshot_url(scope, snapshot_id, patient_id=patient_id),
+            "status": snapshot_url(scope, snapshot_id, "/status", patient_id=patient_id),
+            "projection": snapshot_url(scope, snapshot_id, "/agent-projection", patient_id=patient_id),
+            "claim": snapshot_url(scope, snapshot_id, "/publication-claims", patient_id=patient_id)}[route]
+    method = client.get if route in {"ensure", "claim"} else client.post
+    error(method(path), "invalid_request", 400)
+
+
 def test_wrong_method_on_legacy_and_unknown_paths_keeps_flask_behavior(client, scope):
     legacy = client.post(f"/patients/{scope['patient_id']}/gait/sessions")
     unknown = client.get("/not-a-snapshot-route")
+    unknown_snapshot_suffix = client.get("/patients/abc/gait/snapshots/x/not-a-route")
     assert legacy.status_code == 405 and legacy.json is None
     assert unknown.status_code == 404 and unknown.json is None
+    assert unknown_snapshot_suffix.status_code == 404 and unknown_snapshot_suffix.json is None
 
 
 @pytest.mark.parametrize("code,status", [
