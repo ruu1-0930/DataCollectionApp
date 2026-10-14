@@ -24,6 +24,7 @@ from services.gait_analysis import (
 from services.gait_session_revision import raw_rows_fingerprint
 from services.pressure_analysis import summarize_snapshot_pressure_rows
 from services.snapshot_contracts import (
+    SNAPSHOT_ANALYZER_SET_VERSION,
     AnalyzerStatus,
     SnapshotBuildProduct,
     SnapshotUnavailableError,
@@ -180,6 +181,38 @@ def _pressure_dto(summary: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+def _pressure_frame_mean(foot: Mapping[str, object] | None) -> float | None:
+    """Nine-point mean, including zero; never estimate a missing sensor."""
+    if foot is None:
+        return None
+    values = [foot.get(f"p{index}") for index in range(1, 10)]
+    if any(value is None or not _finite(value) or value < 0 for value in values):
+        return None
+    # Scale before summing, but even scaled maximum floats can round upward.
+    # A single unrepresentable field must not degrade the entire chart node.
+    try:
+        return math.fsum(float(value) / 9 for value in values)
+    except OverflowError:
+        return None
+
+
+def _bilateral_acceleration_magnitude(frame: Mapping[str, object]) -> float | None:
+    """Mean of both acceleration norms, not a six-axis mixed-unit norm."""
+    magnitudes = []
+    for side in ("L", "R"):
+        foot = frame[side]
+        if foot is None:
+            return None
+        axes = [foot.get(axis) for axis in ("ax", "ay", "az")]
+        if any(value is None or not _finite(value) for value in axes):
+            return None
+        magnitude = math.hypot(*axes)
+        if not math.isfinite(magnitude):
+            return None
+        magnitudes.append(magnitude)
+    return magnitudes[0] / 2 + magnitudes[1] / 2
+
+
 def _chart_dto(frames: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
     if not frames:
         return []
@@ -191,9 +224,9 @@ def _chart_dto(frames: Sequence[Mapping[str, object]]) -> list[dict[str, object]
             "step_length_m_decimal": _decimal6(snapshot_frame_value(frame, "step_length")),
             "single_support_time_s_decimal": _decimal6(snapshot_frame_value(frame, "single_support_time")),
             "double_support_time_s_decimal": _decimal6(snapshot_frame_value(frame, "double_support_time")),
-            "pressure_left_adc_decimal": None,
-            "pressure_right_adc_decimal": None,
-            "imu_magnitude_raw_unscaled_decimal": None,
+            "pressure_left_adc_decimal": _decimal6(_pressure_frame_mean(frame["L"])),
+            "pressure_right_adc_decimal": _decimal6(_pressure_frame_mean(frame["R"])),
+            "imu_magnitude_raw_unscaled_decimal": _decimal6(_bilateral_acceleration_magnitude(frame)),
         }
         for frame in frames[:500]
     ]
@@ -310,7 +343,7 @@ class SnapshotPipeline:
             "session_id": revision.session_key,
             "provenance": {
                 "snapshot_schema_version": "1",
-                "analyzer_set_version": "snapshot-pipeline-v1",
+                "analyzer_set_version": SNAPSHOT_ANALYZER_SET_VERSION,
                 "threshold_profile_version": "pressure_asymmetry_research_v1",
                 "closure_policy_version": revision.closure_policy_version,
             },

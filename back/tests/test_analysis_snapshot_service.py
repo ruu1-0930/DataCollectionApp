@@ -258,6 +258,33 @@ def test_versioned_products_reuse_and_late_revision_supersedes_every_linked_snap
     assert ClinicalAuditEvent.query.filter_by(action="snapshot.superseded").count() == 3
 
 
+def test_sensor_analyzer_upgrade_builds_new_snapshot_without_rewriting_old(scope):
+    old_versions = SnapshotVersions(analyzer_set_version="snapshot-pipeline-v1")
+
+    class LegacyFixtureProducer(VersionedTestProducer):
+        def build_from_revision(self, revision):
+            product = super().build_from_revision(revision)
+            full, projection = deepcopy(product.full_snapshot), deepcopy(product.agent_projection)
+            for point in full["chart_series"]:
+                for key in ("pressure_left_adc_decimal", "pressure_right_adc_decimal", "imu_magnitude_raw_unscaled_decimal"):
+                    point[key] = None
+            full["content_hash"] = SnapshotPipeline._hash_without(full, "content_hash")
+            projection["snapshot_content_hash"] = full["content_hash"]
+            projection["projection_content_hash"] = SnapshotPipeline._hash_without(projection, "projection_content_hash")
+            return SnapshotBuildProduct(full, projection, product.analyzer_statuses)
+
+    old = ensure(service(versions=old_versions, pipeline=LegacyFixtureProducer(old_versions)), scope)
+    old_bytes = db.session.get(AnalysisSnapshot, str(old.snapshot_id)).canonical_payload
+    fresh = ensure(service(), scope)
+    assert fresh.created and fresh.snapshot_id != old.snapshot_id
+    assert not ensure(service(), scope).created
+    assert fresh.snapshot["chart_series"][0]["pressure_left_adc_decimal"] == "10.000000"
+    db.session.expire_all()
+    assert db.session.get(AnalysisSnapshot, str(old.snapshot_id)).canonical_payload == old_bytes
+    assert read(service(), scope, old.snapshot_id).snapshot["chart_series"][0]["pressure_left_adc_decimal"] is None
+    assert AnalysisSnapshot.query.count() == 2 and GaitSessionRevision.query.count() == 1
+
+
 def test_requested_version_cannot_relabel_default_pipeline(scope):
     with pytest.raises(SnapshotError, match="publication_failed"):
         ensure(service(versions=SnapshotVersions(analyzer_set_version="imaginary")), scope)

@@ -137,6 +137,10 @@
 
 ### 3.4 临床工作台所有权边界
 
+- 2026-10-14 Ru1授权整理已实现代码并push供ECS更新；确认RDS未做002快照迁移。sensor-v2既有增量集中103passed/227warnings/13.57s，只有合成SQLite；本轮不执行RDS迁移或服务器更新，不合并main/force。发布清单见docs/releases/2026-10-14-snapshot-workbench.md，已有001假设空表不能在真实数据上直接重跑。
+
+- 2026-10-08 D21（Project联动）补齐SnapshotV1既有chart三字段：每帧每脚九点ADC均值包含零，缺点/非有限/负值/无法表示则该值null；双脚分别ax/ay/az模长再取均值，缺脚/轴留空，不混角速度。仍最多前500帧。共享分析器版本为`snapshot-pipeline-v2`，新ensure创建新版本identity，旧payload/报告不回填；schema/projection形状与评分指标不改。
+- 本地集中B172passed、极值审查修复后sensor11passed；实际B→Project BFF→页面组件通过、限域独立审查闭环。没有MySQL/设备/浏览器/临床验收或模型调用，Lead/隐私旧基线不扩测。准确命令与缺失/极值/新旧版本证据在Project `docs/agent-v2/sensor-display-verification-2026-10-08.md`。UI单帧仍独立raw接口，不进入Agent证据；完整六轴时序未扩展。
 - B 只从 `device_raw_data` 的每脚原始行生成规范会话与指标；规范 keys 为 `walking_speed_mps`、`step_length_m`、`single_support_time_s`、`double_support_time_s`、`cadence_spm`、`step_length_asymmetry_pct`、`stride_time_cv_pct`、`double_support_ratio_pct`。
 - B 拥有会话切分、数据质量、证据/关注项、稳定 ID、详情、逐帧分页和比较语义；修改这些契约时先改 B 测试，再同步 A 的严格 DTO。
 - A 只拥有 typed client、`/api/clinical/*` BFF 和 clinician UI；B 不为 A 新增本地数据库、Excel 或 Agent 兼容层。

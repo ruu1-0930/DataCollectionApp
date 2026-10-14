@@ -21,7 +21,7 @@ from models.models import (
 )
 from services.canonical_json import canonical_json_bytes, sha256_hex
 from services.clinical_audit import utc_naive, utc_text, write_audit
-from services.snapshot_contracts import _validator, validate_build_product
+from services.snapshot_contracts import SNAPSHOT_ANALYZER_SET_VERSION, _validator, validate_build_product
 
 
 class SnapshotError(RuntimeError):
@@ -33,7 +33,7 @@ class SnapshotError(RuntimeError):
 @dataclass(frozen=True)
 class SnapshotVersions:
     snapshot_schema_version: str = "1"
-    analyzer_set_version: str = "snapshot-pipeline-v1"
+    analyzer_set_version: str = SNAPSHOT_ANALYZER_SET_VERSION
     threshold_profile_version: str = "pressure_asymmetry_research_v1"
     projection_schema_version: str = "1"
 

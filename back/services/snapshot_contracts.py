@@ -8,6 +8,9 @@ from typing import Mapping
 from jsonschema import Draft202012Validator
 
 
+SNAPSHOT_ANALYZER_SET_VERSION = "snapshot-pipeline-v2"
+
+
 class SnapshotUnavailableError(RuntimeError):
     """A required analyzer or source gate prevented a build product."""
 
