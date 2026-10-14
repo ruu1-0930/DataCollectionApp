@@ -33,7 +33,9 @@ SVC probability弃用提示。当前venv直接满足此集中检查；未安装/
 
 ## ECS/RDS前置条件
 
-1. ECS当前分支与commit尚待用户提供，不把origin/main当成已部署版本。
+1. Ru1确认ECS为feature/frontend-backend-alignment、41e3f15（grafted浅克隆）；
+   本地验证该commit是发布分支祖先。必须显式fetch新snapshot分支，旧分支git pull不会取得新快照实现。
+   不自动切换或重启，先检查工作树和数据库准备情况。
 2. 先备份并在测试库演练back/migrations/002_gait_snapshot_v1.sql，再更新/重启B。
    它新增7张派生表和触发器，MySQL DDL隐式提交，不能当成可事务回滚脚本。
 3. 核对已有六临床表/38字段；001_raw_data_per_foot.sql假设空表，已有数据不能直接重跑。
@@ -43,3 +45,24 @@ SVC probability弃用提示。当前venv直接满足此集中检查；未安装/
 6. Agent真实患者模型限制不因B发布而解除；本次不把真实数据发给模型。
 
 发布到原snapshot分支供fetch/检视，不擅自切换ECS分支、合并main或force push。
+
+## 41e3f15到新版本的额外身份结构前置核对
+
+实际models/schema差异：旧Clinician有terminal_code NOT NULL，唯一键为
+(phone,terminal_code)；新模型去掉terminal_code，唯一键为(hospital,phone)。
+002快照迁移不处理这个差异，目前migrations目录只有001原始字段和002快照脚本。
+不能由服务器commit推断RDS一定仍是旧结构，也不能直接断言002已覆盖所有升级。
+若旧非空字段仍在，新医生注册可能失败；若医院/手机号有重复组，新登录唯一身份可能冲突。
+只做结构/聚合数量检查，不读取或导出患者/医生个人明细，不自行合并身份或删除字段。
+
+可由Ru1在DMS执行只读检查并提供结果（不含数据明细/密码）：
+
+```sql
+SHOW CREATE TABLE clinicians;
+SELECT COUNT(*) AS duplicate_identity_groups
+FROM (SELECT hospital, phone FROM clinicians
+      GROUP BY hospital, phone HAVING COUNT(*) > 1) AS conflicts;
+```
+
+先确定实际表结构、重复组和已有账号保留策略，再独立设计身份迁移；本次不生成或执行
+未确认的身份DDL。不得导入包含DROP TABLE的database_schema_mysql.sql。
