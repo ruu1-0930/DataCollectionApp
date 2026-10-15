@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sarcogait.local/contracts/admin_business_v1.schema.json",
+  "$defs": {
+    "Id": {"type": "integer", "minimum": 1},
+    "Text": {"type": ["string", "null"]},
+    "Number": {"type": ["number", "null"]},
+    "Clinician": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "hospital", "dept", "name", "phone", "role", "created_at"],
+      "properties": {"id": {"$ref": "#/$defs/Id"}, "hospital": {"type": "string"}, "dept": {"type": "string"}, "name": {"type": "string"}, "phone": {"type": "string"}, "role": {"enum": ["clinician", "admin_readonly"]}, "created_at": {"$ref": "#/$defs/Text"}}
+    },
+    "Patient": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "subject_id", "gender", "age", "name", "phone", "created_at", "last_collected_at", "owner"],
+      "properties": {"id": {"$ref": "#/$defs/Id"}, "subject_id": {"type": "string"}, "gender": {"$ref": "#/$defs/Text"}, "age": {"type": ["integer", "null"]}, "name": {"$ref": "#/$defs/Text"}, "phone": {"$ref": "#/$defs/Text"}, "created_at": {"$ref": "#/$defs/Text"}, "last_collected_at": {"$ref": "#/$defs/Text"}, "owner": {"$ref": "#/$defs/Clinician"}}
+    },
+    "AdminPatientDetail": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "subject_id", "gender", "age", "name", "phone", "created_at", "last_collected_at", "owner", "email", "address"],
+      "properties": {"id": {"$ref": "#/$defs/Id"}, "subject_id": {"type": "string"}, "gender": {"$ref": "#/$defs/Text"}, "age": {"type": ["integer", "null"]}, "name": {"$ref": "#/$defs/Text"}, "phone": {"$ref": "#/$defs/Text"}, "created_at": {"$ref": "#/$defs/Text"}, "last_collected_at": {"$ref": "#/$defs/Text"}, "owner": {"$ref": "#/$defs/Clinician"}, "email": {"$ref": "#/$defs/Text"}, "address": {"$ref": "#/$defs/Text"}}
+    },
+    "Device": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "device_code", "device_name", "is_enabled", "created_at", "owner"],
+      "properties": {"id": {"$ref": "#/$defs/Id"}, "device_code": {"type": "string"}, "device_name": {"$ref": "#/$defs/Text"}, "is_enabled": {"type": ["boolean", "null"]}, "created_at": {"$ref": "#/$defs/Text"}, "owner": {"$ref": "#/$defs/Clinician"}}
+    },
+    "Session": {
+      "type": "object", "additionalProperties": false,
+      "required": ["session_id", "patient_id", "start_at", "end_at", "row_count"],
+      "properties": {"session_id": {"type": "string"}, "patient_id": {"$ref": "#/$defs/Id"}, "start_at": {"type": "string"}, "end_at": {"type": "string"}, "row_count": {"type": "integer", "minimum": 1}}
+    },
+    "Transformed": {
+      "type": ["object", "null"], "additionalProperties": false, "required": ["T1", "T2", "T3", "T4", "T5"],
+      "properties": {"T1": {"$ref": "#/$defs/Number"}, "T2": {"$ref": "#/$defs/Number"}, "T3": {"$ref": "#/$defs/Number"}, "T4": {"$ref": "#/$defs/Number"}, "T5": {"$ref": "#/$defs/Number"}}
+    },
+    "Raw": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "patient_id", "device_id", "clinician_id", "foot", "collected_at", "uploaded_at", "p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "ax", "ay", "az", "gx", "gy", "gz", "step_length", "walking_speed", "single_support_time", "double_support_time", "transformed", "unavailable_fields"],
+      "properties": {
+        "id": {"$ref": "#/$defs/Id"}, "patient_id": {"$ref": "#/$defs/Id"}, "device_id": {"$ref": "#/$defs/Id"}, "clinician_id": {"$ref": "#/$defs/Id"}, "foot": {"type": "string"}, "collected_at": {"$ref": "#/$defs/Text"}, "uploaded_at": {"$ref": "#/$defs/Text"},
+        "p1": {"$ref": "#/$defs/Number"}, "p2": {"$ref": "#/$defs/Number"}, "p3": {"$ref": "#/$defs/Number"}, "p4": {"$ref": "#/$defs/Number"}, "p5": {"$ref": "#/$defs/Number"}, "p6": {"$ref": "#/$defs/Number"}, "p7": {"$ref": "#/$defs/Number"}, "p8": {"$ref": "#/$defs/Number"}, "p9": {"$ref": "#/$defs/Number"},
+        "ax": {"$ref": "#/$defs/Number"}, "ay": {"$ref": "#/$defs/Number"}, "az": {"$ref": "#/$defs/Number"}, "gx": {"$ref": "#/$defs/Number"}, "gy": {"$ref": "#/$defs/Number"}, "gz": {"$ref": "#/$defs/Number"},
+        "step_length": {"$ref": "#/$defs/Number"}, "walking_speed": {"$ref": "#/$defs/Number"}, "single_support_time": {"$ref": "#/$defs/Number"}, "double_support_time": {"$ref": "#/$defs/Number"}, "transformed": {"$ref": "#/$defs/Transformed"}, "unavailable_fields": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "SnapshotMeta": {
+      "type": "object", "additionalProperties": false,
+      "required": ["snapshot_id", "patient_id", "session_id", "session_revision_id", "state", "snapshot_state_version", "created_at", "content_hash", "raw_data_fingerprint", "snapshot_schema_version", "analyzer_set_version", "threshold_profile_version", "superseded_by"],
+      "properties": {"snapshot_id": {"type": "string"}, "patient_id": {"$ref": "#/$defs/Id"}, "session_id": {"type": "string"}, "session_revision_id": {"type": "string"}, "state": {"enum": ["published", "superseded"]}, "snapshot_state_version": {"$ref": "#/$defs/Id"}, "created_at": {"type": "string"}, "content_hash": {"type": "string"}, "raw_data_fingerprint": {"type": "string"}, "snapshot_schema_version": {"type": "string"}, "analyzer_set_version": {"type": "string"}, "threshold_profile_version": {"type": "string"}, "superseded_by": {"$ref": "#/$defs/Text"}}
+    },
+    "AdminStoredSnapshot": {
+      "type": "object", "additionalProperties": false, "required": ["snapshot", "source_check", "read_at"],
+      "properties": {"snapshot": {"$ref": "https://sarcogait.local/contracts/gait_snapshot_v1.schema.json#/$defs/AnalysisSnapshotV1"}, "source_check": {"const": "not_performed"}, "read_at": {"type": "string"}}
+    },
+    "AdminClinicianPage": {"type": "object", "additionalProperties": false, "required": ["items", "total", "page", "page_size"], "properties": {"items": {"type": "array", "items": {"$ref": "#/$defs/Clinician"}}, "total": {"type": "integer", "minimum": 0}, "page": {"$ref": "#/$defs/Id"}, "page_size": {"type": "integer", "minimum": 1, "maximum": 100}}},
+    "AdminPatientPage": {"type": "object", "additionalProperties": false, "required": ["items", "total", "page", "page_size"], "properties": {"items": {"type": "array", "items": {"$ref": "#/$defs/Patient"}}, "total": {"type": "integer", "minimum": 0}, "page": {"$ref": "#/$defs/Id"}, "page_size": {"type": "integer", "minimum": 1, "maximum": 100}}},
+    "AdminDevicePage": {"type": "object", "additionalProperties": false, "required": ["items", "total", "page", "page_size"], "properties": {"items": {"type": "array", "items": {"$ref": "#/$defs/Device"}}, "total": {"type": "integer", "minimum": 0}, "page": {"$ref": "#/$defs/Id"}, "page_size": {"type": "integer", "minimum": 1, "maximum": 100}}},
+    "AdminSessionPage": {"type": "object", "additionalProperties": false, "required": ["items", "total", "page", "page_size"], "properties": {"items": {"type": "array", "items": {"$ref": "#/$defs/Session"}}, "total": {"type": "integer", "minimum": 0}, "page": {"$ref": "#/$defs/Id"}, "page_size": {"type": "integer", "minimum": 1, "maximum": 100}}},
+    "AdminRawPage": {"type": "object", "additionalProperties": false, "required": ["items", "total", "page", "page_size"], "properties": {"items": {"type": "array", "items": {"$ref": "#/$defs/Raw"}}, "total": {"type": "integer", "minimum": 0}, "page": {"$ref": "#/$defs/Id"}, "page_size": {"type": "integer", "minimum": 1, "maximum": 500}}},
+    "AdminSnapshotPage": {"type": "object", "additionalProperties": false, "required": ["items", "total", "page", "page_size"], "properties": {"items": {"type": "array", "items": {"$ref": "#/$defs/SnapshotMeta"}}, "total": {"type": "integer", "minimum": 0}, "page": {"$ref": "#/$defs/Id"}, "page_size": {"type": "integer", "minimum": 1, "maximum": 100}}}
+  }
+}

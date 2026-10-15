@@ -36,10 +36,10 @@ def token_required(capability=None):
                 if clinician_id is None:
                     return jsonify(Response.error(401, "Token无效: 缺少医护信息")), 401
                 account = load_account_context(clinician_id)
-                if capability is not None:
-                    require_capability(account, capability)
                 g.clinician_id = account.clinician_id
                 g.account_context = account
+                if capability is not None:
+                    require_capability(account, capability)
             except AccessError as exc:
                 message = '无权执行该操作' if exc.status_code == 403 else '医护不存在'
                 return jsonify(Response.error(exc.status_code, message)), exc.status_code
