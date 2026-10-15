@@ -70,5 +70,10 @@ def create_app(test_config=None):
     from api.snapshot import snapshot_bp
     app.register_blueprint(snapshot_bp)
 
+    from api.account import account_bp
+    app.register_blueprint(account_bp)
+    from account_cli import register_account_cli
+    register_account_cli(app)
+
     return app
 

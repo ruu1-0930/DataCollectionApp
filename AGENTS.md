@@ -30,6 +30,16 @@
 
 ## 2. 当前优先级（按架构方案的阶段推进）
 
+### ADM01 全局只读业务管理员（2026-10-15）
+
+Ru1已确认Project中的管理员Spec/Plan并选择Native顺序实施。A01新增Clinician.role，
+clinician/admin_readonly二值、默认普通医生；新增/account/context，不改原登录/注册/me公开DTO或App。
+管理员禁止旧患者/设备/资料写入及全部旧snapshot刷新入口；不以JWT中的role或页面按钮授权。
+新增003_clinician_role.sql与服务器CLI account create-admin/set-role，隐藏口令与显式确认，
+不在启动时创建/提权。所有验证只用隔离合成数据，003尚未在RDS执行，不称管理员已上线。
+跨仓Spec/Plan/独立进度在Project `docs/superpowers/{specs,plans}/2026-10-15-sarcogait-admin-business-review*`。
+每个完整交付集中验证、B实现后紧接Project进度提交；不重启旧admin、不改App或真实账号。
+
 0. **🔴 进行中 — 迁移到自有云**：现有 ECS/数据库**均不在我方名下**（随时可能停机），迁到自有阿里云 **ECS + RDS**（同 VPC、RDS 不开公网）。**当前任务，先于阶段 1。** 因**尚未开始采集，无历史数据需迁移**，成本最低；迁移顺带完成阶段 1 的 HTTPS、收回 DB 公网、密钥/口令入环境变量（最后一项已完成）。逐步操作见 [迁移操作清单.md](迁移操作清单.md)；背景见架构方案阶段 0.5 与 FAQ 10.2。
    - **已完成**：ECS+RDS 开通、建库导 schema、gunicorn+systemd+nginx 部署跑通（公网 IP `118.31.39.47`）；三端地址改到新服务器；清理上一个开发者「捡漏/短剧」模板残留。
    - ✅ **域名 + HTTPS 已上线（2026-06-15）**：域名 `api.sarcopenianus.com`（备案通过，A 记录 → `118.31.39.47`），阿里云免费 DV 证书（DigiCert，有效期 **2026-06-15→09-12，3 个月，到期前需重签替换**）。nginx 切 443（80→443 跳转），证书在 ECS `/etc/nginx/ssl/`（私钥 chmod 600，**不入 git**），安全组放行 443。公网 `https://api.sarcopenianus.com` 证书可信、链路 `nginx(443)→gunicorn(5000)→Flask` 验证通过。采集端地址已切到 https：`蓝牙uniapp/config/index.js`、`utils/request.js`(`sslVerify:true`)。历史 admin 配置不再维护；配置模板见 `deploy/nginx-lanya.conf`。

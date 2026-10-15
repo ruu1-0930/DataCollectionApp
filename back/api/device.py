@@ -15,7 +15,7 @@ def _device_public(d):
 
 
 @device_bp.route('/devices', methods=['POST'])
-@token_required()
+@token_required('clinician.write')
 def register_device():
     """蓝牙连接成功后注册鞋垫（非扫码）。"""
     data = request.json or {}
@@ -44,7 +44,7 @@ def list_devices():
 
 
 @device_bp.route('/devices/<int:device_id>', methods=['DELETE'])
-@token_required()
+@token_required('clinician.write')
 def delete_device(device_id):
     d = Device.query.get(device_id)
     if not d:
@@ -78,7 +78,7 @@ def _parse_foot(data, src_map):
 
 
 @device_bp.route('/devices/<string:device_code>/raw_data', methods=['POST'])
-@token_required()
+@token_required('clinician.write')
 def upload_raw_data(device_code):
     device = Device.query.filter_by(device_code=device_code,
                                     clinician_id=g.clinician_id).first()

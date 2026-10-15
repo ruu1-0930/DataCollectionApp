@@ -1,4 +1,3 @@
-import re
 import threading
 
 from flask import Blueprint, current_app, request, jsonify, g
@@ -8,10 +7,10 @@ from config import db
 from models.models import Clinician
 from utils import Response, token_required
 from auth import hash_passcode, verify_passcode, issue_token
+from services.clinician_validation import PHONE_PATTERN as _PHONE_PATTERN, valid_passcode as _valid_passcode
 
 clinician_bp = Blueprint('clinician', __name__)
 
-_PHONE_PATTERN = re.compile(r'^1\d{10}$')
 _LOGIN_FAILURE = '登录凭证不匹配'
 _DUMMY_PASSCODE_HASH = '$2b$12$gouvJor73kG.F3wLSOsJV.HoeEmpe2dQ/mOst3SFP/smhqimC1456'
 _ENABLE_FIELDS = frozenset({'hospital', 'dept', 'name', 'phone', 'passcode'})
@@ -22,13 +21,6 @@ _PROFILE_FIELDS = frozenset({'hospital', 'dept', 'name', 'phone'})
 def _clean_string(data, key):
     value = data.get(key)
     return value.strip() if isinstance(value, str) else ''
-
-
-def _valid_passcode(passcode):
-    try:
-        return len(passcode) >= 4 and len(passcode.encode('utf-8')) <= 72
-    except UnicodeEncodeError:
-        return False
 
 
 def _json_object_with_allowed_fields(allowed_fields, *, exact):
@@ -189,7 +181,7 @@ def get_me():
 
 
 @clinician_bp.route('/clinician/me', methods=['PUT'])
-@token_required()
+@token_required('clinician.write')
 def update_me():
     c = Clinician.query.get(g.clinician_id)
     data = _json_object_with_allowed_fields(_PROFILE_FIELDS, exact=False)

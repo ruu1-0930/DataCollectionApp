@@ -10,7 +10,7 @@ from jwt import InvalidTokenError
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
 from auth import decode_token
-from models.models import Clinician
+from access import AccessError, load_account_context, require_capability
 from services.analysis_snapshot import AnalysisSnapshotService, PublicationClaimRequest
 from services.snapshot_contracts import _validator
 from services.snapshot_repository import SnapshotError
@@ -105,10 +105,12 @@ def _authenticate():
         clinician_id = payload.get("clinician_id")
         if type(clinician_id) is not int or clinician_id < 1:
             return _error("unauthorized")
-        clinician = Clinician.query.get(clinician_id)
-        if clinician is None:
-            return _error("unauthorized")
-        g.clinician_id = clinician.id
+        account = load_account_context(clinician_id)
+        require_capability(account, 'snapshot.execute')
+        g.clinician_id = account.clinician_id
+        g.account_context = account
+    except AccessError as exc:
+        return _error('forbidden' if exc.status_code == 403 else 'unauthorized')
     except InvalidTokenError:
         return _error("unauthorized")
     except Exception:

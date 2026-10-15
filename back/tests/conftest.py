@@ -31,3 +31,21 @@ def client(app):
 @pytest.fixture
 def db(app):
     return _db
+
+
+@pytest.fixture
+def admin_scope(client, db):
+    from models.models import Clinician
+    result = {}
+    for index, key in enumerate(('doctor_a', 'doctor_b', 'admin')):
+        credentials = {'hospital': f'synthetic-hospital-{index}', 'dept': 'synthetic',
+                       'name': f'synthetic-{key}', 'phone': f'1380000000{index}',
+                       'passcode': 'synthetic-passcode'}
+        response = client.post('/clinician/enable', json=credentials)
+        assert response.status_code == 200
+        data = response.get_json()['data']
+        result[key] = {'id': data['clinician']['id'], 'credentials': credentials,
+                       'headers': {'Authorization': 'Bearer ' + data['token']}}
+    db.session.get(Clinician, result['admin']['id']).role = 'admin_readonly'
+    db.session.commit()
+    return result

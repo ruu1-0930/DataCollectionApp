@@ -23,7 +23,7 @@ def _patient_public(p, existed=False):
 
 
 @patient_bp.route('/patients', methods=['POST'])
-@token_required()
+@token_required('clinician.write')
 def create_patient():
     data = request.json or {}
     name = data.get('name')
