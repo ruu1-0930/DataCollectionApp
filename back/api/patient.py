@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, g
 from config import db
 from models.models import Patient, PatientPII, DeviceRawData, DeviceTransformedData
 from utils import Response, token_required
+from access import AccessError, require_patient_scope
 
 patient_bp = Blueprint('patient', __name__)
 
@@ -20,6 +21,17 @@ def _patient_public(p, existed=False):
         'last_collected_at': p.last_collected_at.isoformat() if p.last_collected_at else None,
         'existed': existed,
     }
+
+
+def _readable_patient_or_response(patient_id):
+    patient = db.session.get(Patient, patient_id)
+    if patient is None:
+        return None, (jsonify(Response.error(404, '患者不存在')), 404)
+    try:
+        require_patient_scope(g.account_context, owner_id=patient.clinician_id, capability='clinical.read')
+    except AccessError:
+        return None, (jsonify(Response.error(403, '无权访问该患者')), 403)
+    return patient, None
 
 
 @patient_bp.route('/patients', methods=['POST'])
@@ -58,22 +70,18 @@ def list_patients():
 @patient_bp.route('/patients/<int:patient_id>', methods=['GET'])
 @token_required()
 def get_patient(patient_id):
-    p = Patient.query.get(patient_id)
-    if not p:
-        return jsonify(Response.error(404, "患者不存在")), 404
-    if p.clinician_id != g.clinician_id:
-        return jsonify(Response.error(403, "无权访问该患者")), 403
+    p, error = _readable_patient_or_response(patient_id)
+    if error:
+        return error
     return jsonify(Response.success(data=_patient_public(p)))
 
 
 @patient_bp.route('/patients/<int:patient_id>/data', methods=['GET'])
 @token_required()
 def patient_history(patient_id):
-    p = Patient.query.get(patient_id)
-    if not p:
-        return jsonify(Response.error(404, "患者不存在")), 404
-    if p.clinician_id != g.clinician_id:
-        return jsonify(Response.error(403, "无权访问该患者")), 403
+    _, error = _readable_patient_or_response(patient_id)
+    if error:
+        return error
 
     q = (db.session.query(DeviceRawData, DeviceTransformedData)
          .outerjoin(DeviceTransformedData,

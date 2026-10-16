@@ -8,7 +8,7 @@
     "Clinician": {
       "type": "object", "additionalProperties": false,
       "required": ["id", "hospital", "dept", "name", "phone", "role", "created_at"],
-      "properties": {"id": {"$ref": "#/$defs/Id"}, "hospital": {"type": "string"}, "dept": {"type": "string"}, "name": {"type": "string"}, "phone": {"type": "string"}, "role": {"enum": ["clinician", "admin_readonly"]}, "created_at": {"$ref": "#/$defs/Text"}}
+      "properties": {"id": {"$ref": "#/$defs/Id"}, "hospital": {"type": "string"}, "dept": {"type": "string"}, "name": {"type": "string"}, "phone": {"type": "string"}, "role": {"enum": ["clinician", "admin"]}, "created_at": {"$ref": "#/$defs/Text"}}
     },
     "Patient": {
       "type": "object", "additionalProperties": false,

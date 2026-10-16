@@ -36,13 +36,13 @@ def create_admin(hospital, dept, name, phone):
     passcode = click.prompt('Passcode', hide_input=True, confirmation_prompt=True).strip()
     if not valid_passcode(passcode):
         raise click.ClickException('口令格式无效')
-    if not click.confirm('确认创建专用全局只读管理员？', default=False):
+    if not click.confirm('确认创建专用全局分析管理员？', default=False):
         _record('account.create', 'cancelled')
         raise click.Abort()
     try:
         if Clinician.query.filter_by(hospital=values['hospital'], phone=values['phone']).first():
             raise click.ClickException('该身份已存在；请按账号ID显式设置角色')
-        actor = Clinician(**values, role='admin_readonly', passcode_hash=hash_passcode(passcode))
+        actor = Clinician(**values, role='admin', passcode_hash=hash_passcode(passcode))
         db.session.add(actor)
         db.session.commit()
     except (SQLAlchemyError, click.ClickException) as exc:
@@ -57,7 +57,7 @@ def create_admin(hospital, dept, name, phone):
 
 @account_commands.command('set-role')
 @click.option('--clinician-id', type=click.IntRange(min=1), required=True)
-@click.option('--role', type=click.Choice(['clinician', 'admin_readonly']), required=True)
+@click.option('--role', type=click.Choice(['clinician', 'admin']), required=True)
 @with_appcontext
 def set_role(clinician_id, role):
     actor = db.session.get(Clinician, clinician_id)

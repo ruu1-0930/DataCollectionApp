@@ -12,7 +12,7 @@ class Clinician(db.Model):
     name = db.Column(db.String(50), nullable=False)
     phone = db.Column(db.String(20), nullable=False)
     passcode_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.Enum('clinician', 'admin_readonly', name='clinician_role',
+    role = db.Column(db.Enum('clinician', 'admin', name='clinician_role',
                              create_constraint=True, validate_strings=True),
                      nullable=False, default='clinician', server_default='clinician')
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)

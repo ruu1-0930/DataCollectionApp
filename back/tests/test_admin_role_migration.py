@@ -25,6 +25,6 @@ def test_mysql_create_schema_emits_role_default_and_restricted_enum():
     ddl = str(CreateTable(Clinician.__table__).compile(dialect=mysql.dialect()))
     definition = next(line for line in ddl.splitlines()
                       if line.strip().split(' ', 1)[0].strip('`') == 'role')
-    assert "ENUM('clinician','admin_readonly')" in definition
+    assert "ENUM('clinician','admin')" in definition
     assert 'NOT NULL' in definition
     assert "DEFAULT 'clinician'" in definition

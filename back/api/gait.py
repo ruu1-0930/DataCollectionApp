@@ -19,6 +19,7 @@ from services.gait_comparison import compare_session_summaries
 from services.pressure_analysis import summarize_pressure_rows
 from services.gait_session_revision import _session_id as _revision_session_id, parse_session_start
 from utils import Response, token_required
+from access import AccessError, require_patient_scope
 
 
 gait_bp = Blueprint("gait", __name__)
@@ -52,12 +53,14 @@ _SENSOR_COLS = tuple(
 )
 
 
-def _owned_patient_or_resp(patient_id):
-    """Return the owned patient or the response required by ownership policy."""
+def _readable_patient_or_resp(patient_id):
+    """Global analysis scope never changes the authenticated actor."""
     patient = Patient.query.get(patient_id)
     if not patient:
         return None, (jsonify(Response.error(404, "患者不存在")), 404)
-    if patient.clinician_id != g.clinician_id:
+    try:
+        require_patient_scope(g.account_context, owner_id=patient.clinician_id, capability='clinical.read')
+    except AccessError:
         return None, (jsonify(Response.error(403, "无权访问该患者")), 403)
     return patient, None
 
@@ -700,7 +703,7 @@ def _invalid_session_id_response():
 @gait_bp.route("/patients/<int:patient_id>/gait/sessions", methods=["GET"])
 @token_required()
 def list_gait_sessions(patient_id):
-    _, error = _owned_patient_or_resp(patient_id)
+    _, error = _readable_patient_or_resp(patient_id)
     if error:
         return error
 
@@ -736,7 +739,7 @@ def list_gait_sessions(patient_id):
 @gait_bp.route("/patients/<int:patient_id>/gait/sessions/<string:session_id>", methods=["GET"])
 @token_required()
 def get_gait_session(patient_id, session_id):
-    _, error = _owned_patient_or_resp(patient_id)
+    _, error = _readable_patient_or_resp(patient_id)
     if error:
         return error
 
@@ -772,7 +775,7 @@ def get_gait_session(patient_id, session_id):
 )
 @token_required()
 def get_gait_session_frames(patient_id, session_id):
-    _, error = _owned_patient_or_resp(patient_id)
+    _, error = _readable_patient_or_resp(patient_id)
     if error:
         return error
 
@@ -803,7 +806,7 @@ def get_gait_session_frames(patient_id, session_id):
 @gait_bp.route("/patients/<int:patient_id>/gait/compare", methods=["POST"])
 @token_required()
 def compare_gait_sessions(patient_id):
-    _, error = _owned_patient_or_resp(patient_id)
+    _, error = _readable_patient_or_resp(patient_id)
     if error:
         return error
 

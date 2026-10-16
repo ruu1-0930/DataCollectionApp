@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sarcogait.local/contracts/workbench_directory_v1.schema.json",
+  "$defs": {
+    "Id": {"type": "integer", "minimum": 1},
+    "NullableText": {"type": ["string", "null"]},
+    "WorkbenchDoctor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "hospital", "dept", "name"],
+      "properties": {
+        "id": {"$ref": "#/$defs/Id"}, "hospital": {"type": "string"},
+        "dept": {"type": "string"}, "name": {"type": "string"}
+      }
+    },
+    "WorkbenchPatient": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "subject_id", "name", "gender", "age", "last_collected_at", "owner"],
+      "properties": {
+        "id": {"$ref": "#/$defs/Id"}, "subject_id": {"type": "string"},
+        "name": {"$ref": "#/$defs/NullableText"}, "gender": {"$ref": "#/$defs/NullableText"},
+        "age": {"type": ["integer", "null"]}, "last_collected_at": {"$ref": "#/$defs/NullableText"},
+        "owner": {"$ref": "#/$defs/WorkbenchDoctor"}
+      }
+    },
+    "WorkbenchPatientPage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["items", "total", "page", "page_size"],
+      "properties": {
+        "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/WorkbenchPatient"}},
+        "total": {"type": "integer", "minimum": 0}, "page": {"$ref": "#/$defs/Id"},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 100}
+      }
+    },
+    "WorkbenchDoctorPage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["items", "total", "page", "page_size"],
+      "properties": {
+        "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/WorkbenchDoctor"}},
+        "total": {"type": "integer", "minimum": 0}, "page": {"$ref": "#/$defs/Id"},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 100}
+      }
+    }
+  }
+}

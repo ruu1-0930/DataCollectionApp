@@ -46,7 +46,7 @@ def admin_scope(client, db):
         data = response.get_json()['data']
         result[key] = {'id': data['clinician']['id'], 'credentials': credentials,
                        'headers': {'Authorization': 'Bearer ' + data['token']}}
-    db.session.get(Clinician, result['admin']['id']).role = 'admin_readonly'
+    db.session.get(Clinician, result['admin']['id']).role = 'admin'
     db.session.commit()
     return result
 

@@ -12,7 +12,7 @@ def test_create_admin_requires_confirmation_and_hides_passcode(app):
     result = app.test_cli_runner().invoke(args=CREATE, input='synthetic-secret\nsynthetic-secret\ny\n')
     assert result.exit_code == 0
     actor = Clinician.query.filter_by(phone='13800000009').one()
-    assert actor.role == 'admin_readonly'
+    assert actor.role == 'admin'
     assert verify_passcode('synthetic-secret', actor.passcode_hash)
     assert 'synthetic-secret' not in result.output
     assert 'token' not in result.output.lower()
@@ -27,13 +27,13 @@ def test_create_admin_cancel_has_no_account(app):
 def test_set_role_and_revoke_are_explicit_and_repeatable(app, admin_scope):
     actor = admin_scope['doctor_a']
     runner = app.test_cli_runner()
-    args = ['account', 'set-role', '--clinician-id', str(actor['id']), '--role', 'admin_readonly']
+    args = ['account', 'set-role', '--clinician-id', str(actor['id']), '--role', 'admin']
     cancelled = runner.invoke(args=args, input='n\n')
     assert cancelled.exit_code != 0
     assert Clinician.query.get(actor['id']).role == 'clinician'
     assert runner.invoke(args=args, input='y\n').exit_code == 0
     assert runner.invoke(args=args, input='y\n').exit_code == 0
-    assert Clinician.query.get(actor['id']).role == 'admin_readonly'
+    assert Clinician.query.get(actor['id']).role == 'admin'
     args[-1] = 'clinician'
     assert runner.invoke(args=args, input='y\n').exit_code == 0
     assert Clinician.query.get(actor['id']).role == 'clinician'

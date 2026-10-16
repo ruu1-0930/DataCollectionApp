@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from config import db
+from access import AccessError, load_account_context, require_patient_scope
 from models.models import (
     AgentSnapshotProjection, AnalysisSnapshot, DeviceRawData, GaitSessionRevision,
     IntegrationOutbox, Patient, SnapshotBuildAttempt,
@@ -73,8 +74,12 @@ class AnalysisSnapshotRepository:
                     patient = session.query(Patient).filter_by(id=patient_id).with_for_update().one_or_none()
                     if patient is None:
                         raise SnapshotError("patient_not_found")
-                    if authorize and patient.clinician_id != actor_id:
-                        raise SnapshotError("forbidden")
+                    if authorize:
+                        try:
+                            account = load_account_context(actor_id, session=session)
+                            require_patient_scope(account, owner_id=patient.clinician_id, capability='snapshot.execute')
+                        except AccessError:
+                            raise SnapshotError("forbidden") from None
                     yield AnalysisSnapshotRepository(self.engine, session=session)
                     session.commit()
                 except BaseException:

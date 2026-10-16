@@ -74,6 +74,8 @@ def create_app(test_config=None):
     app.register_blueprint(account_bp)
     from api.admin_business import admin_business_bp
     app.register_blueprint(admin_business_bp)
+    from api.workbench import workbench_bp
+    app.register_blueprint(workbench_bp)
     from account_cli import register_account_cli
     register_account_cli(app)
 

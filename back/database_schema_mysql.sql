@@ -27,7 +27,7 @@ CREATE TABLE clinicians (
   name VARCHAR(50) NOT NULL,
   phone VARCHAR(20) NOT NULL,
   passcode_hash VARCHAR(255) NOT NULL,
-  `role` ENUM('clinician','admin_readonly') NOT NULL DEFAULT 'clinician',
+  `role` ENUM('clinician','admin') NOT NULL DEFAULT 'clinician',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_clinician_hospital_phone (hospital, phone)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

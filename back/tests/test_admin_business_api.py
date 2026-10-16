@@ -53,7 +53,7 @@ def test_invalid_queries_and_resource_pairs_are_not_silently_ignored(client, adm
     headers = admin_scope['admin']['headers']
     root = f"/admin/patients/{admin_data['patient_id']}"
     for path in ('/admin/patients?page=0', '/admin/patients?page_size=101',
-                 '/admin/patients?role=admin_readonly', '/admin/patients?page=1&page=2',
+                 '/admin/patients?role=admin', '/admin/patients?page=1&page=2',
                  root + '/raw-data?foot=X', root + '/raw-data?start=2026-10-02&end=2026-10-01'):
         assert client.get(path, headers=headers).status_code == 400
     assert client.get(root + f"/raw-data?device_id={admin_data['other_device_id']}", headers=headers).status_code == 404

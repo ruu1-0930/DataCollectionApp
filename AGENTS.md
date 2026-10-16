@@ -30,6 +30,23 @@
 
 ## 2. 当前优先级（按架构方案的阶段推进）
 
+### UW01 共用工作台的全量分析范围（2026-10-16，本地交付）
+
+Ru1已确认Project的2026-10-16共用工作台/Agent部署Spec及Plan并要求开始，Native顺序执行。
+目标角色改为clinician/admin，不保留admin_readonly运行兼容；用户登录/公开注册/App DTO不变。
+`access.require_patient_scope`统一临床读取和快照执行：医生限本人，admin全量；
+snapshot repository在自己的事务Session重读真实账号角色，仍保留患者锁、修订/发布fence与实际actor。
+业务采集/患者/设备/资料写入仍仅医生，admin不能借分析权限改原始业务数据。
+新增/workbench/patients与/workbench/clinicians，SQL JOIN分页、最小owner摘要、姓名/编号查询、
+字面LIKE通配符、缺PII姓名null、X-Trace-ID及无PII访问日志；旧/admin次级浏览继续保留。
+新迁移004a扩enum、停服中显式改批准账号ID、旧角色为0后004b收敛，不启动时自动提权或重跑001–003。
+新ORM不能先于旧角色迁移启用；生产当前仍是旧版本，不得单独pull重启本块而遗漏配套工作台。
+集中B验证209passed/4361warnings/77.30s；实际命令、RED和限制在Project独立进度。
+Windows本地MySQL8.0.43两次探针未完成客户端就绪/收尾验证，未进入角色DDL；相关PID确认已退出，
+不称MySQL演练通过或RDS迁移完成，不重复扩排查，保留为ECS前人工门禁。后续UW02接共用UI。
+详细Spec/Plan/进度均为Project docs/superpowers下2026-10-16-sarcogait-unified-workbench-agent-deployment系列。
+下方ADM01为历史目标/证据，不再作为新admin禁止分析的实现依据。
+
 ### ADM01 全局只读业务管理员（2026-10-15）
 
 Ru1已确认Project中的管理员Spec/Plan并选择Native顺序实施。A01新增Clinician.role，
