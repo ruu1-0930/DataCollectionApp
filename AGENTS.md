@@ -45,6 +45,9 @@ GPS01 后端实现 `7be40ac`：三表/005、create/batch/stop、GPS旁路查询�
 审查发现的MySQL读视图问题已由 `ac7ac4c` 在首次查询前设置READ COMMITTED修复，
 限定20passed/81warnings/8.65s并经限域复审通过；MySQL实库仍未验。App/工作台接入继续，
 详见 `docs/gps/2026-10-19-backend-delivery.md`，不称GPS全链路已可用。
+GPS02 uni-app实现 `0d35957`：换行重组/双流、显式采集与5000条有限待发队列、固定患者/操作者、
+BLE/请求/生命周期及首页状态已接线，最终108passed/15files/1.03s；详见 `docs/gps/2026-10-19-uniapp-delivery.md`。
+本地测试不等于HBuilderX编译或真机通过，尚待任务级审查/工作台接入，不动原生Android与加密插件。
 
 ### UW01 共用工作台的全量分析范围（2026-10-16，本地交付）
 
