@@ -106,16 +106,16 @@ const attrText = computed(() => {
   return [a.hospital, a.dept, a.doctor].filter(Boolean).join(' · ') || '未设置'
 })
 
-// 采集中：用已连接设备近似（无独立采集协议/标志）
+// 连接和正式记录是两种状态；开始/停止由首页控制。
 const connectedCodes = computed(() =>
   Object.keys(blueToothStore.bles_objs).filter((code) => blueToothStore.bles_objs[code]?.isConnected)
 )
-const isCollecting = computed(() => connectedCodes.value.length > 0)
+const isCollecting = computed(() => !!blueToothStore.collectionState.active)
 const collectSub = computed(() => {
   const names = connectedCodes.value.map((code) => {
     return blueToothStore.deviceList.find((d) => d.device_code === code)?.device_name || code
   })
-  return `已连接 ${names.length} 台：${names.join('、')}`
+  return blueToothStore.collectionState.waiting ? '等待重新连接；已记录数据保留' : `同步记录中 · 已连接 ${names.length} 台：${names.join('、')}`
 })
 
 const getNoticeBarText = computed(() => {

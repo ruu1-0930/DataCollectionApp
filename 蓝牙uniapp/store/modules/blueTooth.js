@@ -1,9 +1,15 @@
 import { defineStore } from 'pinia'
 import { store } from '@/store'
-import { listDevicesApi, registerDeviceApi, deleteDeviceApi as deleteDeviceApiReq, uploadRawDataApi } from '@/api'
-import { buildRawDataPayload } from '@/utils/apiShape'
+import { listDevicesApi, registerDeviceApi, deleteDeviceApi as deleteDeviceApiReq, createCollectionApi, uploadCollectionBatchApi, stopCollectionApi } from '@/api'
 import { usePatientStoreWithOut } from '@/store/modules/patient'
+import { useOperatorStoreWithOut } from '@/store/modules/operator'
+import { createBleLines, parseTelemetry } from '@/utils/bleTelemetry'
+import { createCollectionSession } from '@/utils/collectionSession'
+import { createTelemetryQueue } from '@/utils/telemetryQueue'
 import { BleLib } from '@/uni_modules/android-ble'
+
+const collectionRuntimes = new WeakMap()
+const collectionStorageKey = 'collection_queue_v1'
 
 const mapper = {
   10000: '未初始化蓝牙适配器',
@@ -66,11 +72,120 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       isScanning: false,
 
       // 最近一帧实时步态（仅供首页展示，不落库；落库走后端拆分）
-      realtime: emptyRealtime()
+      realtime: emptyRealtime(),
+      gpsRealtime: null,
+      collectionState: { active: null, reason: '', rejected: 0, waiting: false,
+        queue: { pending: 0, sessions: 0, sending: false, paused: false, error: '' } }
     }
   },
   getters: {},
   actions: {
+    ensureCollection() {
+      if (collectionRuntimes.has(this)) return collectionRuntimes.get(this)
+      const identity = () => {
+        const op = useOperatorStoreWithOut()
+        return { clinicianId: op.operator?.clinicianId, authEpoch: op.authRuntime.authEpoch, unlocked: op.unlocked }
+      }
+      const runtime = { uploadTimer: null }
+      collectionRuntimes.set(this, runtime)
+      runtime.queue = createTelemetryQueue({
+        load: () => uni.getStorageSync(collectionStorageKey),
+        save: value => uni.setStorageSync(collectionStorageKey, value),
+        identity,
+        api: { create: createCollectionApi, batch: uploadCollectionBatchApi, stop: stopCollectionApi },
+        onChange: value => { this.collectionState.queue = value },
+      })
+      this.collectionState.queue = runtime.queue.snapshot()
+      runtime.session = createCollectionSession({ queue: runtime.queue, identity,
+        onChange: value => {
+          this.collectionState.active = value.active
+          this.collectionState.reason = value.reason
+          if (typeof uni.setKeepScreenOn === 'function') uni.setKeepScreenOn({ keepScreenOn: !!value.active })
+          if (value.reason === 'background') uni.showToast({ title: 'App已离开前台，采集已停止，待上传数据已保留', icon: 'none', duration: 3000 })
+          if (value.reason === 'storage' || value.reason === 'capacity' || value.reason === 'clock_rollback') {
+            uni.showToast({ title: value.reason === 'clock_rollback' ? '手机时间回退，已停止采集，请校准时间' : '本地缓存不可用或已满，已停止采集', icon: 'none', duration: 3000 })
+          }
+        },
+      })
+      return runtime
+    },
+    scheduleCollectionUpload(delay = 1000) {
+      const runtime = this.ensureCollection()
+      if (runtime.uploadTimer !== null) return
+      runtime.uploadTimer = setTimeout(async () => {
+        runtime.uploadTimer = null
+        await runtime.queue.drain()
+        const status = runtime.queue.snapshot()
+        if (status.pending && !status.paused) this.scheduleCollectionUpload()
+      }, delay)
+    },
+    startCollection(deviceCode) {
+      const runtime = this.ensureCollection()
+      const ps = usePatientStoreWithOut()
+      try {
+        runtime.session.start({ patientId: ps.currentId, deviceCode, connected: !!this.bles_objs[deviceCode]?.isConnected })
+        this.bles_objs[deviceCode]?.lineStream?.reset()
+        this.collectionState.waiting = false
+        this.scheduleCollectionUpload(0)
+      } catch {
+        uni.showToast({ title: '无法开始：请解锁、选择患者并连接设备，检查本地缓存', icon: 'none', duration: 3000 })
+      }
+    },
+    stopCollection(reason = 'user') {
+      const code = this.collectionState.active?.device_code
+      this.ensureCollection().session.stop(reason)
+      if (code) this.bles_objs[code]?.lineStream?.reset()
+      this.collectionState.waiting = false
+      this.scheduleCollectionUpload(0)
+    },
+    retryCollectionUpload() { return this.ensureCollection().queue.drain(true) },
+    endCollectionContext(reason = 'identity') {
+      this.stopCollection(reason)
+      Object.keys(this.bles_objs).forEach(code => this.invalidateConnection(code, true))
+      this.realtime = emptyRealtime()
+      this.gpsRealtime = null
+    },
+    invalidateConnection(code, close = false) {
+      const slot = this.bles_objs[code]
+      if (!slot) return
+      slot.connectionEpoch = (slot.connectionEpoch || 0) + 1
+      slot.lineStream?.reset()
+      slot.lineStream = null
+      slot.isConnected = false
+      slot.connecting = false
+      if (this.collectionState.active?.device_code === code) this.collectionState.waiting = true
+      clearTimeout(slot.connectTimer)
+      clearTimeout(slot.retryTimer)
+      if (close) {
+        try {
+          if (slot.service_uuid && slot.read_characteristic_uuid) slot.ble.onNotityReadBleData(slot.service_uuid, slot.read_characteristic_uuid, false, () => {})
+        } catch { /* Some native callbacks can already be released on adapter shutdown. */ }
+        try { slot.ble.close() } catch { /* JS generation fencing still rejects released callbacks. */ }
+      }
+    },
+    acceptTelemetry(code, epoch, line, receivedAt) {
+      const slot = this.bles_objs[code]
+      if (!slot?.isConnected || slot.connectionEpoch !== epoch) return
+      let parsed
+      try { parsed = parseTelemetry(line) }
+      catch { this.collectionState.rejected += 1; return }
+      const runtime = this.ensureCollection()
+      const active = runtime.session.active
+      if (active && active.patient_id !== usePatientStoreWithOut().currentId) this.stopCollection('patient')
+      if (parsed.stream === 'gps') this.gpsRealtime = { ...parsed.gps, receivedAt, deviceCode: code }
+      else {
+        const d = parsed.payload
+        this.realtime = { hasData: true, deviceCode: code,
+          left: { pressure: Array.from({ length: 9 }, (_, i) => d[`lp${i + 1}`]),
+            imu: { ax: d.ax, ay: d.ay, az: d.az, gx: d.gx, gy: d.gy, gz: d.gz },
+            speed: d.left_speed, length: d.left_step_size, single: d.left_single_sp_time, double: d.left_double_sp_time },
+          right: { pressure: Array.from({ length: 9 }, (_, i) => d[`rp${i + 1}`]),
+            imu: { ax: d.right_ax, ay: d.right_ay, az: d.right_az, gx: d.right_gx, gy: d.right_gy, gz: d.right_gz },
+            speed: d.right_speed, length: d.right_step_size, single: d.right_single_sp_time, double: d.right_double_sp_time } }
+      }
+      runtime.session.receive(code, epoch, parsed, receivedAt)
+      this.scheduleCollectionUpload()
+    },
     // 实时同步系统蓝牙开关状态（initBle 的监听只在“切换”时触发，启动前已开启的情况要主动查一次）
     syncBluetoothState() {
       // #ifdef APP-PLUS
@@ -177,11 +292,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         this.isBluetoothOpen = res.data ? true : false
 
         if (!res.data) {
-          // 需要吧所有设备连接状态设置为false
-          Object.keys(this.bles_objs).forEach((device_code) => {
-            this.bles_objs[device_code].isConnected = false
-            this.bles_objs[device_code].ble.close()
-          })
+          this.endCollectionContext('bluetooth_off')
         }
       })
     },
@@ -195,10 +306,12 @@ export const useBlueToothStore = defineStore('blueToothStore', {
 
     disconnectDevice(id) {
       const device = this.deviceList.find((item) => item.id == id)
-      this.bles_objs[device.device_code].isConnected = false
-      this.bles_objs[device.device_code].ble.close()
+      if (!device) return
+      if (this.collectionState.active?.device_code === device.device_code) this.stopCollection('disconnect')
+      this.invalidateConnection(device.device_code, true)
       // 断开后清空首页实时显示，避免残留上一次的数据
       this.realtime = emptyRealtime()
+      this.gpsRealtime = null
     },
 
     connectDevice(id) {
@@ -208,9 +321,10 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       const device = this.deviceList.find((item) => item.id == id)
 
       // 当前连接对象
-      const currentBle = this.bles_objs[device.device_code]
+      const currentBle = device && this.bles_objs[device.device_code]
+      if (!currentBle) { uni.hideLoading(); return }
 
-      if (currentBle.isConnected) {
+      if (currentBle.isConnected || currentBle.connecting) {
         uni.showToast({
           title: '当前设备已连接',
           icon: 'none'
@@ -228,11 +342,17 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         return
       }
 
+      this.invalidateConnection(device.device_code)
+      currentBle.connecting = true
+      let epoch = currentBle.connectionEpoch
+      const current = () => this.bles_objs[device.device_code] === currentBle && currentBle.connectionEpoch === epoch
       // Android BLE 首次 connectGatt 偶发失败（GATT 133 等），允许自动重试一次
       let retriesLeft = 1
       // 是否已成功连上过：区分「首连失败重试」与「已连后掉线/手动断开」——后者绝不能自动重连
       let connected = false
-      const timer = setTimeout(() => {
+      const timer = currentBle.connectTimer = setTimeout(() => {
+        if (!current()) return
+        this.invalidateConnection(device.device_code, true)
         uni.showToast({
           title: '连接超时,请检查设备是否开启',
           icon: 'none'
@@ -242,17 +362,30 @@ export const useBlueToothStore = defineStore('blueToothStore', {
 
       // autoConnect=false：点击即连这种直连场景更快更稳；true 只适合断线后台慢速重连，是首连必失败的主因
       const tryConnect = () => {
+      if (!current()) return
+      const attemptEpoch = epoch
+      const currentAttempt = () => this.bles_objs[device.device_code] === currentBle && currentBle.connectionEpoch === attemptEpoch
       currentBle.ble.connect(device.device_code, false, (res) => {
+        if (!currentAttempt()) return
         // type==0 表示连接成功 type==1
         if (res.type == 0) {
           connected = true
+          currentBle.connecting = false
           this.bles_objs[device.device_code].isConnected = true
+          this.collectionState.waiting = false
 
           currentBle.ble.scanServices(async (resSevice) => {
+            if (!currentAttempt() || !currentBle.isConnected) return
             currentBle.ble.setMtu(512, () => {})
 
             // 获取服务数据（自定义服务固定在 data[2]：含 NOTIFY 特征 4f93ccac）
-            const resSeviceData = resSevice.data[2]
+            const resSeviceData = resSevice?.data?.[2]
+            if (!resSeviceData?.characteristics?.some(item => item?.properties?.NOTIFY)) {
+              this.invalidateConnection(device.device_code, true)
+              uni.hideLoading()
+              uni.showToast({ title: '未找到鞋垫通知服务，请重新连接', icon: 'none' })
+              return
+            }
 
             // 设置服务uuid
             this.bles_objs[device.device_code].service_uuid = resSeviceData.uuid
@@ -270,123 +403,22 @@ export const useBlueToothStore = defineStore('blueToothStore', {
 
             // 延迟2000ms
             await new Promise((resolve) => setTimeout(resolve, 2000))
-
+            if (!currentAttempt() || !currentBle.isConnected) return
+            const stream = createBleLines((line, time) => this.acceptTelemetry(device.device_code, attemptEpoch, line, time),
+              () => { this.collectionState.rejected += 1 })
+            currentBle.lineStream = stream
             currentBle.ble.onNotityReadBleData(currentBle.service_uuid, currentBle.read_characteristic_uuid, true, ({ data }) => {
-              const value = new Uint8Array(data)
-              // 将 ArrayBuffer 转换为字符串
-              const stringValue = Array.from(value)
-                .map((byte) => String.fromCharCode(byte))
-                .join('')
-
-              // 替换掉\n
-              const dataArray = stringValue.split(',').map((item) => item.replace('\n', ''))
-
-              // 效果验证 长度40个字符串
-              if (dataArray.length != 38) {
-                return
-              }
-
-              const apiData = {
-                // 左脚压力值 0-9
-                lp1: parseFloat(dataArray[0]),
-                lp2: parseFloat(dataArray[1]),
-                lp3: parseFloat(dataArray[2]),
-                lp4: parseFloat(dataArray[3]),
-                lp5: parseFloat(dataArray[4]),
-                lp6: parseFloat(dataArray[5]),
-                lp7: parseFloat(dataArray[6]),
-                lp8: parseFloat(dataArray[7]),
-                lp9: parseFloat(dataArray[8]),
-
-                // 左脚
-                ax: parseFloat(dataArray[9]),
-                ay: parseFloat(dataArray[10]),
-                az: parseFloat(dataArray[11]),
-                gx: parseFloat(dataArray[12]),
-                gy: parseFloat(dataArray[13]),
-                gz: parseFloat(dataArray[14]),
-
-                // 左脚步长
-                left_step_size: parseFloat(dataArray[15]),
-                // 左脚步速
-                left_speed: parseFloat(dataArray[16]),
-                // 左脚单支撑
-                left_single_sp_time: parseFloat(dataArray[17]),
-                // 左脚双支撑
-                left_double_sp_time: parseFloat(dataArray[18]),
-
-                // 右脚压力值 20-28
-                rp1: parseFloat(dataArray[19]),
-                rp2: parseFloat(dataArray[20]),
-                rp3: parseFloat(dataArray[21]),
-                rp4: parseFloat(dataArray[22]),
-                rp5: parseFloat(dataArray[23]),
-                rp6: parseFloat(dataArray[24]),
-                rp7: parseFloat(dataArray[25]),
-                rp8: parseFloat(dataArray[26]),
-                rp9: parseFloat(dataArray[27]),
-
-                // 右脚
-                right_ax: parseFloat(dataArray[28]),
-                right_ay: parseFloat(dataArray[29]),
-                right_az: parseFloat(dataArray[30]),
-                right_gx: parseFloat(dataArray[31]),
-                right_gy: parseFloat(dataArray[32]),
-                right_gz: parseFloat(dataArray[33]),
-
-                // 右脚步长
-                right_step_size: parseFloat(dataArray[34]),
-                // 右脚步速
-                right_speed: parseFloat(dataArray[35]),
-                // 右脚单支撑
-                right_single_sp_time: parseFloat(dataArray[36]),
-                // 右脚双支撑
-                right_double_sp_time: parseFloat(dataArray[37])
-              }
-
-              // 每帧刷新首页实时显示（与是否落库无关：即使未选患者也能看到数据）
-              this.realtime = {
-                hasData: true,
-                left: {
-                  pressure: [
-                    apiData.lp1, apiData.lp2, apiData.lp3, apiData.lp4, apiData.lp5,
-                    apiData.lp6, apiData.lp7, apiData.lp8, apiData.lp9
-                  ],
-                  imu: { ax: apiData.ax, ay: apiData.ay, az: apiData.az,
-                         gx: apiData.gx, gy: apiData.gy, gz: apiData.gz },
-                  speed: apiData.left_speed,
-                  length: apiData.left_step_size,
-                  single: apiData.left_single_sp_time,
-                  double: apiData.left_double_sp_time
-                },
-                right: {
-                  pressure: [
-                    apiData.rp1, apiData.rp2, apiData.rp3, apiData.rp4, apiData.rp5,
-                    apiData.rp6, apiData.rp7, apiData.rp8, apiData.rp9
-                  ],
-                  imu: { ax: apiData.right_ax, ay: apiData.right_ay, az: apiData.right_az,
-                         gx: apiData.right_gx, gy: apiData.right_gy, gz: apiData.right_gz },
-                  speed: apiData.right_speed,
-                  length: apiData.right_step_size,
-                  single: apiData.right_single_sp_time,
-                  double: apiData.right_double_sp_time
-                }
-              }
-
-              const ps = usePatientStoreWithOut()
-              const patientId = ps.currentId
-              if (!patientId) {
-                // 无当前患者：禁止上传（避免数据无法归属）
-                return
-              }
-              uploadRawDataApi(device.device_code, buildRawDataPayload(patientId, apiData))
+              if (!currentAttempt() || !currentBle.isConnected || !data) return
+              try { stream.push(data) } catch { this.collectionState.rejected += 1 }
             })
           })
         } else {
           // 已成功连过又收到失败回调 = 掉线/被断开：仅复位状态，绝不自动重连
           if (connected) {
-            this.bles_objs[device.device_code].isConnected = false
+            this.invalidateConnection(device.device_code)
+            if (this.collectionState.active?.device_code === device.device_code) this.collectionState.waiting = true
             this.realtime = emptyRealtime()
+            this.gpsRealtime = null
             uni.hideLoading()
             clearTimeout(timer)
             return
@@ -394,7 +426,12 @@ export const useBlueToothStore = defineStore('blueToothStore', {
           // 仅首连阶段才自动重试一次，避免把 Android 固有的偶发 GATT 失败直接抛给用户
           if (retriesLeft > 0) {
             retriesLeft--
-            setTimeout(tryConnect, 600)
+            currentBle.retryTimer = setTimeout(() => {
+              if (!currentAttempt()) return
+              currentBle.connectionEpoch += 1
+              epoch = currentBle.connectionEpoch
+              tryConnect()
+            }, 600)
             return
           }
           uni.showToast({
@@ -403,6 +440,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
           })
           uni.hideLoading()
           clearTimeout(timer)
+          currentBle.connecting = false
         }
       })
       }
@@ -518,10 +556,12 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       uni.showLoading({
         title: '删除中..'
       })
+      const device = this.deviceList.find((item) => item.id == id)
+      if (!device) { uni.hideLoading(); return }
+      if (this.collectionState.active?.device_code === device.device_code) this.stopCollection('delete')
+      this.invalidateConnection(device.device_code, true)
       try {
         await deleteDeviceApiReq(id)
-        const device = this.deviceList.find((item) => item.id == id)
-        this.bles_objs[device.device_code].ble.close()
         delete this.bles_objs[device.device_code]
         await this.getDevicesList()
         uni.showToast({

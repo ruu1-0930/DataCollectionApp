@@ -3,6 +3,7 @@ import { store } from '@/store'
 import { getOperator, setOperator, clearOperator } from '@/utils/clinicStorage'
 import { clearToken, setToken, getToken } from '@/utils/auth'
 import { clinicianEnableApi, clinicianLoginApi } from '@/api'
+import { useBlueToothStoreWithOut } from '@/store/modules/blueTooth'
 import {
   createOperatorSessionRuntime,
   enableOperatorSession,
@@ -24,6 +25,7 @@ export const useOperatorStore = defineStore('operatorStore', {
   actions: {
     // 首次启用：POST /clinician/enable → 存 token + 本地档案
     enable(credentials) {
+      useBlueToothStoreWithOut().endCollectionContext('identity')
       return enableOperatorSession({
         state: this,
         runtime: this.authRuntime,
@@ -35,6 +37,7 @@ export const useOperatorStore = defineStore('operatorStore', {
     },
     // 解锁必须经服务端重新验证；口令仅保留在当前运行期内存。
     unlock(passcode) {
+      useBlueToothStoreWithOut().endCollectionContext('identity')
       return unlockOperatorSession({
         state: this,
         runtime: this.authRuntime,
@@ -56,6 +59,7 @@ export const useOperatorStore = defineStore('operatorStore', {
     },
     hasToken() { return !!getToken() },
     reset() {
+      useBlueToothStoreWithOut().endCollectionContext('identity')
       resetOperatorSession({
         state: this,
         runtime: this.authRuntime,

@@ -3,6 +3,13 @@ import { baseURL, requestTimeout, contentType } from '@/config'
 import { getToken } from '@/utils/auth'
 import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { logRequestError, logRequestStart, logResponse } from '@/utils/requestLog'
+import { assertCollectionIdentity } from '@/utils/collectionSession'
+
+function checkCollectionOwner(config) {
+  if (!config?.custom?.collectionIdentity) return
+  const op = useOperatorStoreWithOut()
+  assertCollectionIdentity(config.custom, { clinicianId: op.operator?.clinicianId, authEpoch: op.authRuntime.authEpoch, unlocked: op.unlocked })
+}
 
 /**
  * @description 处理code异常
@@ -86,6 +93,7 @@ const instance = new Request({
 // 401 静默刷新并重试一次：使用当前运行期已验证的口令换新 token。
 async function retryWithRefresh(config) {
   if (!config) return Promise.reject(config)
+  checkCollectionOwner(config)
   // 重试标记必须放在 custom 上：luch-request 的 mergeConfig 只透传 custom/header 等白名单字段，
   // 顶层自定义属性（如 _retried）会在 instance.request 重新合并配置时被丢弃，导致 401 无限重试。
   if (config.custom && config.custom._retried) return Promise.reject(config)
@@ -95,6 +103,7 @@ async function retryWithRefresh(config) {
   const op = useOperatorStoreWithOut()
   if (!op.operator || !op.runtimePasscode) return Promise.reject(config)
   await op.refreshToken()
+  checkCollectionOwner(config)
   config.custom = { ...(config.custom || {}), _retried: true }
   config.header = { ...(config.header || {}), Authorization: getToken() }
   return instance.request(config)
@@ -102,6 +111,7 @@ async function retryWithRefresh(config) {
 
 instance.interceptors.request.use(
   (config) => {
+    checkCollectionOwner(config)
     logRequestStart(config)
     
     // token 由操作员启用/登录产生，存为 "Bearer xxx" 整串（auth.getToken）

@@ -4,6 +4,7 @@ import { getPatients, setPatients, getCurrentPatientId, setCurrentPatientId, cle
 import { searchPatients } from '@/utils/patient'
 import { normalizePatient } from '@/utils/apiShape'
 import { createPatientApi, listPatientsApi } from '@/api'
+import { useBlueToothStoreWithOut } from '@/store/modules/blueTooth'
 
 export const usePatientStore = defineStore('patientStore', {
   state: () => ({
@@ -38,10 +39,12 @@ export const usePatientStore = defineStore('patientStore', {
       return this.patients
     },
     select(id) {
+      if (this.currentId !== id) useBlueToothStoreWithOut().stopCollection('patient')
       this.currentId = id
       setCurrentPatientId(id)
     },
     clearCurrent() {
+      useBlueToothStoreWithOut().stopCollection('patient')
       this.currentId = null
       clearCurrentPatientId()
     },

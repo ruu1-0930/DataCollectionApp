@@ -9,6 +9,7 @@ export default {
   onLaunch: function () {
     const blueToothStore = useBlueToothStoreWithOut()
     blueToothStore.initBle()
+    blueToothStore.ensureCollection()
 
     const op = useOperatorStoreWithOut()
     const ps = usePatientStoreWithOut()
@@ -21,7 +22,11 @@ export default {
     })
     if (launchRoute) uni.reLaunch({ url: launchRoute })
   },
-  onShow() {}, onHide() {}
+  onShow() {},
+  onHide() {
+    const ble = useBlueToothStoreWithOut()
+    if (ble.collectionState.active) ble.stopCollection('background')
+  }
 }
 </script>
 
