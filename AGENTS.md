@@ -42,7 +42,9 @@ GPS1 是独立 13 列消息，保留原 38 项。新增 capture/sidecar，手机
 本地合成验证与真机/MySQL/RDS/ECS 分开，生产手动操作到达交接点再通知 Ru1。
 GPS01 后端实现 `7be40ac`：三表/005、create/batch/stop、GPS旁路查询已本地完成，
 限定组合51passed/231warnings/20.35s；005/schema镜像及MySQL dialect编译通过，未执行MySQL/RDS。
-尚待任务审查及App/工作台接入；详见 `docs/gps/2026-10-19-backend-delivery.md`，不称GPS全链路已可用。
+审查发现的MySQL读视图问题已由 `ac7ac4c` 在首次查询前设置READ COMMITTED修复，
+限定20passed/81warnings/8.65s并经限域复审通过；MySQL实库仍未验。App/工作台接入继续，
+详见 `docs/gps/2026-10-19-backend-delivery.md`，不称GPS全链路已可用。
 
 ### UW01 共用工作台的全量分析范围（2026-10-16，本地交付）
 
