@@ -133,17 +133,22 @@ def normalized_event(value):
 
 @contextmanager
 def write_transaction():
-    with Session(db.engine, expire_on_commit=False) as session:
-        try:
-            if db.engine.dialect.name == 'sqlite':
-                session.execute(text('BEGIN IMMEDIATE'))
-            else:
-                session.begin()
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
+    with db.engine.connect() as connection:
+        # The account read precedes the capture lock. A repeatable-read view could
+        # otherwise hide rows committed while that lock was being acquired.
+        if connection.dialect.name == 'mysql':
+            connection = connection.execution_options(isolation_level='READ COMMITTED')
+        with Session(bind=connection, expire_on_commit=False) as session:
+            try:
+                if connection.dialect.name == 'sqlite':
+                    session.execute(text('BEGIN IMMEDIATE'))
+                else:
+                    session.begin()
+                yield session
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
 
 def _owned_capture(session, capture_id, actor_id):

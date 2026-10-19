@@ -186,3 +186,51 @@ def test_semantically_equal_numeric_retry_reuses_receipt(client,capture):
     assert batch(client,capture,[sample]).status_code == 200
     sample['payload']['lp1'] = 1.0
     assert batch(client,capture,[sample]).get_json()['data']['results'][0]['status'] == 'duplicate'
+
+
+def test_mysql_isolation_is_set_on_connection_before_session_or_first_read(monkeypatch):
+    """Observe our transaction-boundary calls, not an emulated InnoDB schedule."""
+    from types import SimpleNamespace
+    import services.collection_ingest as service
+    calls = []
+    class ConnectionBoundary:
+        dialect = SimpleNamespace(name='mysql')
+        def __enter__(self):
+            calls.append('connection.enter')
+            return self
+        def __exit__(self,*_):
+            calls.append('connection.exit')
+        def execution_options(self,**options):
+            calls.append(('isolation',options))
+            return self
+    connection = ConnectionBoundary()
+    class EngineBoundary:
+        dialect = SimpleNamespace(name='mysql')
+        def connect(self):
+            calls.append('engine.connect')
+            return connection
+    class SessionBoundary:
+        def __init__(self,bind,**_):
+            calls.append(('session.bind',bind))
+        def __enter__(self):
+            return self
+        def __exit__(self,*_):
+            calls.append('session.exit')
+        def begin(self):
+            calls.append('session.begin')
+        def execute(self,statement):
+            calls.append(('query',str(statement)))
+        def commit(self):
+            calls.append('session.commit')
+        def rollback(self):
+            calls.append('session.rollback')
+    monkeypatch.setattr(service,'db',SimpleNamespace(engine=EngineBoundary()))
+    monkeypatch.setattr(service,'Session',SessionBoundary)
+    with service.write_transaction() as session:
+        session.execute('SELECT account before capture lock')
+        session.execute('SELECT capture FOR UPDATE')
+        session.execute('SELECT accepted samples after waiting')
+    assert calls[:3] == ['engine.connect','connection.enter',('isolation',{'isolation_level':'READ COMMITTED'})]
+    assert calls[3] == ('session.bind',connection)
+    assert calls.index(('isolation',{'isolation_level':'READ COMMITTED'})) < calls.index(('query','SELECT account before capture lock'))
+    assert calls[-3:] == ['session.commit','session.exit','connection.exit']

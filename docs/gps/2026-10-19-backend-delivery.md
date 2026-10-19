@@ -69,3 +69,28 @@ Set-Location 'D:\ME5001\.worktrees\DataCollectionApp-snapshot-v1'
 - GPS读取为当前最新集合；slice全量派生质量/段后分页，不是固定历史游标。未做生产规模查询性能验收。
 - GPS-only记录可保存，但没有独立采集目录；当前GET仍从一个既有gait会话进入。单帧slice是零宽接收点，未匹配到GPS就如实为空，不扩窗或猜最近采集。
 - 未访问生产、未使用真实患者、未调用远程模型、未执行ECS操作、未push；App和工作台产品接线尚由后续GPS02/03完成。
+
+## GPS01 审查修复 round1/5：MySQL 事务读视图
+
+审查发现一项 Important：`_owned_capture` 在锁采集行之前先读取账号；若数据库默认 REPEATABLE READ，这次普通SELECT可建立旧读视图。另一个事务持有采集锁并写入样本时，当前事务等到锁后继续普通查重/stop检查，仍可能看不到等待期间提交的样本，导致合法重传误409或过早stop误成功。
+
+本次只修改 `collection_ingest.write_transaction`：先取得独立 Connection，在创建 Session 和任何查询之前显式设置 MySQL `isolation_level='READ COMMITTED'`，再将 Session 绑定该 Connection；提交/回滚后按上下文关闭。沿现有 snapshot repository 的连接级事务配置方式，未改旧服务、数据库默认级别或其他客户端。SQLite仍在实际连接上 `BEGIN IMMEDIATE`。
+
+先新增 `test_mysql_isolation_is_set_on_connection_before_session_or_first_read`，通过明确的连接/Session边界记录器检查隔离配置参数、配置早于Session绑定/首次账号查询以及提交/关闭顺序。这是对生产事务入口所调用边界的检查，不是InnoDB模拟器。修复前命令：
+
+```powershell
+& 'D:\ME5001\runtime\gps-backend-dev\.venv\Scripts\python.exe' -m pytest -p no:cacheprovider back/tests/test_collection_ingest.py::test_mysql_isolation_is_set_on_connection_before_session_or_first_read -q --disable-warnings --tb=short
+```
+
+RED实际 `1 failed in 0.49s`，首次调用为Session直接绑定engine，没有独立connection或READ COMMITTED配置，命中本缺陷。
+
+修复后限定验证命令：
+
+```powershell
+Set-Location 'D:\ME5001\.worktrees\DataCollectionApp-snapshot-v1'
+& 'D:\ME5001\runtime\gps-backend-dev\.venv\Scripts\python.exe' -m pytest -p no:cacheprovider --basetemp=D:/ME5001/runtime/gps-backend-dev/pytest-gps01-fix1 back/tests/test_collection_ingest.py back/tests/test_gps_query.py::test_legacy_gap_scope_does_not_return_entire_capture back/tests/test_gps_query.py::test_gap_epoch_and_overlapping_slice_union_are_stable -q --tb=short
+```
+
+GREEN实际 `20 passed, 81 warnings in 8.65s`，退出码0；包含事务边界顺序、文件SQLite双线程独立Session去重、双唯一冲突/原子回滚、停止窗口补传、旧gap裁剪和多slice窗口。warnings为既有utcnow和专用环境sklearn1.9概率参数类别，没有为告警扩排查，未重跑51项组合或全量。
+
+修复文件仅服务、该测试文件、本交付记录。`git diff --check` 通过。未连接或初始化MySQL、未执行生产操作；边界记录器与SQLite测试不能证明InnoDB的实际交错。人工门禁仍须在隔离MySQL中验证：T1持capture锁写5000ms样本、T2先账号读取后等锁，T1提交后T2相同样本应duplicate，stop4000ms应409；并确认实际事务隔离为READ COMMITTED。
