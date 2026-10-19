@@ -30,6 +30,20 @@
 
 ## 2. 当前优先级（按架构方案的阶段推进）
 
+### GPS 双流采集（2026-10-19，优先实施）
+
+Ru1 授权子 agent 分工，继续现有 `蓝牙uniapp/`，不迁移或修改 `android-native/`。
+本轮先 GPS 采集/B 存储/工作台闭环，再做工作台交互和 Agent 报告优化。
+权威 Spec/Plan 为 Project 隔离树 `docs/superpowers/{specs,plans}/2026-10-19-sarcogait-gps*`，
+统一进度 `docs/superpowers/plans/2026-10-19-sarcogait-gps-progress.md`。
+每个完整任务维护模块交付记录 `docs/gps/2026-10-19-*-delivery.md`，控制任务立即汇总进度。
+GPS1 是独立 13 列消息，保留原 38 项。新增 capture/sidecar，手机接收/GPS UTC/服务器时间分开；
+不改旧 raw 时钟、gap 会话、快照/报告或 Agent 输入。新 batch 不执行旧 SVM。
+本地合成验证与真机/MySQL/RDS/ECS 分开，生产手动操作到达交接点再通知 Ru1。
+GPS01 后端实现 `7be40ac`：三表/005、create/batch/stop、GPS旁路查询已本地完成，
+限定组合51passed/231warnings/20.35s；005/schema镜像及MySQL dialect编译通过，未执行MySQL/RDS。
+尚待任务审查及App/工作台接入；详见 `docs/gps/2026-10-19-backend-delivery.md`，不称GPS全链路已可用。
+
 ### UW01 共用工作台的全量分析范围（2026-10-16，本地交付）
 
 Ru1已确认Project的2026-10-16共用工作台/Agent部署Spec及Plan并要求开始，Native顺序执行。
