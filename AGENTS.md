@@ -48,6 +48,8 @@ GPS01 后端实现 `7be40ac`：三表/005、create/batch/stop、GPS旁路查询�
 GPS02 uni-app实现 `0d35957`：换行重组/双流、显式采集与5000条有限待发队列、固定患者/操作者、
 BLE/请求/生命周期及首页状态已接线，最终108passed/15files/1.03s；详见 `docs/gps/2026-10-19-uniapp-delivery.md`。
 本地测试不等于HBuilderX编译或真机通过，尚待任务级审查/工作台接入，不动原生Android与加密插件。
+GPS02审查的失败attempt晚回调缺陷由 `d11fc58` 修复，定向15passed/688ms并经复审PASS。
+多设备waiting显示Minor暂缓，由整体审查triage；不影响固定采集归属/队列，工作台及真机门禁仍保留。
 
 ### UW01 共用工作台的全量分析范围（2026-10-16，本地交付）
 
