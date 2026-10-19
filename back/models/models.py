@@ -134,6 +134,72 @@ def _state(name, *values):
                    validate_strings=True)
 
 
+class CollectionSession(db.Model):
+    __tablename__ = 'collection_sessions'
+    capture_id = db.Column(_identity(36), primary_key=True)
+    clinician_id = db.Column(db.Integer, db.ForeignKey('clinicians.id'), nullable=False)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False)
+    device_id = db.Column(db.Integer, db.ForeignKey('devices.id'), nullable=False)
+    mobile_started_at = db.Column(_utc_time, nullable=False)
+    mobile_stopped_at = db.Column(_utc_time)
+    server_created_at = db.Column(_utc_time, nullable=False)
+    server_stopped_at = db.Column(_utc_time)
+    __table_args__ = (db.Index('idx_collection_patient', 'patient_id'),
+                      {'mysql_engine': 'InnoDB', 'mysql_charset': 'utf8mb4'})
+
+
+class CollectionInsoleFrame(db.Model):
+    __tablename__ = 'collection_insole_frames'
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    capture_id = db.Column(_identity(36), db.ForeignKey('collection_sessions.capture_id'), nullable=False)
+    stream = db.Column(_state('collection_insole_stream', 'insole'), nullable=False)
+    event_id = db.Column(_identity(36), nullable=False)
+    connection_epoch = db.Column(db.BigInteger, nullable=False)
+    stream_sequence = db.Column(db.BigInteger, nullable=False)
+    mobile_received_at = db.Column(_utc_time, nullable=False)
+    server_received_at = db.Column(_utc_time, nullable=False)
+    payload_hash = db.Column(_identity(64), nullable=False)
+    left_raw_id = db.Column(db.Integer, db.ForeignKey('device_raw_data.id'), nullable=False, unique=True)
+    right_raw_id = db.Column(db.Integer, db.ForeignKey('device_raw_data.id'), nullable=False, unique=True)
+    __table_args__ = (
+        db.UniqueConstraint('capture_id', 'stream', 'event_id', name='uq_collection_insole_event'),
+        db.UniqueConstraint('capture_id', 'stream', 'connection_epoch', 'stream_sequence', name='uq_collection_insole_sequence'),
+        db.CheckConstraint('connection_epoch >= 0 AND stream_sequence >= 0', name='ck_collection_insole_sequence'),
+        {'mysql_engine': 'InnoDB', 'mysql_charset': 'utf8mb4'})
+
+
+class CollectionGpsRaw(db.Model):
+    __tablename__ = 'collection_gps_raw'
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    capture_id = db.Column(_identity(36), db.ForeignKey('collection_sessions.capture_id'), nullable=False)
+    stream = db.Column(_state('collection_gps_stream', 'gps'), nullable=False)
+    event_id = db.Column(_identity(36), nullable=False)
+    connection_epoch = db.Column(db.BigInteger, nullable=False)
+    stream_sequence = db.Column(db.BigInteger, nullable=False)
+    mobile_received_at = db.Column(_utc_time, nullable=False)
+    server_received_at = db.Column(_utc_time, nullable=False)
+    payload_hash = db.Column(_identity(64), nullable=False)
+    raw_line = db.Column(db.String(1024), nullable=False)
+    seq = db.Column(db.BigInteger, nullable=False)
+    fix = db.Column(db.Boolean, nullable=False)
+    lat = db.Column(db.Float().with_variant(mysql.DOUBLE(), 'mysql'))
+    lon = db.Column(db.Float().with_variant(mysql.DOUBLE(), 'mysql'))
+    alt = db.Column(db.Float().with_variant(mysql.DOUBLE(), 'mysql'))
+    speed = db.Column(db.Float().with_variant(mysql.DOUBLE(), 'mysql'))
+    sats = db.Column(db.BigInteger, nullable=False)
+    hdop = db.Column(db.Float().with_variant(mysql.DOUBLE(), 'mysql'))
+    age = db.Column(db.BigInteger, nullable=False)
+    utc = db.Column(db.String(1024), nullable=False)
+    chars = db.Column(db.BigInteger, nullable=False)
+    errors = db.Column(db.BigInteger, nullable=False)
+    __table_args__ = (
+        db.UniqueConstraint('capture_id', 'stream', 'event_id', name='uq_collection_gps_event'),
+        db.UniqueConstraint('capture_id', 'stream', 'connection_epoch', 'stream_sequence', name='uq_collection_gps_sequence'),
+        db.Index('idx_collection_gps_receive', 'capture_id', 'connection_epoch', 'mobile_received_at'),
+        db.CheckConstraint('connection_epoch >= 0 AND stream_sequence >= 0 AND seq >= 0 AND sats >= 0 AND age >= 0 AND chars >= 0 AND errors >= 0', name='ck_collection_gps_nonnegative'),
+        {'mysql_engine': 'InnoDB', 'mysql_charset': 'utf8mb4'})
+
+
 class GaitSessionRevision(db.Model):
     __tablename__ = 'gait_session_revision'
     id = db.Column(_identity(36), primary_key=True)
