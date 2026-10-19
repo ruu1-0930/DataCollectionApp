@@ -423,11 +423,15 @@ export const useBlueToothStore = defineStore('blueToothStore', {
             clearTimeout(timer)
             return
           }
+          // A failure retires its native callback now, including the backoff/final-failure window.
+          // Keep the operation epoch current so timeout/close can still cancel the scheduled retry.
+          currentBle.connectionEpoch += 1
+          epoch = currentBle.connectionEpoch
           // 仅首连阶段才自动重试一次，避免把 Android 固有的偶发 GATT 失败直接抛给用户
           if (retriesLeft > 0) {
             retriesLeft--
             currentBle.retryTimer = setTimeout(() => {
-              if (!currentAttempt()) return
+              if (!current()) return
               currentBle.connectionEpoch += 1
               epoch = currentBle.connectionEpoch
               tryConnect()

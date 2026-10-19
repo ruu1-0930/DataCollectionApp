@@ -73,3 +73,19 @@ git diff --exit-code -- package.json package-lock.json
 - 5000 是应用事件上限，设备存储配额/磁盘故障可能更早停止。未解决系统杀进程前未持久化、系统阻塞通知、同步 storage 写入耗时或无限离线采集问题；未进行吞吐/长时间实机压测。
 - 错误/损坏队列保留，未提供自动丢弃、跨操作者转移或绕过 4xx/409 的入口；原操作者须解锁重试，坏存储由维护人员先保全后处理。
 - 本地合成动作和拦截器测试不代表实际 B HTTP/RDS/MySQL/ECS/APK 纵向验收；生产迁移与发布由控制任务另行交接。GPS 质量和工作台关联由 B 负责，未将 GPS 送入 Agent/模型。
+
+## GPS02 审查修复第 1 轮（2026-10-20）
+
+唯一 Important：原实现只在重试启动时递增 epoch，首次失败后的 600ms 退避期间及最终失败后，失败 attempt 的 late success 仍会被接纳。先在真实 store 动作补两个窗口的 RED，并补一项失败退休后原 10 秒超时仍执行 native close/取消重试的直接清理检查。
+
+```powershell
+cd 'D:\ME5001\.worktrees\DataCollectionApp-snapshot-v1\蓝牙uniapp'
+npm test -- tests/collectionWiring.test.js --pool=forks --poolOptions.forks.singleFork
+git diff --check
+```
+
+02:18:26 RED：`2 failed,13 passed`，683ms；两窗口均实际 `isConnected=true`、应为 false。
+修复：初连失败当场递增连接 epoch 并退休该 attempt；operation 的 epoch 同步前移，超时仍能识别当前操作并清理。退避结束使用 operation guard，启动另一新 epoch；旧 attempt 的回调不能使连接复活。最终失败仍清理 timeout/connecting 状态。
+02:18:46 GREEN：同一命令 **15 passed，0 failed，688ms**；覆盖两个失败窗口、失败退休后的 timeout/close，以及已有真实接线回归。`git diff --check` 通过，仅 Git 提示测试文件按仓库规则换为 CRLF。
+
+本轮只改 `blueTooth.js`、`collectionWiring.test.js` 和本文；没有重跑 108 项全套，不把定向 15 项与历史全套相加。审查 Minor（非当前采集设备连接成功会清除 waiting）由控制任务保留 deferred，本轮不修改。APK/真机边界不变。

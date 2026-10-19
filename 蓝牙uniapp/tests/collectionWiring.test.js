@@ -149,6 +149,48 @@ describe('actual BLE collection wiring', () => {
     callbacks[0]({ type: 0 })
     expect(scans).toHaveBeenCalledTimes(1)
   })
+  it('retires a failed attempt immediately throughout the 600ms retry backoff', async () => {
+    const callbacks = []
+    native.connect = (code, auto, callback) => {
+      callbacks.push(callback)
+      if (callbacks.length === 1) callback({ type: 10003 })
+      else callback({ type: 0 })
+    }
+    const scans = vi.spyOn(native, 'scanServices')
+    store.connectDevice(3)
+    await vi.advanceTimersByTimeAsync(300)
+    callbacks[0]({ type: 0 })
+    expect(store.bles_objs['IN-3'].isConnected).toBe(false)
+    expect(scans).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(callbacks).toHaveLength(2)
+    expect(scans).toHaveBeenCalledTimes(1)
+  })
+  it('rejects a late success after the final retry has already failed', async () => {
+    const callbacks = []
+    native.connect = (code, auto, callback) => { callbacks.push(callback); callback({ type: 10003 }) }
+    const scans = vi.spyOn(native, 'scanServices')
+    store.connectDevice(3)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(callbacks).toHaveLength(2)
+    callbacks[1]({ type: 0 })
+    expect(store.bles_objs['IN-3'].isConnected).toBe(false)
+    expect(store.bles_objs['IN-3'].connecting).toBe(false)
+    expect(scans).not.toHaveBeenCalled()
+  })
+  it('still performs timeout and native close while a failed attempt is retired', async () => {
+    const callbacks = []
+    native.connect = (code, auto, callback) => { callbacks.push(callback) }
+    native.close = vi.fn()
+    store.connectDevice(3)
+    await vi.advanceTimersByTimeAsync(9900)
+    callbacks[0]({ type: 10003 })
+    await vi.advanceTimersByTimeAsync(100)
+    expect(native.close).toHaveBeenCalledOnce()
+    expect(store.bles_objs['IN-3'].connecting).toBe(false)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(callbacks).toHaveLength(1)
+  })
   it('always closes the native connection even if disabling notification throws', async () => {
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
