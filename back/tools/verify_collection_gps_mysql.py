@@ -23,7 +23,7 @@ START = datetime(2026, 10, 19, 23, 59, 58, 123000)
 CHECKPOINTS = frozenset(('startup', 'preflight', 'setup', 'create',
     'insole.accept_duplicate', 'insole.conflict', 'insole.atomic',
     'gps.accept_duplicate', 'gps.conflict', 'gps.atomic', 'service.counts',
-    'gps.time_payload', 'gps.double_storage', 'insole.raw_mapping', 'stop.boundary',
+    'gps.time_payload', 'gps.double_storage', 'insole.raw_clock', 'insole.raw_mapping', 'stop.boundary',
     'constraints', 'retry.wait', 'stop.wait', 'retry.writer', 'retry.contender',
     'stop.writer', 'stop.contender'))
 _diagnostic = local()
@@ -238,6 +238,29 @@ def check_double_values(processed, driver_values, dialect):
         require(processed[name] == (processor(expected) if processor else expected))
 
 
+def check_raw_clock(frame, rows, connection):
+    # Existing raw columns intentionally have different declared precision.
+    metadata = connection.exec_driver_sql(
+        'SELECT COLUMN_NAME, DATA_TYPE, DATETIME_PRECISION FROM information_schema.columns '
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'device_raw_data' "
+        "AND COLUMN_NAME IN ('collected_at', 'uploaded_at')").all()
+    require(len(metadata) == 2 and {name: (kind, fsp) for name, kind, fsp in metadata} ==
+            {'collected_at': ('datetime', 3), 'uploaded_at': ('datetime', 0)})
+    mode = connection.exec_driver_sql('SELECT @@SESSION.sql_mode').scalar_one()
+    require(isinstance(mode, str))
+    server = frame['server_received_at']
+    require(type(server) is datetime and server.tzinfo is None and server.microsecond % 1000 == 0)
+    collected = server + timedelta(hours=8)
+    uploaded = collected.replace(microsecond=0)
+    # MySQL INSERT rounds lower fsp by default; TIME_TRUNCATE_FRACTIONAL
+    # truncates instead. Integer comparison handles .500 and day carry exactly.
+    if 'TIME_TRUNCATE_FRACTIONAL' not in mode.split(',') and collected.microsecond >= 500000:
+        uploaded += timedelta(seconds=1)
+    require(len(rows) == 2)
+    require(collected != frame['mobile_received_at'] and uploaded != frame['mobile_received_at'])
+    require(all(row['collected_at'] == collected and row['uploaded_at'] == uploaded for row in rows))
+
+
 def business_cases(db, service, owned):
     from sqlalchemy import select, func
     from models.models import CollectionInsoleFrame as Frame, CollectionGpsRaw as Gps, DeviceRawData as Raw
@@ -286,11 +309,11 @@ def business_cases(db, service, owned):
             'SELECT lat, lon, alt, speed, hdop FROM collection_gps_raw WHERE id = %s',
             (gps['id'],)).mappings().one()
         check_double_values(gps, driver_values, conn.dialect)
+        checkpoint('insole.raw_clock')
+        check_raw_clock(frame, raw, conn)
         checkpoint('insole.raw_mapping')
         require({r['foot'] for r in raw} == {'L', 'R'})
         require({frame['left_raw_id'], frame['right_raw_id']} == {r['id'] for r in raw})
-        require(all(r['collected_at'] == r['uploaded_at'] and
-                    r['collected_at'] != frame['mobile_received_at'] for r in raw))
         # All 38 values survive the unchanged per-foot mapping (legacy FLOAT tolerance).
         event = sample(service)
         for row, fields in zip(raw, (service.LEFT_FIELDS, service.RIGHT_FIELDS)):

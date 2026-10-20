@@ -19,6 +19,9 @@ helper 的语法以 Python 3.10 为目标；提交前只在专用 Windows Python
 Ru1 首轮 `4a13a55` 实跑已通过空库/InnoDB preflight，业务检查失败，finally 已清理且七表为空。
 离线已证实旧 helper 把 ORM 的十位 Decimal 与 float 精确比较会误判；当前版修复该检查，
 但首轮没有细分检查点，不能断言它是现场唯一失败原因。完整验收仍待新固定 SHA 的运行回执。
+第二轮 `10785da` 已定位旧 helper 的 raw 时间硬相等断言；Ru1 确认实际 `collected_at=DATETIME(3)`、
+`uploaded_at=DATETIME`。当前版按各列精度核验同一服务器瞬间，不修改旧表或产品时钟；七表清理已再次成功，
+业务后续、约束及锁等待仍待新 SHA 回执。
 
 除了测试库已有访问权，锁等待观察需要已有账号能读取 `information_schema.innodb_trx`，
 并看见这次脚本自身的 writer/contender 事务（MySQL 常要求 PROCESS 可见性）。
@@ -75,6 +78,9 @@ FAIL 可附 `checkpoint=静态名称, category=受限类别, helper_line=本脚�
 - 38 字段拆为真实 L/R raw 与 sidecar，GPS1 原始 13 列保持独立；accepted/duplicate 回执时间相同。
 - 两流同 key 改载荷返回 409 且不增行；先新事件再冲突的整批回滚；停止同值幂等、闭区间补传及窗外拒绝。
 - 跨日手机毫秒时间、GPS UTC 原文本与旧服务器 raw 时钟独立；五个 GPS DOUBLE 精度回读。
+  `insole.raw_clock` 只读核对原表两列精度与当前 `@@SESSION.sql_mode`，以 sidecar 服务器时间加八小时为源，
+  分别精确比较毫秒 collected 与秒 uploaded；默认半秒向上舍入、`TIME_TRUNCATE_FRACTIONAL` 截断，
+  包括跨秒/跨日进位，无一秒公差或 CAST 等同 INSERT 假设。参见 [MySQL 小数秒规则](https://dev.mysql.com/doc/refman/8.0/en/fractional-seconds.html)。
   DOUBLE 存储使用同一核验连接、固定列和本轮 GPS id 的原始 driver SELECT 严格等值检查，
   不放宽公差；另校验 ORM 结果符合真实 model processor。MySQL DOUBLE 默认 `asdecimal=True`，
   ORM 视图会转为十位小数 Decimal，这种读值转换不能冒称数据库丢失精度；产品模型不改。

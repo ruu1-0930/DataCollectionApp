@@ -1,6 +1,7 @@
 """Verifier safety checks only; these do not emulate MySQL business acceptance."""
 import importlib.util
 from decimal import Decimal
+from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
 import re
@@ -172,3 +173,70 @@ def test_diagnostic_uses_allowlist_checkpoint_category_and_local_line_only(verif
     assert secret not in detail
     with pytest.raises(verifier.VerificationFailure):
         verifier.checkpoint(secret)
+
+
+class ClockMetadata:
+    """Only the external metadata/session reads; no business or DB result simulation."""
+    def __init__(self, mode='', columns=None):
+        self.mode = mode
+        self.columns = columns if columns is not None else [
+            ('collected_at', 'datetime', 3), ('uploaded_at', 'datetime', 0)]
+
+    def exec_driver_sql(self, sql):
+        if 'information_schema.columns' in sql:
+            return Rows(self.columns)
+        assert sql == 'SELECT @@SESSION.sql_mode'
+        return Rows([(self.mode,)])
+
+
+@pytest.mark.parametrize('server,collected,uploaded,mode', [
+    ('2026-10-20 23:59:58.499', '2026-10-21 07:59:58.499', '2026-10-21 07:59:58', ''),
+    ('2026-10-20 23:59:58.500', '2026-10-21 07:59:58.500', '2026-10-21 07:59:59', ''),
+    ('2026-10-20 23:59:58.501', '2026-10-21 07:59:58.501', '2026-10-21 07:59:59', ''),
+    ('2026-10-20 15:59:59.999', '2026-10-20 23:59:59.999', '2026-10-21 00:00:00', ''),
+    ('2026-10-20 23:59:58.500', '2026-10-21 07:59:58.500', '2026-10-21 07:59:58',
+     'STRICT_TRANS_TABLES,TIME_TRUNCATE_FRACTIONAL'),
+    ('2026-10-20 15:59:59.999', '2026-10-20 23:59:59.999', '2026-10-20 23:59:59',
+     'TIME_TRUNCATE_FRACTIONAL'),
+])
+def test_raw_clock_checks_same_server_instant_at_declared_precision(
+        verifier, server, collected, uploaded, mode):
+    frame = dict(server_received_at=datetime.fromisoformat(server),
+                 mobile_received_at=datetime(2026, 10, 19))
+    row = dict(collected_at=datetime.fromisoformat(collected), uploaded_at=datetime.fromisoformat(uploaded))
+    verifier.check_raw_clock(frame, [row, dict(row)], ClockMetadata(mode))
+
+
+@pytest.mark.parametrize('fault', ['wrong_second', 'wrong_offset', 'changed_collected',
+                                  'mobile_alias', 'lr_mismatch'])
+def test_raw_clock_rejects_real_clock_corruption(verifier, fault):
+    frame = dict(server_received_at=datetime(2026, 10, 20, 15, 59, 59, 500000),
+                 mobile_received_at=datetime(2026, 10, 19))
+    row = dict(collected_at=datetime(2026, 10, 20, 23, 59, 59, 500000),
+               uploaded_at=datetime(2026, 10, 21))
+    rows = [row, dict(row)]
+    if fault == 'wrong_second':
+        row['uploaded_at'] += timedelta(seconds=1)
+    elif fault == 'wrong_offset':
+        row['collected_at'] -= timedelta(hours=8)
+        row['uploaded_at'] -= timedelta(hours=8)
+    elif fault == 'changed_collected':
+        row['collected_at'] += timedelta(milliseconds=1)
+    elif fault == 'mobile_alias':
+        row['collected_at'] = row['uploaded_at'] = frame['mobile_received_at']
+    else:
+        rows[1]['uploaded_at'] -= timedelta(seconds=1)
+    with pytest.raises(verifier.VerificationFailure):
+        verifier.check_raw_clock(frame, rows, ClockMetadata())
+
+
+@pytest.mark.parametrize('columns', [
+    [('collected_at', 'datetime', 0), ('uploaded_at', 'datetime', 0)],
+    [('collected_at', 'datetime', 3), ('uploaded_at', 'timestamp', 0)],
+    [('collected_at', 'datetime', 3), ('uploaded_at', 'datetime', None)],
+])
+def test_raw_clock_refuses_unexpected_column_metadata(verifier, columns):
+    frame = dict(server_received_at=datetime(2026, 10, 20), mobile_received_at=datetime(2026, 10, 19))
+    rows = [dict(collected_at=datetime(2026, 10, 20, 8), uploaded_at=datetime(2026, 10, 20, 8))] * 2
+    with pytest.raises(verifier.VerificationFailure):
+        verifier.check_raw_clock(frame, rows, ClockMetadata(columns=columns))
