@@ -43,13 +43,16 @@ GPS1 是独立 13 列消息，保留原 38 项。新增 capture/sidecar，手机
 GPS01 后端实现 `7be40ac`：三表/005、create/batch/stop、GPS旁路查询已本地完成，
 限定组合51passed/231warnings/20.35s；005/schema镜像及MySQL dialect编译通过，未执行MySQL/RDS。
 审查发现的MySQL读视图问题已由 `ac7ac4c` 在首次查询前设置READ COMMITTED修复，
-限定20passed/81warnings/8.65s并经限域复审通过；MySQL实库仍未验。App/工作台接入继续，
+限定20passed/81warnings/8.65s并经限域复审通过；MySQL实库仍未验。
 详见 `docs/gps/2026-10-19-backend-delivery.md`，不称GPS全链路已可用。
 GPS02 uni-app实现 `0d35957`：换行重组/双流、显式采集与5000条有限待发队列、固定患者/操作者、
 BLE/请求/生命周期及首页状态已接线，最终108passed/15files/1.03s；详见 `docs/gps/2026-10-19-uniapp-delivery.md`。
-本地测试不等于HBuilderX编译或真机通过，尚待任务级审查/工作台接入，不动原生Android与加密插件。
+本地测试不等于HBuilderX编译或真机通过，不动原生Android与加密插件。
 GPS02审查的失败attempt晚回调缺陷由 `d11fc58` 修复，定向15passed/688ms并经复审PASS。
 多设备waiting显示Minor暂缓，由整体审查triage；不影响固定采集归属/队列，工作台及真机门禁仍保留。
+GPS03工作台 `da109c3` 已本地交付并通过任务级审查，集中363passed（58GPS及305受影响），
+含快照前GPS分支、严格DTO/双客户端/BFF、当前页无底图轨迹/速度及完整原始表。
+GPS04正做真实B源码→TCP BFF→正式页面的隔离合成联调，未取得该项结果前不称端到端通过。
 
 ### UW01 共用工作台的全量分析范围（2026-10-16，本地交付）
 
