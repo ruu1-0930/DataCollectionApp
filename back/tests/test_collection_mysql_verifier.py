@@ -240,3 +240,72 @@ def test_raw_clock_refuses_unexpected_column_metadata(verifier, columns):
     rows = [dict(collected_at=datetime(2026, 10, 20, 8), uploaded_at=datetime(2026, 10, 20, 8))] * 2
     with pytest.raises(verifier.VerificationFailure):
         verifier.check_raw_clock(frame, rows, ClockMetadata(columns=columns))
+
+
+def driver_error(code):
+    """Real PyMySQL packet decoding and SQLAlchemy wrapping, with no connection."""
+    import struct
+    import pymysql
+    from sqlalchemy.exc import DBAPIError
+    packet = b'\xff' + struct.pack('<H', code) + b'#HY000' + b'synthetic private SQL/URI/GPS1'
+    try:
+        pymysql.err.raise_mysql_exception(packet)
+    except pymysql.err.Error as original:
+        return DBAPIError.instance('private SQL', {'payload': 'private GPS1'}, original, pymysql.err.Error)
+    raise AssertionError('real driver did not reject error packet')
+
+
+@pytest.mark.parametrize('code,kind', [(1062, 'IntegrityError'), (1452, 'IntegrityError'),
+                                      (3819, 'OperationalError')])
+def test_expected_constraint_rejection_accepts_actual_driver_classification(verifier, code, kind):
+    error = driver_error(code)
+    assert type(error.orig).__name__ == kind
+    def rejected():
+        raise error
+    verifier.expect_db_rejection(code, rejected)
+
+
+@pytest.mark.parametrize('code', [1142, 1062])
+def test_constraint_check_propagates_unexpected_exact_errno(verifier, code):
+    error = driver_error(code)
+    def rejected():
+        raise error
+    with pytest.raises(type(error)) as caught:
+        verifier.expect_db_rejection(3819, rejected)
+    assert caught.value is error
+
+
+def test_constraint_check_propagates_missing_errno(verifier):
+    import pymysql
+    from sqlalchemy.exc import DBAPIError
+    error = DBAPIError.instance('private SQL', {}, pymysql.err.OperationalError(), pymysql.err.Error)
+    def rejected():
+        raise error
+    with pytest.raises(DBAPIError) as caught:
+        verifier.expect_db_rejection(3819, rejected)
+    assert caught.value is error
+
+
+def test_constraint_check_refuses_operation_success(verifier):
+    with pytest.raises(verifier.VerificationFailure):
+        verifier.expect_db_rejection(3819, lambda: None)
+
+
+@pytest.mark.parametrize('unsafe_code', [True, '3819', 10**30])
+def test_safe_errno_never_formats_noninteger_or_unbounded_values(verifier, unsafe_code):
+    import pymysql
+    from sqlalchemy.exc import DBAPIError
+    error = DBAPIError.instance('private SQL', {}, pymysql.err.OperationalError(unsafe_code, 'private'),
+                              pymysql.err.Error)
+    assert verifier.mysql_errno(error) is None
+    assert 'mysql_errno=' not in verifier.failure_detail(error)
+
+
+def test_safe_diagnostic_reports_only_actual_integer_errno(verifier):
+    output = StringIO()
+    error = driver_error(3819)
+    def rejected():
+        raise error
+    assert verifier.run_safely(rejected, output) == 1
+    assert re.fullmatch(r'FAIL verification \[checkpoint=startup, category=database, '
+                        r'helper_line=\d+, mysql_errno=3819\] \(details suppressed\)\n', output.getvalue())

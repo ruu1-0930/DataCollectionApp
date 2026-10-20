@@ -43,6 +43,16 @@ def checkpoint(name):
     _diagnostic.checkpoint = name
 
 
+def mysql_errno(error):
+    # No import here: bootstrap may fail before SQLAlchemy is available.
+    errors = sys.modules.get('sqlalchemy.exc')
+    if errors is None or not isinstance(error, errors.DBAPIError):
+        return None
+    args = getattr(error.orig, 'args', ())
+    code = args[0] if args else None
+    return code if type(code) is int and 0 < code <= 65535 else None
+
+
 def failure_detail(error):
     """Static enums and this helper's line number only; never exception content."""
     if isinstance(error, VerificationFailure):
@@ -64,7 +74,9 @@ def failure_detail(error):
             line = trace.tb_lineno
         trace = trace.tb_next
     name = getattr(_diagnostic, 'checkpoint', 'startup')
-    return '[checkpoint=' + name + ', category=' + category + ', helper_line=' + str(line) + ']'
+    code = mysql_errno(error)
+    errno = ', mysql_errno=' + str(code) if code is not None else ''
+    return '[checkpoint=' + name + ', category=' + category + ', helper_line=' + str(line) + errno + ']'
 
 
 def fixed_schema(connection):
@@ -332,9 +344,20 @@ def business_cases(db, service, owned):
     print('OK service accepted/duplicate/conflict/atomic/time/38+13/stop')
 
 
+def expect_db_rejection(expected_code, operation):
+    from sqlalchemy.exc import DBAPIError
+    require(type(expected_code) is int and expected_code in (1062, 1452, 3819))
+    try:
+        operation()
+    except DBAPIError as error:
+        if mysql_errno(error) != expected_code:
+            raise
+    else:
+        raise VerificationFailure('constraint was not enforced')
+
+
 def constraint_cases(db, owned):
     from sqlalchemy import select
-    from sqlalchemy.exc import IntegrityError
     from models.models import CollectionGpsRaw as Gps, CollectionInsoleFrame as Frame, CollectionSession as Capture
     checks = 0
     for model in (Gps, Frame):
@@ -357,13 +380,9 @@ def constraint_cases(db, owned):
                 fixed_schema(conn)
                 transaction = conn.get_transaction()
                 try:
-                    conn.execute(table.update().where(table.c.id == second['id'],
-                        table.c.capture_id == owned['captures'][0]).values(**change))
-                except IntegrityError as error:
-                    require(error.orig.args[0] == expected_code)
+                    expect_db_rejection(expected_code, lambda: conn.execute(table.update().where(
+                        table.c.id == second['id'], table.c.capture_id == owned['captures'][0]).values(**change)))
                     checks += 1
-                else:
-                    raise VerificationFailure('constraint was not enforced')
                 finally:
                     transaction.rollback()
     # The three capture ownership FKs: each UPDATE must fail on this owned row.
@@ -371,13 +390,9 @@ def constraint_cases(db, owned):
         with db.engine.connect() as conn:
             fixed_schema(conn)
             try:
-                conn.execute(Capture.__table__.update().where(
-                    Capture.capture_id == owned['captures'][0]).values(**{column: -1}))
-            except IntegrityError as error:
-                require(error.orig.args[0] == 1452)
+                expect_db_rejection(1452, lambda: conn.execute(Capture.__table__.update().where(
+                    Capture.capture_id == owned['captures'][0]).values(**{column: -1})))
                 checks += 1
-            else:
-                raise VerificationFailure('capture FK was not enforced')
             finally:
                 conn.rollback()
     print('OK constraint rejection cases=' + str(checks))
