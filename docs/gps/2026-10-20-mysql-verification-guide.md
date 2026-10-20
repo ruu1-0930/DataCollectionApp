@@ -5,6 +5,12 @@
 本地辅助测试通过不表示 MySQL/RDS 已通过。生产 `lanya` 无 GPS 表，当前业务仍运行旧版，
 本操作不 pull、不重启服务、不迁移生产库、不安装依赖、不初始化 MySQL。
 
+2026-10-21实际回执：Ru1运行固定helper `266bd5af2e8b6c631649cb0635723ed512dde57e`，
+preflight、service全项、15项约束拒绝、retry/stop真实LOCK WAIT及服务READ COMMITTED、七表清理全部通过，
+末行`MYSQL_GPS_VERIFY_OK`。此页保留复现/审计入口，不要求重复已通过验证。
+锁阶段0.14/0.10秒不是性能基准；生产迁移/服务/APK/真机仍待验。Ru1选择先部署做单设备短时联调，
+规模GPS GET耗时与内存检查在部署后、正式放量前执行，不静默删除该项。
+
 ## 运行前提
 
 测试库已经由 Ru1 建好：`clinicians/patients/devices/device_raw_data` 只有结构，
@@ -15,11 +21,9 @@
 沿用 `/opt/DataCollectionApp/back/.env` 中 DB_HOST、DB_PORT（缺省 3306）、DB_USER、DB_PASS；
 只读取指定文件，不 `source`，不采用 DB_NAME/SECRET_KEY，不打印连接串或异常详情。
 使用现有 `/opt/DataCollectionApp/back/venv/bin/python`（目标 ECS Python 3.10.12），不改正在运行的进程环境。
-helper 的语法以 Python 3.10 为目标；提交前只在专用 Windows Python 3.12 环境做过辅助测试，ECS 实跑仍待回执。
-Ru1 对 `157702c` 的实跑已通过 preflight 与完整 service 阶段，前两项 helper 精度修复已推进对应阶段；
-约束阶段出现 database 错误，七表已成功清理，锁等待尚未到达。旧回执未含 errno，不能断言唯一现场原因。
-离线真实 PyMySQL 1.1.0 已确认 3819 会分类为 OperationalError；当前 helper 按每个案例的精确 errno
-核验 DBAPIError，完整约束及锁等待仍待新固定 SHA 回执。实际旧列精度为 collected_at DATETIME(3)、uploaded_at DATETIME。
+helper 以 Python 3.10 为目标；本地辅助测试在 Windows Python 3.12，实际ECS运行成功回执见页首，解释器版本以ECS打印为准。
+历史 `157702c` 通过service后在约束阶段失败；固定`266bd5a`按精确errno处理真实PyMySQL的3819 OperationalError，
+Ru1随后已实跑至约束/锁全部通过。实际旧列精度仍为collected_at DATETIME(3)、uploaded_at DATETIME，不因验收改变。
 
 除了测试库已有访问权，锁等待观察需要已有账号能读取 `information_schema.innodb_trx`，
 并看见这次脚本自身的 writer/contender 事务（MySQL 常要求 PROCESS 可见性）。

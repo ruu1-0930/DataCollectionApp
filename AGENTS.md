@@ -58,11 +58,12 @@ GPS04 `210f93f` 已跑通真实B源码→TCP BFF→完整Streamlit正式控件�
 GPS04文档`1a1fb80`限定告警口径：父pytest未报告warning，不代表B子进程无告警，既有告警不清零。
 MySQL/RDS/ECS及真机仍待验，正式多设备采集前建议修waiting，不把本地纵向写成生产可用。
 GPS06当前证据（2026-10-21）：Ru1隔离测试库`lanya_gps_verify_20261020`的005结构核对已通过，
-真实采集service accepted/duplicate/conflict/atomic/time/38+13/stop已通过，finally确认七表空。
-实际约束拒绝及InnoDB锁仍待验；不把辅助测试数量当作GPS全链路/生产完成比例。
+真实采集service全项、15项约束拒绝及retry/stop InnoDB LOCK WAIT/READ COMMITTED均通过，finally七表空，
+最终MYSQL_GPS_VERIFY_OK。仅隔离库功能门禁关闭，不把它当作GPS全链路/生产上线完成。
 专用入口`back/tools/verify_collection_gps_mysql.py`，指南`docs/gps/2026-10-20-mysql-verification-guide.md`；
 helper `266bd5a`修正3819驱动异常分类，仅精确预期errno通过，并提供安全数值定位，不改产品或旧表。
-此前Decimal/float及旧raw时间精度断言已修，完整过程见Project统一进度与ECS验收记录。
+此前Decimal/float、旧raw时间精度及约束异常分类修复均已推进实库至通过，完整过程见Project统一进度与ECS验收记录。
+Ru1明确先部署再测试：允许短暂停服做单设备短时联调，规模耗时/内存检查在部署后、正式放量前；生产005/服务/APK仍逐步等待回执。
 只验固定空测试库并清理自身合成行；权限不足须回报，不自动GRANT/改配置，不自动部署生产。
 
 ### UW01 共用工作台的全量分析范围（2026-10-16，本地交付）
