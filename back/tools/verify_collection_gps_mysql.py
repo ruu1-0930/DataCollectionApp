@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import secrets
 import sys
-from threading import Event, Thread, current_thread
+from threading import Event, Thread, current_thread, local
 from time import monotonic
 from types import ModuleType
 from uuid import uuid4
@@ -20,6 +20,13 @@ TABLES = ('clinicians', 'patients', 'devices', 'device_raw_data',
           'collection_sessions', 'collection_insole_frames', 'collection_gps_raw')
 TIMEOUT = 12
 START = datetime(2026, 10, 19, 23, 59, 58, 123000)
+CHECKPOINTS = frozenset(('startup', 'preflight', 'setup', 'create',
+    'insole.accept_duplicate', 'insole.conflict', 'insole.atomic',
+    'gps.accept_duplicate', 'gps.conflict', 'gps.atomic', 'service.counts',
+    'gps.time_payload', 'gps.double_storage', 'insole.raw_mapping', 'stop.boundary',
+    'constraints', 'retry.wait', 'stop.wait', 'retry.writer', 'retry.contender',
+    'stop.writer', 'stop.contender'))
+_diagnostic = local()
 
 
 class VerificationFailure(RuntimeError):
@@ -29,6 +36,35 @@ class VerificationFailure(RuntimeError):
 def require(condition):
     if not condition:
         raise VerificationFailure('acceptance condition failed')
+
+
+def checkpoint(name):
+    require(name in CHECKPOINTS)
+    _diagnostic.checkpoint = name
+
+
+def failure_detail(error):
+    """Static enums and this helper's line number only; never exception content."""
+    if isinstance(error, VerificationFailure):
+        category = 'condition'
+    elif isinstance(error, TimeoutError):
+        category = 'timeout'
+    elif type(error).__module__ == 'sqlalchemy.exc':
+        category = 'database'
+    elif isinstance(error, (KeyError, TypeError)):
+        category = 'shape'
+    elif isinstance(error, ValueError):
+        category = 'request'
+    else:
+        category = 'unexpected'
+    line, trace = 0, error.__traceback__
+    while trace is not None:
+        code = trace.tb_frame.f_code
+        if Path(code.co_filename).resolve() == Path(__file__).resolve() and code.co_name != 'require':
+            line = trace.tb_lineno
+        trace = trace.tb_next
+    name = getattr(_diagnostic, 'checkpoint', 'startup')
+    return '[checkpoint=' + name + ', category=' + category + ', helper_line=' + str(line) + ']'
 
 
 def fixed_schema(connection):
@@ -189,6 +225,19 @@ def expect_conflict(service, operation):
         raise VerificationFailure('expected service conflict')
 
 
+def check_double_values(processed, driver_values, dialect):
+    from models.models import CollectionGpsRaw
+    for name, expected in [('lat', 31.230123456789), ('lon', 121.470987654321),
+                           ('alt', 12.3456789), ('speed', 1.23456789), ('hdop', 1.123456789)]:
+        # MySQL DOUBLE(asdecimal=True) rounds the ORM view to ten decimal places.
+        # Storage precision is proved independently by the untyped driver result,
+        # with exact comparison, not a relaxed tolerance on the rounded view.
+        require(driver_values[name] == expected)
+        implementation = CollectionGpsRaw.__table__.c[name].type.dialect_impl(dialect)
+        processor = implementation.result_processor(dialect, None)
+        require(processed[name] == (processor(expected) if processor else expected))
+
+
 def business_cases(db, service, owned):
     from sqlalchemy import select, func
     from models.models import CollectionInsoleFrame as Frame, CollectionGpsRaw as Gps, DeviceRawData as Raw
@@ -200,6 +249,7 @@ def business_cases(db, service, owned):
             return tuple(conn.execute(select(func.count()).select_from(m)).scalar_one()
                          for m in (Raw, Frame, Gps))
     for stream in ('insole', 'gps'):
+        checkpoint(stream + '.accept_duplicate')
         event = sample(service, stream)
         first, second = submit([event]), submit([event])
         require(first['results'][0]['status'] == 'accepted')
@@ -211,15 +261,19 @@ def business_cases(db, service, owned):
             changed['payload']['raw_line'] = changed['payload']['raw_line'].replace(',5000,0', ',5001,0')
         else:
             changed['payload']['left_speed'] = 99
+        checkpoint(stream + '.conflict')
         expect_conflict(service, lambda: submit([changed]))
         require(counts() == baseline)
+        checkpoint(stream + '.atomic')
         expect_conflict(service, lambda: submit([sample(service, stream, seq=1), changed]))
         require(counts() == baseline)
+    checkpoint('service.counts')
     require(counts() == (2, 1, 1))
     with db.engine.connect() as conn:
         gps = conn.execute(select(Gps.__table__)).mappings().one()
         frame = conn.execute(select(Frame.__table__)).mappings().one()
         raw = conn.execute(select(Raw.__table__).order_by(Raw.id)).mappings().all()
+        checkpoint('gps.time_payload')
         require(gps['mobile_received_at'] == START + timedelta(milliseconds=1234))
         require(frame['mobile_received_at'] == gps['mobile_received_at'])
         require(gps['utc'] == '2026-10-19T00:00:01Z')
@@ -227,9 +281,12 @@ def business_cases(db, service, owned):
         require(tuple(gps[k] for k in ('seq', 'fix', 'sats', 'age', 'chars', 'errors')) ==
                 (12, True, 8, 100, 5000, 0))
         require(service.time_string(gps['server_received_at']) == first['results'][0]['server_received_at'])
-        for name, expected in [('lat', 31.230123456789), ('lon', 121.470987654321),
-                               ('alt', 12.3456789), ('speed', 1.23456789), ('hdop', 1.123456789)]:
-            require(gps[name] == expected)
+        checkpoint('gps.double_storage')
+        driver_values = conn.exec_driver_sql(
+            'SELECT lat, lon, alt, speed, hdop FROM collection_gps_raw WHERE id = %s',
+            (gps['id'],)).mappings().one()
+        check_double_values(gps, driver_values, conn.dialect)
+        checkpoint('insole.raw_mapping')
         require({r['foot'] for r in raw} == {'L', 'R'})
         require({frame['left_raw_id'], frame['right_raw_id']} == {r['id'] for r in raw})
         require(all(r['collected_at'] == r['uploaded_at'] and
@@ -239,6 +296,7 @@ def business_cases(db, service, owned):
         for row, fields in zip(raw, (service.LEFT_FIELDS, service.RIGHT_FIELDS)):
             for dest, source in fields.items():
                 require(abs(row[dest] - event['payload'][source]) < 1e-5)
+    checkpoint('stop.boundary')
     service.stop_capture(actor, capture, {'mobile_stopped_at': stamp(2000)})
     service.stop_capture(actor, capture, {'mobile_stopped_at': stamp(2000)})
     require(submit([sample(service, seq=2, ms=2000)])['results'][0]['status'] == 'accepted')
@@ -326,6 +384,7 @@ def lock_case(app, db, service, owned, capture, stopping=False):
             held.set()  # flush completed; real capture FOR UPDATE is still held
             wait_for(release)
     def worker(writer):
+        checkpoint(prefix + ('.writer' if writer else '.contender'))
         try:
             with app.app_context():
                 if not writer and stopping:
@@ -335,7 +394,8 @@ def lock_case(app, db, service, owned, capture, stopping=False):
                 else:
                     response = service.ingest_batch(owned['clinician_id'], capture, {'events': [event_value]})
                     outcomes['writer' if writer else 'contender'] = response['results'][0]['status']
-        except BaseException:
+        except BaseException as error:
+            print('FAIL worker ' + failure_detail(error) + ' (details suppressed)')
             outcomes['writer' if writer else 'contender'] = 'failed'
     sql_event.listen(db.engine, 'before_cursor_execute', before_execute)
     sql_event.listen(db.engine, 'commit', before_commit)
@@ -390,11 +450,13 @@ def verify(env_file):
              'captures': [str(uuid4()) for _ in range(3)]}
     with app.app_context():
         stage = 'preflight'
+        checkpoint('preflight')
         try:
             with db.engine.connect() as connection:
                 preflight(connection)
             print('OK fixed empty MySQL8/InnoDB schema')
             stage = 'synthetic setup/create'
+            checkpoint('setup')
             with Session(db.engine, expire_on_commit=False) as session:
                 clinician = Clinician(hospital=marker, dept='synthetic', name='synthetic',
                     phone='00000000000', passcode_hash='!synthetic-not-login', role='clinician')
@@ -407,6 +469,7 @@ def verify(env_file):
                 owned.update(clinician_id=clinician.id, patient_id=patient.id, device_id=device.id)
                 session.commit()  # cross-session service calls must see setup rows
             for capture in owned['captures']:
+                checkpoint('create')
                 payload = dict(capture_id=capture, patient_id=owned['patient_id'],
                     device_code=marker, mobile_started_at=stamp())
                 require(service.create_capture(owned['clinician_id'], payload) == {'capture_id': capture})
@@ -414,13 +477,16 @@ def verify(env_file):
             stage = 'service cases'
             business_cases(db, service, owned)
             stage = 'constraint rejection'
+            checkpoint('constraints')
             constraint_cases(db, owned)
             stage = 'InnoDB retry wait'
+            checkpoint('retry.wait')
             lock_case(app, db, service, owned, owned['captures'][1])
             stage = 'InnoDB stop wait'
+            checkpoint('stop.wait')
             lock_case(app, db, service, owned, owned['captures'][2], stopping=True)
-        except BaseException:
-            print('FAIL ' + stage + ' (details suppressed)')
+        except BaseException as error:
+            print('FAIL ' + stage + ' ' + failure_detail(error) + ' (details suppressed)')
             raise
         finally:
             db.session.remove()
@@ -428,8 +494,8 @@ def verify(env_file):
                 with db.engine.begin() as connection:
                     cleanup(connection, owned)
                 print('OK cleanup own synthetic rows; all seven tables empty')
-            except BaseException:
-                print('FAIL cleanup (preserve test schema for inspection)')
+            except BaseException as error:
+                print('FAIL cleanup ' + failure_detail(error) + ' (preserve test schema for inspection)')
                 raise
             finally:
                 db.engine.dispose()
@@ -440,8 +506,8 @@ def run_safely(operation, output=None):
     try:
         operation()
         return 0
-    except BaseException:
-        print('FAIL verification (details suppressed)', file=output or sys.stdout)
+    except BaseException as error:
+        print('FAIL verification ' + failure_detail(error) + ' (details suppressed)', file=output or sys.stdout)
         return 1
 
 

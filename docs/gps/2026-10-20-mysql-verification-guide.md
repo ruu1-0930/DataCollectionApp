@@ -16,6 +16,9 @@
 只读取指定文件，不 `source`，不采用 DB_NAME/SECRET_KEY，不打印连接串或异常详情。
 使用现有 `/opt/DataCollectionApp/back/venv/bin/python`（目标 ECS Python 3.10.12），不改正在运行的进程环境。
 helper 的语法以 Python 3.10 为目标；提交前只在专用 Windows Python 3.12 环境做过辅助测试，ECS 实跑仍待回执。
+Ru1 首轮 `4a13a55` 实跑已通过空库/InnoDB preflight，业务检查失败，finally 已清理且七表为空。
+离线已证实旧 helper 把 ORM 的十位 Decimal 与 float 精确比较会误判；当前版修复该检查，
+但首轮没有细分检查点，不能断言它是现场唯一失败原因。完整验收仍待新固定 SHA 的运行回执。
 
 除了测试库已有访问权，锁等待观察需要已有账号能读取 `information_schema.innodb_trx`，
 并看见这次脚本自身的 writer/contender 事务（MySQL 常要求 PROCESS 可见性）。
@@ -59,6 +62,8 @@ helper 的语法以 Python 3.10 为目标；提交前只在专用 Windows Python
 按顺序检查 `OK` 阶段，最终退出码必须为 0 且末行必须是 `MYSQL_GPS_VERIFY_OK`。
 只有全部业务、锁等待、约束和清理都通过才打印此标记。出现 FAIL、Python/依赖错误、超时或没有标记，
 均保留“实库验收待完成”，不要重跑去覆盖失败；先回报完整的简短阶段输出，不贴 `.env`、口令、URL 或原始 GPS。
+FAIL 可附 `checkpoint=静态名称, category=受限类别, helper_line=本脚本行号`，用来定位检查位置；
+不会输出异常全文、任意异常类型名、SQL参数、原始载荷或凭据。回报这些简短诊断即可。
 
 该程序实际调用当前源码 `create_capture/ingest_batch/stop_capture`，保留原 Session/commit/rollback。
 工厂注册旧路由时会无条件加载/训练 SVM，因此仅在独立验收进程中以 fail-fast `api.analysis.analyze` 哨兵
@@ -70,6 +75,9 @@ helper 的语法以 Python 3.10 为目标；提交前只在专用 Windows Python
 - 38 字段拆为真实 L/R raw 与 sidecar，GPS1 原始 13 列保持独立；accepted/duplicate 回执时间相同。
 - 两流同 key 改载荷返回 409 且不增行；先新事件再冲突的整批回滚；停止同值幂等、闭区间补传及窗外拒绝。
 - 跨日手机毫秒时间、GPS UTC 原文本与旧服务器 raw 时钟独立；五个 GPS DOUBLE 精度回读。
+  DOUBLE 存储使用同一核验连接、固定列和本轮 GPS id 的原始 driver SELECT 严格等值检查，
+  不放宽公差；另校验 ORM 结果符合真实 model processor。MySQL DOUBLE 默认 `asdecimal=True`，
+  ORM 视图会转为十位小数 Decimal，这种读值转换不能冒称数据库丢失精度；产品模型不改。
 - 15 次真实约束拒绝，分别覆盖新三表七个 FK、两个 CHECK、六个非主键 UNIQUE；每次回滚。
   它们是实际拒绝证据，与此前 DMS 的 metadata 标记分开。
 - 两个实际 InnoDB 交错：writer 的真实 ingest flush 后、commit 前持有 capture 锁；

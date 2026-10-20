@@ -1,7 +1,9 @@
 """Verifier safety checks only; these do not emulate MySQL business acceptance."""
 import importlib.util
+from decimal import Decimal
 from io import StringIO
 from pathlib import Path
+import re
 from threading import Event
 from types import SimpleNamespace
 
@@ -115,7 +117,8 @@ def test_safe_failure_output_omits_exception_payload_and_success_marker(verifier
     def failed():
         raise RuntimeError('mysql+pymysql://user:password@host/lanya GPS1,private')
     assert verifier.run_safely(failed, output) == 1
-    assert output.getvalue() == 'FAIL verification (details suppressed)\n'
+    assert re.fullmatch(r'FAIL verification \[checkpoint=startup, category=unexpected, '
+                        r'helper_line=\d+\] \(details suppressed\)\n', output.getvalue())
 
 
 def test_cli_has_no_database_or_url_override(verifier):
@@ -123,3 +126,49 @@ def test_cli_has_no_database_or_url_override(verifier):
         with pytest.raises(SystemExit) as rejected:
             verifier.arguments([option, 'lanya'])
         assert rejected.value.code != 0
+
+
+def double_results():
+    """Use real model/driver dialect processors offline, without a DB or service fake."""
+    from sqlalchemy.dialects.mysql.pymysql import dialect
+    from models.models import CollectionGpsRaw
+    mysql = dialect()
+    original = dict(lat=31.230123456789, lon=121.470987654321,
+                    alt=12.3456789, speed=1.23456789, hdop=1.123456789)
+    processed = {}
+    for name, value in original.items():
+        implementation = CollectionGpsRaw.__table__.c[name].type.dialect_impl(mysql)
+        processor = implementation.result_processor(mysql, None)
+        processed[name] = processor(value) if processor else value
+    return original, processed, mysql
+
+
+def test_real_mysql_model_processor_does_not_make_valid_double_storage_fail(verifier):
+    original, processed, mysql = double_results()
+    assert processed['lat'] == Decimal('31.2301234568')
+    assert processed['lat'] != 31.230123456789  # old helper comparison is false
+    verifier.check_double_values(processed, original, mysql)
+
+
+def test_double_storage_check_does_not_tolerate_driver_precision_loss(verifier):
+    original, processed, mysql = double_results()
+    original['lat'] = 31.2301234568  # same 10-place view, genuinely different raw double
+    with pytest.raises(verifier.VerificationFailure):
+        verifier.check_double_values(processed, original, mysql)
+
+
+def test_diagnostic_uses_allowlist_checkpoint_category_and_local_line_only(verifier):
+    verifier.checkpoint('gps.double_storage')
+    secret = 'mysql+pymysql://user:password@host GPS1,private'
+    error_class = type(secret, (RuntimeError,), {})
+    try:
+        verifier.require(False)
+    except verifier.VerificationFailure as error:
+        detail = verifier.failure_detail(error)
+    assert 'checkpoint=gps.double_storage' in detail
+    assert 'category=condition' in detail
+    assert 'helper_line=' in detail
+    assert 'category=unexpected' in verifier.failure_detail(error_class(secret))
+    assert secret not in detail
+    with pytest.raises(verifier.VerificationFailure):
+        verifier.checkpoint(secret)
