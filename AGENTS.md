@@ -57,6 +57,12 @@ GPS04 `210f93f` 已跑通真实B源码→TCP BFF→完整Streamlit正式控件�
 整体双仓审查已通过，compliant/Approved/Yes，0Critical/Important；waiting和GPS主区来源两项Minor接受暂缓。
 GPS04文档`1a1fb80`限定告警口径：父pytest未报告warning，不代表B子进程无告警，既有告警不清零。
 MySQL/RDS/ECS及真机仍待验，正式多设备采集前建议修waiting，不把本地纵向写成生产可用。
+GPS06于2026-10-20收到Ru1隔离库`lanya_gps_verify_20261020`的005创建及结构回执：
+3InnoDB/7FK/6非主键UNIQUE/2启用CHECK，8DATETIME(3)/5GPS DOUBLE/7ascii_bin；不是实际写读/并发通过。
+专用验收资产`4a13a55`入口`back/tools/verify_collection_gps_mysql.py`及指南
+`docs/gps/2026-10-20-mysql-verification-guide.md`，仅固定空测试库、真实采集service和自身合成行清理。
+本地17项guard测试通过（Python3.12），3.10仅语法检查；ECS3.10/实际MySQL仍由Ru1执行。
+不自动push/pull/重启，不用业务库演练；既有数据库权限不足须回报，不自动GRANT或改配置。
 
 ### UW01 共用工作台的全量分析范围（2026-10-16，本地交付）
 
