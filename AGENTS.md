@@ -57,16 +57,13 @@ GPS04 `210f93f` 已跑通真实B源码→TCP BFF→完整Streamlit正式控件�
 整体双仓审查已通过，compliant/Approved/Yes，0Critical/Important；waiting和GPS主区来源两项Minor接受暂缓。
 GPS04文档`1a1fb80`限定告警口径：父pytest未报告warning，不代表B子进程无告警，既有告警不清零。
 MySQL/RDS/ECS及真机仍待验，正式多设备采集前建议修waiting，不把本地纵向写成生产可用。
-GPS06于2026-10-20收到Ru1隔离库`lanya_gps_verify_20261020`的005创建及结构回执：
-3InnoDB/7FK/6非主键UNIQUE/2启用CHECK，8DATETIME(3)/5GPS DOUBLE/7ascii_bin；不是实际写读/并发通过。
-专用验收资产`4a13a55`入口`back/tools/verify_collection_gps_mysql.py`及指南
-`docs/gps/2026-10-20-mysql-verification-guide.md`，仅固定空测试库、真实采集service和自身合成行清理。
-本地17项guard测试通过（Python3.12），3.10仅语法检查；ECS3.10/实际MySQL仍由Ru1执行。
-不自动push/pull/重启，不用业务库演练；既有数据库权限不足须回报，不自动GRANT或改配置。
-首轮实库在service cases失败且已清理，后续约束/锁未执行。验收器修复`10785da`离线复现并消除
-ORM DOUBLE/Decimal与float精确比较误判，改用driver原值核验并加安全检查点；聚焦20passed/0.34s，实库复验待回执。
-第二轮现场定位旧raw时钟断言，Ru1确认DATETIME(3)/DATETIME不同精度。helper fix2 `157702c`
-按真实列精度/会话舍入截断严格核验frame服务器时间+8h；34passed/0.42s，不改旧表/产品，实际后续门禁仍待验。
+GPS06当前证据（2026-10-21）：Ru1隔离测试库`lanya_gps_verify_20261020`的005结构核对已通过，
+真实采集service accepted/duplicate/conflict/atomic/time/38+13/stop已通过，finally确认七表空。
+实际约束拒绝及InnoDB锁仍待验；不把辅助测试数量当作GPS全链路/生产完成比例。
+专用入口`back/tools/verify_collection_gps_mysql.py`，指南`docs/gps/2026-10-20-mysql-verification-guide.md`；
+helper `266bd5a`修正3819驱动异常分类，仅精确预期errno通过，并提供安全数值定位，不改产品或旧表。
+此前Decimal/float及旧raw时间精度断言已修，完整过程见Project统一进度与ECS验收记录。
+只验固定空测试库并清理自身合成行；权限不足须回报，不自动GRANT/改配置，不自动部署生产。
 
 ### UW01 共用工作台的全量分析范围（2026-10-16，本地交付）
 
