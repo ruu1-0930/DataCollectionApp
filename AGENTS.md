@@ -63,6 +63,8 @@ GPS06于2026-10-20收到Ru1隔离库`lanya_gps_verify_20261020`的005创建及�
 `docs/gps/2026-10-20-mysql-verification-guide.md`，仅固定空测试库、真实采集service和自身合成行清理。
 本地17项guard测试通过（Python3.12），3.10仅语法检查；ECS3.10/实际MySQL仍由Ru1执行。
 不自动push/pull/重启，不用业务库演练；既有数据库权限不足须回报，不自动GRANT或改配置。
+首轮实库在service cases失败且已清理，后续约束/锁未执行。验收器修复`10785da`离线复现并消除
+ORM DOUBLE/Decimal与float精确比较误判，改用driver原值核验并加安全检查点；聚焦20passed/0.34s，实库复验待回执。
 
 ### UW01 共用工作台的全量分析范围（2026-10-16，本地交付）
 
