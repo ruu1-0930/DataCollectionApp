@@ -53,8 +53,10 @@ GPS02审查的失败attempt晚回调缺陷由 `d11fc58` 修复，定向15passed/
 GPS03工作台 `da109c3` 已本地交付并通过任务级审查，集中363passed（58GPS及305受影响），
 含快照前GPS分支、严格DTO/双客户端/BFF、当前页无底图轨迹/速度及完整原始表。
 GPS04 `210f93f` 已跑通真实B源码→TCP BFF→完整Streamlit正式控件，最终单项1passed/18.96s；
-16raw/507GPS、选中506条500+6页、raw及七派生表摘要不变，模型/SVM0。整体双仓审查因额度中断，
-尚无最终结论；MySQL/RDS/ECS及真机仍待验，不把本地纵向写成生产可用。
+16raw/507GPS、选中506条500+6页、raw及七派生表摘要不变，模型/SVM0。
+整体双仓审查已通过，compliant/Approved/Yes，0Critical/Important；waiting和GPS主区来源两项Minor接受暂缓。
+GPS04文档`1a1fb80`限定告警口径：父pytest未报告warning，不代表B子进程无告警，既有告警不清零。
+MySQL/RDS/ECS及真机仍待验，正式多设备采集前建议修waiting，不把本地纵向写成生产可用。
 
 ### UW01 共用工作台的全量分析范围（2026-10-16，本地交付）
 
