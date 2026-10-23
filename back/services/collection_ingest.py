@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import math
+import json
 import re
 from uuid import UUID
 
@@ -12,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from config import db
-from models.models import CollectionSession, CollectionInsoleFrame, CollectionGpsRaw, Device, Patient, DeviceRawData
+from models.models import CollectionSession, CollectionInsoleFrame, CollectionGpsRaw, CollectionRadarRaw, CollectionRadarTarget, Device, Patient, DeviceRawData
 from access import load_account_context, require_capability
 from services.canonical_json import canonical_json_bytes, sha256_hex
 
@@ -124,6 +125,10 @@ def normalized_event(value):
             parsed[key] = number
         canonical_payload = {key: (Decimal(number) if type(number) is int else Decimal(str(number)).normalize()) if number else Decimal(0)
                              for key,number in parsed.items()}
+    elif value['stream'] == 'radar':
+        from services.radar_protocol import parse_radar_payload, canonical_radar_payload
+        parsed = parse_radar_payload(value['payload'])
+        canonical_payload = canonical_radar_payload(parsed)
     else:
         raise CollectionError()
     identity = {key:value[key] for key in ('event_id','stream','stream_sequence','connection_epoch','mobile_received_at')}
@@ -213,7 +218,7 @@ def ingest_batch(actor_id, capture_id, payload):
     events = [normalized_event(value) for value in events]
     if len({value['stream'] for value in events}) != 1:
         raise CollectionError()
-    model = CollectionInsoleFrame if events[0]['stream'] == 'insole' else CollectionGpsRaw
+    model = {'insole':CollectionInsoleFrame,'gps':CollectionGpsRaw,'radar':CollectionRadarRaw}[events[0]['stream']]
     try:
         with write_transaction() as session:
             capture = _owned_capture(session, capture_id, actor_id)
@@ -245,8 +250,13 @@ def ingest_batch(actor_id, capture_id, payload):
                             raw_ids.append(raw.id)
                         row = CollectionInsoleFrame(**common, left_raw_id=raw_ids[0], right_raw_id=raw_ids[1])
                         session.get(Patient, capture.patient_id).last_collected_at = raw_clock
-                    else:
+                    elif model is CollectionGpsRaw:
                         row = CollectionGpsRaw(**common, **value['parsed'])
+                    else:
+                        parsed = value['parsed']
+                        row = CollectionRadarRaw(**common, payload_json=json.dumps(parsed,ensure_ascii=False,allow_nan=False,separators=(',',':')),
+                            **{key:parsed[key] for key in ('frames','bytes','age_ms','stale')})
+                        row.targets = [CollectionRadarTarget(ordinal=index,**target) for index,target in enumerate(parsed['targets'])]
                     session.add(row)
                     session.flush()
                     status = 'accepted'
@@ -266,7 +276,7 @@ def stop_capture(actor_id, capture_id, payload):
             raise CollectionError(409)
         if capture.mobile_stopped_at is not None and capture.mobile_stopped_at != stopped:
             raise CollectionError(409)
-        for model in (CollectionInsoleFrame, CollectionGpsRaw):
+        for model in (CollectionInsoleFrame, CollectionGpsRaw, CollectionRadarRaw):
             if session.query(model.id).filter(model.capture_id == capture_id, model.mobile_received_at > stopped).first():
                 raise CollectionError(409)
         if capture.mobile_stopped_at is None:

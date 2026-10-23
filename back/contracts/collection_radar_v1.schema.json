@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "collection_radar_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "frames": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "age_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "stale": {
+      "type": "boolean"
+    },
+    "targets": {
+      "type": "array",
+      "maxItems": 3,
+      "allOf": [
+        {"contains":{"properties":{"slot":{"const":1}},"required":["slot"]},"minContains":0,"maxContains":1},
+        {"contains":{"properties":{"slot":{"const":2}},"required":["slot"]},"minContains":0,"maxContains":1},
+        {"contains":{"properties":{"slot":{"const":3}},"required":["slot"]},"minContains":0,"maxContains":1}
+      ],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "slot": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "present": {
+            "type": "boolean"
+          },
+          "x_mm": {
+            "type": "integer",
+            "minimum": -32767,
+            "maximum": 32767
+          },
+          "y_mm": {
+            "type": "integer",
+            "minimum": -32767,
+            "maximum": 32767
+          },
+          "speed_cms": {
+            "type": "integer",
+            "minimum": -32767,
+            "maximum": 32767
+          },
+          "resolution_mm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          }
+        },
+        "required": [
+          "slot",
+          "present",
+          "x_mm",
+          "y_mm",
+          "speed_cms",
+          "resolution_mm"
+        ]
+      }
+    }
+  },
+  "required": [
+    "frames",
+    "bytes",
+    "age_ms",
+    "stale",
+    "targets"
+  ]
+}

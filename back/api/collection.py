@@ -7,6 +7,7 @@ from access import AccessError
 from utils import token_required, Response
 from services.collection_ingest import CollectionError, create_capture, ingest_batch, stop_capture
 from services.gps_query import session_gps
+from services.radar_query import session_radar
 
 
 collection_bp = Blueprint('collection', __name__)
@@ -68,6 +69,16 @@ def stop_collection(capture_id):
 @collection_bp.get('/patients/<int:patient_id>/gait/sessions/<string:session_id>/gps')
 @token_required('clinical.read')
 def get_session_gps(patient_id,session_id):
+    return _session_read(session_gps,patient_id,session_id)
+
+
+@collection_bp.get('/patients/<int:patient_id>/gait/sessions/<string:session_id>/radar')
+@token_required('clinical.read')
+def get_session_radar(patient_id,session_id):
+    return _session_read(session_radar,patient_id,session_id)
+
+
+def _session_read(reader,patient_id,session_id):
     def operation():
         if set(request.args) - {'page','page_size'}:
             raise CollectionError()
@@ -80,5 +91,5 @@ def get_session_gps(patient_id,session_id):
             if not value.isascii() or not value.isdecimal() or len(value)>10 or not 1 <= int(value) <= maximum:
                 raise CollectionError()
             pagination[key] = int(value)
-        return session_gps(g.account_context,patient_id,session_id,**pagination)
+        return reader(g.account_context,patient_id,session_id,**pagination)
     return _respond(operation)

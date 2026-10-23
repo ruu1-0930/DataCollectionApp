@@ -1,0 +1,314 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "radar_session_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "radar-session-v1"
+    },
+    "patient_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^P[1-9][0-9]*-[0-9]{8}T[0-9]{12}$"
+    },
+    "availability": {
+      "enum": [
+        "available",
+        "empty",
+        "unassociated"
+      ]
+    },
+    "clock_basis": {
+      "const": "mobile_receive_not_hardware_sync"
+    },
+    "collection_slices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "capture_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "device_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "connection_epoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "mobile_from": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+          },
+          "mobile_to": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+          }
+        },
+        "required": [
+          "capture_id",
+          "device_id",
+          "connection_epoch",
+          "mobile_from",
+          "mobile_to"
+        ]
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fresh": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stale": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "empty": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total",
+        "fresh",
+        "stale",
+        "empty"
+      ]
+    },
+    "page": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+    },
+    "total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sample_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "capture_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "event_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "connection_epoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "stream_sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "mobile_received_at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+          },
+          "server_received_at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+          },
+          "slice_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "frames": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "age_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "stale": {
+                "type": "boolean"
+              },
+              "targets": {
+                "type": "array",
+                "maxItems": 3,
+              "allOf": [
+                {"contains":{"properties":{"slot":{"const":1}},"required":["slot"]},"minContains":0,"maxContains":1},
+                {"contains":{"properties":{"slot":{"const":2}},"required":["slot"]},"minContains":0,"maxContains":1},
+                {"contains":{"properties":{"slot":{"const":3}},"required":["slot"]},"minContains":0,"maxContains":1}
+              ],
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "slot": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3
+                    },
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "x_mm": {
+                      "type": "integer",
+                      "minimum": -32767,
+                      "maximum": 32767
+                    },
+                    "y_mm": {
+                      "type": "integer",
+                      "minimum": -32767,
+                      "maximum": 32767
+                    },
+                    "speed_cms": {
+                      "type": "integer",
+                      "minimum": -32767,
+                      "maximum": 32767
+                    },
+                    "resolution_mm": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 65535
+                    }
+                  },
+                  "required": [
+                    "slot",
+                    "present",
+                    "x_mm",
+                    "y_mm",
+                    "speed_cms",
+                    "resolution_mm"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "frames",
+              "bytes",
+              "age_ms",
+              "stale",
+              "targets"
+            ]
+          },
+          "quality": {
+            "enum": [
+              "fresh",
+              "stale",
+              "empty"
+            ]
+          },
+          "reason_codes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "no_frames",
+                "reported_stale",
+                "age_missing",
+                "age_exceeded"
+              ]
+            }
+          },
+          "repeat_frame": {
+            "type": "boolean"
+          },
+          "target_views": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "slot": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 3
+                },
+                "display_valid": {
+                  "type": "boolean"
+                },
+                "segment_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "slot",
+                "display_valid",
+                "segment_id"
+              ]
+            }
+          }
+        },
+        "required": [
+          "sample_id",
+          "capture_id",
+          "event_id",
+          "connection_epoch",
+          "stream_sequence",
+          "mobile_received_at",
+          "server_received_at",
+          "slice_index",
+          "payload",
+          "quality",
+          "reason_codes",
+          "repeat_frame",
+          "target_views"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "patient_id",
+    "session_id",
+    "availability",
+    "clock_basis",
+    "collection_slices",
+    "summary",
+    "page",
+    "page_size",
+    "total",
+    "items"
+  ]
+}

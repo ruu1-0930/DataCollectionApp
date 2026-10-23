@@ -200,6 +200,53 @@ class CollectionGpsRaw(db.Model):
         {'mysql_engine': 'InnoDB', 'mysql_charset': 'utf8mb4'})
 
 
+class CollectionRadarRaw(db.Model):
+    __tablename__ = 'collection_radar_raw'
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    capture_id = db.Column(_identity(36), db.ForeignKey('collection_sessions.capture_id'), nullable=False)
+    stream = db.Column(_state('collection_radar_stream', 'radar'), nullable=False)
+    event_id = db.Column(_identity(36), nullable=False)
+    connection_epoch = db.Column(db.BigInteger, nullable=False)
+    stream_sequence = db.Column(db.BigInteger, nullable=False)
+    mobile_received_at = db.Column(_utc_time, nullable=False)
+    server_received_at = db.Column(_utc_time, nullable=False)
+    payload_hash = db.Column(_identity(64), nullable=False)
+    payload_json = db.Column(_canonical, nullable=False)
+    frames = db.Column(db.BigInteger, nullable=False)
+    bytes = db.Column(db.BigInteger, nullable=False)
+    age_ms = db.Column(db.Float().with_variant(mysql.DOUBLE(), 'mysql'))
+    stale = db.Column(db.Boolean, nullable=False)
+    targets = db.relationship('CollectionRadarTarget', order_by='CollectionRadarTarget.ordinal', cascade='all, delete-orphan')
+    __table_args__ = (
+        db.UniqueConstraint('capture_id','stream','event_id',name='uq_collection_radar_event'),
+        db.UniqueConstraint('capture_id','stream','connection_epoch','stream_sequence',name='uq_collection_radar_sequence'),
+        db.Index('idx_collection_radar_receive','capture_id','mobile_received_at'),
+        db.CheckConstraint('connection_epoch BETWEEN 0 AND 9007199254740991 AND stream_sequence BETWEEN 0 AND 9007199254740991 AND frames BETWEEN 0 AND 9007199254740991 AND bytes BETWEEN 0 AND 9007199254740991', name='ck_collection_radar_counters'),
+        db.CheckConstraint('age_ms IS NULL OR (age_ms >= 0 AND age_ms <= 1.7976931348623157e308)',name='ck_collection_radar_age'),
+        db.CheckConstraint('stale IN (0,1)',name='ck_collection_radar_stale'),
+        {'mysql_engine':'InnoDB','mysql_charset':'utf8mb4'})
+
+
+class CollectionRadarTarget(db.Model):
+    __tablename__ = 'collection_radar_targets'
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    parent_id = db.Column(db.Integer, db.ForeignKey('collection_radar_raw.id'), nullable=False)
+    slot = db.Column(db.Integer, nullable=False)
+    ordinal = db.Column(db.Integer, nullable=False)
+    present = db.Column(db.Boolean, nullable=False)
+    x_mm = db.Column(db.Integer, nullable=False)
+    y_mm = db.Column(db.Integer, nullable=False)
+    speed_cms = db.Column(db.Integer, nullable=False)
+    resolution_mm = db.Column(db.Integer, nullable=False)
+    __table_args__ = (
+        db.UniqueConstraint('parent_id','slot',name='uq_collection_radar_target_slot'),
+        db.UniqueConstraint('parent_id','ordinal',name='uq_collection_radar_target_ordinal'),
+        db.CheckConstraint('slot BETWEEN 1 AND 3 AND ordinal BETWEEN 0 AND 2',name='ck_collection_radar_target_slot'),
+        db.CheckConstraint('present IN (0,1)',name='ck_collection_radar_target_present'),
+        db.CheckConstraint('x_mm BETWEEN -32767 AND 32767 AND y_mm BETWEEN -32767 AND 32767 AND speed_cms BETWEEN -32767 AND 32767 AND resolution_mm BETWEEN 0 AND 65535',name='ck_collection_radar_target_values'),
+        {'mysql_engine':'InnoDB','mysql_charset':'utf8mb4'})
+
+
 class GaitSessionRevision(db.Model):
     __tablename__ = 'gait_session_revision'
     id = db.Column(_identity(36), primary_key=True)

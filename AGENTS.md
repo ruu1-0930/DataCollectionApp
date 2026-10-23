@@ -10,6 +10,10 @@ Spec/Plan/进度位于D:/ME5001/.worktrees/Project-sarcogait-indoor-radar/docs/s
 先RED再实现，每完整块集中验证，保留实际失败和告警。禁止模型/生产/真实局域网操作，不读真实.env。
 雷达单独流、手机默认自动发现、同一capture唯一协调器；权限/API/原生APK真机与本地mock分开记录。
 不碰加密android-ble插件；新增独立UTS适配；后端006迁移不执行RDS，不重跑旧迁移。
+R01后端已完成本地实现及独立限域审查（Spec compliant / quality approved，0 findings）。
+最终集中67passed/274既有warnings，原值精度续修3passed；实际MySQL仍未执行。
+雷达父子表保留原payload与顺序，三流共同事务/stop，查询按capture和手机时间切片，不比较BLE/radar epoch。
+原定位数据不进入旧raw/快照/Agent评分；不能把此模块通过外推成APK、完整纵向或生产验收。
 
 本文件为 Codex 在本仓库后续开发时使用的基本约束与导航。**开始任何开发前，请先阅读架构方案。**
 
