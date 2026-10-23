@@ -5,7 +5,8 @@ import { usePatientStoreWithOut } from '@/store/modules/patient'
 import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { createBleLines, parseTelemetry } from '@/utils/bleTelemetry'
 import { createCollectionSession } from '@/utils/collectionSession'
-import { createTelemetryQueue } from '@/utils/telemetryQueue'
+import { createCollectionCoordinator } from '@/utils/collectionCoordinator'
+import { useRadarStoreWithOut } from '@/store/modules/radar'
 import { BleLib } from '@/uni_modules/android-ble'
 
 const collectionRuntimes = new WeakMap()
@@ -74,8 +75,8 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       // 最近一帧实时步态（仅供首页展示，不落库；落库走后端拆分）
       realtime: emptyRealtime(),
       gpsRealtime: null,
-      collectionState: { active: null, reason: '', rejected: 0, waiting: false,
-        queue: { pending: 0, sessions: 0, sending: false, paused: false, error: '' } }
+      collectionState: { active: null, reason: '', radarReason: '', rejected: 0, waiting: false, lifecycle: 0,
+        queue: { pending: 0, originalPending: 0, radarPending: 0, sessions: 0, sending: false, paused: false, error: '' } }
     }
   },
   getters: {},
@@ -88,7 +89,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       }
       const runtime = { uploadTimer: null }
       collectionRuntimes.set(this, runtime)
-      runtime.queue = createTelemetryQueue({
+      runtime.queue = createCollectionCoordinator({
         load: () => uni.getStorageSync(collectionStorageKey),
         save: value => uni.setStorageSync(collectionStorageKey, value),
         identity,
@@ -100,6 +101,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         onChange: value => {
           this.collectionState.active = value.active
           this.collectionState.reason = value.reason
+          this.collectionState.radarReason = value.radarReason
           if (typeof uni.setKeepScreenOn === 'function') uni.setKeepScreenOn({ keepScreenOn: !!value.active })
           if (value.reason === 'background') uni.showToast({ title: 'App已离开前台，采集已停止，待上传数据已保留', icon: 'none', duration: 3000 })
           if (value.reason === 'storage' || value.reason === 'capacity' || value.reason === 'clock_rollback') {
@@ -124,6 +126,8 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       const ps = usePatientStoreWithOut()
       try {
         runtime.session.start({ patientId: ps.currentId, deviceCode, connected: !!this.bles_objs[deviceCode]?.isConnected })
+        this.collectionState.lifecycle++
+        useRadarStoreWithOut().invalidateCapture()
         this.bles_objs[deviceCode]?.lineStream?.reset()
         this.collectionState.waiting = false
         this.scheduleCollectionUpload(0)
@@ -132,8 +136,10 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       }
     },
     stopCollection(reason = 'user') {
+      this.collectionState.lifecycle++
       const code = this.collectionState.active?.device_code
       this.ensureCollection().session.stop(reason)
+      useRadarStoreWithOut().invalidateCapture()
       if (code) this.bles_objs[code]?.lineStream?.reset()
       this.collectionState.waiting = false
       this.scheduleCollectionUpload(0)
@@ -141,9 +147,24 @@ export const useBlueToothStore = defineStore('blueToothStore', {
     retryCollectionUpload() { return this.ensureCollection().queue.drain(true) },
     endCollectionContext(reason = 'identity') {
       this.stopCollection(reason)
+      useRadarStoreWithOut().suspendContext()
       Object.keys(this.bles_objs).forEach(code => this.invalidateConnection(code, true))
       this.realtime = emptyRealtime()
       this.gpsRealtime = null
+    },
+    radarCaptureToken() {
+      const active = this.ensureCollection().session.active
+      if (!active) return null
+      return { captureId: active.capture_id, patientId: active.patient_id, clinicianId: active.clinicianId, authEpoch: active.authEpoch, lifecycle: this.collectionState.lifecycle }
+    },
+    acceptRadar(payload, receivedAt, epoch, networkToken, token) {
+      if (!token || token.lifecycle !== this.collectionState.lifecycle) return
+      const runtime = this.ensureCollection(), active = runtime.session.active
+      if (!active || token.captureId !== active.capture_id || token.patientId !== usePatientStoreWithOut().currentId) return
+      const operator = useOperatorStoreWithOut()
+      if (!operator.unlocked || token.clinicianId !== operator.operator?.clinicianId || token.authEpoch !== operator.authRuntime.authEpoch) { this.stopCollection('identity'); return }
+      runtime.session.receiveRadar(token.captureId, epoch, payload, receivedAt)
+      this.scheduleCollectionUpload()
     },
     invalidateConnection(code, close = false) {
       const slot = this.bles_objs[code]

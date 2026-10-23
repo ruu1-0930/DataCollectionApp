@@ -15,8 +15,8 @@ export function assertCollectionIdentity(custom, actor) {
 }
 
 export function createCollectionSession({ queue, identity, uuid = createUuid, now = Date.now, onChange = () => {} }) {
-  let active = null, reason = '', lastTime = null, sequences = { insole: 0, gps: 0 }
-  const publish = () => onChange({ active: active ? { ...active } : null, reason })
+  let active = null, reason = '', radarReason = '', lastTime = null, sequences = { insole: 0, gps: 0, radar: 0 }
+  const publish = () => onChange({ active: active ? { ...active } : null, reason, radarReason })
   function stop(why = 'user', at = now()) {
     if (!active) return
     const current = active
@@ -30,6 +30,7 @@ export function createCollectionSession({ queue, identity, uuid = createUuid, no
   return {
     get active() { return active },
     get reason() { return reason },
+    get radarReason() { return radarReason },
     start({ patientId, deviceCode, connected }) {
       const actor = identity()
       if (active || !connected || !actor.unlocked || !actor.clinicianId || !patientId || !deviceCode) throw new Error('capture_unavailable')
@@ -37,22 +38,32 @@ export function createCollectionSession({ queue, identity, uuid = createUuid, no
       const context = { capture_id: uuid(), clinicianId: actor.clinicianId, authEpoch: actor.authEpoch,
         patient_id: patientId, device_code: deviceCode, mobile_started_at: new Date(stamp).toISOString() }
       queue.add(context)
-      active = context; lastTime = stamp; sequences = { insole: 0, gps: 0 }; reason = ''
+      active = context; lastTime = stamp; sequences = { insole: 0, gps: 0, radar: 0 }; reason = ''; radarReason = ''
       publish()
       return context.capture_id
     },
-    receive(deviceCode, epoch, parsed, receivedAt) {
+    receive(deviceCode, epoch, parsed, receivedAt, captureToken = null) {
       if (!active || active.device_code !== deviceCode) return
+      if (!['insole', 'gps', 'radar'].includes(parsed.stream)) return
+      if (parsed.stream === 'radar' && (captureToken !== active.capture_id || radarReason)) return
       try { assertCollectionIdentity({ collectionIdentity: active }, identity()) }
       catch { stop('identity', lastTime); return }
       if (!Number.isFinite(receivedAt) || receivedAt < lastTime) { stop('clock_rollback', lastTime); return }
       const event = { event_id: uuid(), stream: parsed.stream, stream_sequence: sequences[parsed.stream],
         connection_epoch: epoch, mobile_received_at: new Date(receivedAt).toISOString(), payload: parsed.payload }
       try { queue.enqueue(active.capture_id, event) }
-      catch (error) { stop(error.message === 'capacity' ? 'capacity' : 'storage', lastTime); return }
+      catch (error) {
+        if (parsed.stream === 'radar') { radarReason = error.message === 'capacity' ? 'capacity' : 'storage'; publish(); return }
+        stop(error.message === 'capacity' ? 'capacity' : 'storage', lastTime); return
+      }
       sequences[parsed.stream] += 1
       lastTime = receivedAt
-      if (queue.snapshot().pending >= 5000) stop('capacity', lastTime)
+      if (parsed.stream === 'radar' && queue.snapshot().radarPending >= 5000) { radarReason = 'capacity'; publish() }
+      if (parsed.stream !== 'radar' && queue.snapshot().originalPending >= 5000) stop('capacity', lastTime)
+    },
+    receiveRadar(captureToken, epoch, payload, receivedAt) {
+      if (!active || captureToken !== active.capture_id) return
+      this.receive(active.device_code, epoch, { stream: 'radar', payload }, receivedAt, captureToken)
     },
     stop(why = 'user') {
       const stamp = now()

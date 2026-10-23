@@ -2,7 +2,7 @@
   <view class="container">
     <CaPatientBar />
     <view class="capture-card">
-      <view class="capture-title">{{ capture.active ? (capture.waiting ? '采集中 · 等待重新连接' : '正在同步记录') : '同步记录鞋垫与 GPS' }}</view>
+      <view class="capture-title">{{ capture.active ? (capture.waiting ? '采集中 · 等待重新连接' : '正在同步记录') : '同步记录鞋垫、GPS 与可选雷达' }}</view>
       <picker v-if="!capture.active" :range="connectedDevices" range-key="name" :value="selectedIndex" @change="selectDevice">
         <view class="capture-device">设备：{{ chosenDevice ? chosenDevice.name : '请在「我的」连接鞋垫' }} {{ connectedDevices.length > 1 ? '▾' : '' }}</view>
       </picker>
@@ -12,11 +12,12 @@
         <button v-else class="capture-stop" @tap="ble.stopCollection()">停止记录</button>
         <button v-if="capture.queue.sessions" class="capture-retry" :disabled="capture.queue.sending" @tap="ble.retryCollectionUpload()">重试上传</button>
       </view>
-      <view class="capture-note">{{ queueText }} · 待上传 {{ capture.queue.pending }} / 5000 条</view>
+      <view class="capture-note">{{ queueText }} · 鞋垫/GPS 待上传 {{ capture.queue.originalPending || 0 }} / 5000 条</view>
       <view v-if="reasonText" class="capture-warning">{{ reasonText }}</view>
       <view v-if="capture.rejected" class="capture-note">已忽略 {{ capture.rejected }} 条格式异常消息</view>
       <view class="capture-note">采集时保持 App 前台；离开前台会停止记录。未开始时仅显示实时值。</view>
     </view>
+    <RadarPanel />
     <!-- 足部示意（固定点位） -->
     <view class="foot-card">
       <view class="foot-bg"></view>
@@ -75,6 +76,7 @@
 import { reactive, computed, ref } from 'vue'
 import { useBlueToothStore } from '@/store/modules/blueTooth'
 import { shade, mToCm } from '@/utils/footMetrics'
+import RadarPanel from '@/components/RadarPanel.vue'
 
 const ble = useBlueToothStore()
 const capture = computed(() => ble.collectionState)
@@ -88,7 +90,8 @@ const selectDevice = event => { selectedCode.value = connectedDevices.value[Numb
 const rawValue = value => value == null ? '—' : value
 const queueText = computed(() => capture.value.queue.sending ? '上传中' : capture.value.queue.error === 'identity'
   ? '请原操作员解锁后重试' : capture.value.queue.error === 'storage' ? '本地缓存读取或写入失败，请保留数据联系维护'
-    : capture.value.queue.paused ? '上传已暂停，数据保留，请检查网络或联系维护后重试' : '本地记录保留，按接收顺序上传')
+    : capture.value.queue.radarPaused && !capture.value.queue.primaryPaused ? '雷达待发保留，鞋垫/GPS 独立上传'
+      : capture.value.queue.paused ? '部分上传已暂停，数据保留，请检查网络后重试' : '本地记录保留，原流优先独立上传')
 const reasonText = computed(() => ({ background: '已离开前台，记录已停止；待上传数据已保留。',
   clock_rollback: '手机时间回退，已在最后有效接收时刻停止，请校准时间。',
   capacity: '缓存达到上限，已停止记录；上传后可开始新记录。', storage: '缓存不可用，已停止记录，请保留数据联系维护。',

@@ -33,6 +33,14 @@ describe('actual request interceptor collection owner fence', () => {
     await expect(instance.request(config())).rejects.toThrow('collection_identity_changed')
     expect(sends).toEqual([])
   })
+  it('preserves independent radar events and their fixed owner through the real interceptor', async () => {
+    const request = config()
+    request.url = '/collection-sessions/capture/batches'
+    request.data = { events: [{ event_id: 'radar-event', stream: 'radar', connection_epoch: 3, stream_sequence: 0, payload: { frames: 1, bytes: 30, age_ms: 1, stale: false, targets: [] } }] }
+    await instance.request(request)
+    expect(sends[0].data).toEqual(request.data)
+    expect(sends[0].custom.collectionIdentity).toEqual({ clinicianId: 11, authEpoch: 1 })
+  })
   it('does not refresh an old collection under a new authentication epoch', async () => {
     let refreshes = 0
     op.refreshToken = async () => { refreshes++ }

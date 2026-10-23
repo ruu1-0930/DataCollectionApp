@@ -1,0 +1,30 @@
+import { UTSAndroid } from 'io.dcloud.uts'
+import { RadarNative } from 'uts.sdk.modules.sarcogaitRadar'
+import { RadarCapabilities, RadarWifiScope } from '../interface.uts'
+let permissionRequested = false
+
+function invoke(method: string, ip: string = '', timeoutMs: number = 500, operationId: string = ''): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    RadarNative.execute(method, ip, timeoutMs.toInt(), operationId, (value: string, code: string) => {
+      if (code.length > 0) reject(new Error(code))
+      else resolve(value)
+    })
+  })
+}
+export async function capabilities(): Promise<RadarCapabilities> {
+  const result = JSON.parse<RadarCapabilities>(await invoke('capabilities'))!
+  if (result.supported && !result.permitted && result.permission.length > 0 && result.declared && !permissionRequested) {
+    const activity = UTSAndroid.getUniActivity()
+    if (activity == null) return result
+    permissionRequested = true
+    const granted = await new Promise<boolean>((resolve) => {
+      UTSAndroid.requestSystemPermission(activity!, [result.permission], (allRight: boolean, _: string[]) => resolve(allRight), (_: boolean, __: string[]) => resolve(false))
+    })
+    result.permitted = granted
+  }
+  return result
+}
+export async function wifiScope(): Promise<RadarWifiScope> { return JSON.parse<RadarWifiScope>(await invoke('wifiScope'))! }
+export async function resolveRadarName(): Promise<string[]> { return JSON.parse<string[]>(await invoke('name', '', 500, 'radar-name'))! }
+export function readRadar(ip: string, timeoutMs: number, operationId: string): Promise<string> { return invoke('read', ip, timeoutMs, operationId) }
+export function cancel(operationId: string): void { RadarNative.cancel(operationId) }

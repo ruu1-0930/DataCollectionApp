@@ -1,0 +1,8 @@
+{
+  "id": "sarcogait-radar",
+  "displayName": "SarcoGait indoor radar",
+  "version": "1.0.0",
+  "description": "Bound Wi-Fi telemetry adapter; Android API 23+",
+  "engines": { "HBuilderX": ">=4.25" },
+  "uni_modules": { "dependencies": [], "encrypt": [], "platforms": { "client": { "App": { "app-android": "y", "app-ios": "n" } } } }
+}

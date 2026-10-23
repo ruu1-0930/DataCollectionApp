@@ -14,6 +14,10 @@ R01后端已完成本地实现及独立限域审查（Spec compliant / quality a
 最终集中67passed/274既有warnings，原值精度续修3passed；实际MySQL仍未执行。
 雷达父子表保留原payload与顺序，三流共同事务/stop，查询按capture和手机时间切片，不比较BLE/radar epoch。
 原定位数据不进入旧raw/快照/Agent评分；不能把此模块通过外推成APK、完整纵向或生产验收。
+R02a/b已本地交付并经模块审查及一次修复复审：82passed集中，修复必要块45passed，Vite告警保留。
+单probe超时与真实取消分开；可读v2恢复写失败可显式重试，v1迁移失败保原字节不发；同一capture三流协调。
+原生UTS/Kotlin未编译、最终manifest/targetSdk与Android16 opt-in/API37权限组合未验，不能宣称APK可直接上线。
+MySQL age结果处理续修d0f3652仅雷达DOUBLE asdecimal=False，12passed/独立复审通过；006不变，实库仍待验。
 
 本文件为 Codex 在本仓库后续开发时使用的基本约束与导航。**开始任何开发前，请先阅读架构方案。**
 

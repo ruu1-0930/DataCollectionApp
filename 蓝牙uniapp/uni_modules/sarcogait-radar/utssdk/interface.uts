@@ -1,0 +1,7 @@
+export type RadarCapabilities = { supported: boolean, permitted: boolean, sdk: number, targetSdk: number, permission: string, declared: boolean }
+export type RadarWifiScope = { networkToken: string, address: string, prefixLength: number }
+export type Capabilities = () => Promise<RadarCapabilities>
+export type WifiScope = () => Promise<RadarWifiScope>
+export type ResolveRadarName = () => Promise<string[]>
+export type ReadRadar = (ip: string, timeoutMs: number, operationId: string) => Promise<string>
+export type Cancel = (operationId: string) => void

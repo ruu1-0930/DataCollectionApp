@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { createBleLines, parseTelemetry } from '../utils/bleTelemetry'
 import { createCollectionSession } from '../utils/collectionSession'
-import { createTelemetryQueue } from '../utils/telemetryQueue'
+import { createCollectionCoordinator } from '../utils/collectionCoordinator'
 import { createOperatorSessionRuntime, resetOperatorSession } from '../utils/operatorSession'
 
 // The UTS plugin and Pinia are supplied by HBuilderX, not this Node package.
@@ -61,7 +61,8 @@ describe('actual BLE collection wiring', () => {
     store = loadStore({ defineStore, store: {}, BleLib: Ble,
       listDevicesApi: async () => [], registerDeviceApi: async () => {}, deleteDeviceApiReq: (...args) => deleteApi(...args),
       usePatientStoreWithOut: () => patient, useOperatorStoreWithOut: () => operator,
-      createBleLines, parseTelemetry, createTelemetryQueue,
+      createBleLines, parseTelemetry, createCollectionCoordinator,
+      useRadarStoreWithOut: () => ({ invalidateCapture() {}, suspendContext() {}, setForeground() {} }),
       createCollectionSession: options => createCollectionSession({ ...options, uuid: () => `00000000-0000-4000-8000-${String(++nextId).padStart(12, '0')}` }),
       ...api,
     })
@@ -262,7 +263,7 @@ describe('actual BLE collection wiring', () => {
     uni.setKeepScreenOn = vi.fn()
     const source = readFileSync(new URL('../App.vue', import.meta.url), 'utf8').match(/<script>([\s\S]*?)<\/script>/)[1]
       .replace(/^import .*$/gm, '').replace('export default', 'return')
-    const app = new Function('useBlueToothStoreWithOut', source)(() => store)
+    const app = new Function('useBlueToothStoreWithOut', 'useRadarStoreWithOut', source)(() => store, () => ({ setForeground() {} }))
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
     store.startCollection('IN-3')

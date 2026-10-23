@@ -1,5 +1,6 @@
 <script>
 import { useBlueToothStoreWithOut } from '@/store/modules/blueTooth'
+import { useRadarStoreWithOut } from '@/store/modules/radar'
 import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { usePatientStoreWithOut } from '@/store/modules/patient'
 import { prepareAppLaunch } from '@/utils/appLaunch'
@@ -22,10 +23,11 @@ export default {
     })
     if (launchRoute) uni.reLaunch({ url: launchRoute })
   },
-  onShow() {},
+  onShow() { useRadarStoreWithOut().setForeground(true) },
   onHide() {
     const ble = useBlueToothStoreWithOut()
     if (ble.collectionState.active) ble.stopCollection('background')
+    useRadarStoreWithOut().setForeground(false)
   }
 }
 </script>

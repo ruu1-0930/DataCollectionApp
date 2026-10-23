@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createTelemetryQueue } from '../utils/telemetryQueue'
+import { createTelemetryOutbox } from '../utils/telemetryQueue'
+import { createCollectionCoordinator } from '../utils/collectionCoordinator'
 import { createCollectionSession, assertCollectionIdentity } from '../utils/collectionSession'
 
 let id = 0
@@ -14,7 +15,7 @@ function fixture({ fail, saveFailure = false, restored } = {}) {
     batch: async (captureId, body, identity) => { requests.push(['batch', captureId, body, identity]); if (fail) fail('batch'); return { capture_id: captureId, results: body.events.map(e => ({ event_id: e.event_id, stream: e.stream, status: 'accepted', server_received_at: start })) } },
     stop: async (captureId, body, identity) => { requests.push(['stop', captureId, body, identity]); if (fail) fail('stop'); return { capture_id: captureId } },
   }
-  const queue = createTelemetryQueue({ load: () => disk, save: value => { if (savingFails) throw Error('disk'); disk = value },
+  const queue = createCollectionCoordinator({ load: () => disk, save: value => { if (savingFails) throw Error('disk'); disk = value },
     identity: () => actor, api, wait: async () => {} })
   const session = createCollectionSession({ queue, uuid, now: () => now, identity: () => actor })
   return { queue, session, api, requests, disk: () => disk, actor: value => { actor = value }, time: value => { now = value },
@@ -29,7 +30,7 @@ describe('fixed collection window and durable FIFO', () => {
     f.session.receive('IN-3', 4, { stream: 'insole', payload: { left_speed: 1, right_speed: 2 } }, Date.parse(start) + 60)
     f.time(Date.parse(start) + 100)
     f.session.stop('user')
-    expect(JSON.parse(f.disk()).sessions[0].events).toHaveLength(52)
+    expect(JSON.parse(f.disk()).sessions[0].outboxes.primary).toHaveLength(52)
     await f.queue.drain()
     expect(f.requests.map(r => r[0])).toEqual(['create', 'batch', 'batch', 'batch', 'stop'])
     expect(f.requests.filter(r => r[0] === 'batch').map(r => r[2].events.length)).toEqual([50, 1, 1])
@@ -77,7 +78,7 @@ describe('fixed collection window and durable FIFO', () => {
     const f = fixture()
     f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
     f.session.receive('IN-3', 2, gps, Date.parse(start) + 20)
-    const oldId = JSON.parse(f.disk()).sessions[0].events[0].event_id
+    const oldId = JSON.parse(f.disk()).sessions[0].outboxes.primary[0].event_id
     const restored = fixture({ restored: f.disk() })
     expect(restored.session.active).toBe(null)
     await restored.queue.drain()
@@ -91,7 +92,7 @@ describe('fixed collection window and durable FIFO', () => {
     f.session.receive('IN-3', 1, gps, Date.parse(start) - 1)
     const saved = JSON.parse(f.disk()).sessions[0]
     expect(saved.mobile_stopped_at).toBe('2026-10-19T00:00:00.020Z')
-    expect(saved.events).toHaveLength(1)
+    expect(saved.outboxes.primary).toHaveLength(1)
     expect(f.session.active).toBe(null)
     expect(f.session.reason).toBe('clock_rollback')
   })
@@ -121,8 +122,8 @@ describe('fixed collection window and durable FIFO', () => {
     old.session.receive('IN-3', 1, gps, Date.parse(start))
     const document = JSON.parse(old.disk())
     document.sessions[0].mobile_stopped_at = start
-    const sample = document.sessions[0].events[0]
-    document.sessions[0].events = Array.from({ length: 4999 }, (_, stream_sequence) => ({ ...sample, event_id: uuid(), stream_sequence }))
+    const sample = document.sessions[0].outboxes.primary[0]
+    document.sessions[0].outboxes.primary = Array.from({ length: 4999 }, (_, stream_sequence) => ({ ...sample, event_id: uuid(), stream_sequence }))
     const f = fixture({ restored: JSON.stringify(document) })
     f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
     f.session.receive('IN-3', 1, gps, Date.parse(start))
@@ -154,6 +155,28 @@ describe('fixed collection window and durable FIFO', () => {
     f.session.receive('IN-3', 1, gps, Date.parse(start))
     expect(f.session.active).toBe(null)
     expect(f.session.reason).toBe('storage')
-    expect(JSON.parse(f.disk()).sessions[0].events).toHaveLength(0)
+    expect(JSON.parse(f.disk()).sessions[0].outboxes.primary).toHaveLength(0)
+  })
+})
+
+describe('single-lane pure outbox', () => {
+  it('isolates snapshots, bounds capacity and acknowledges only matching IDs', () => {
+    const outbox = createTelemetryOutbox({ capacity: 2 })
+    outbox.enqueue({ event_id: 'one', stream: 'radar', payload: { frames: 1 } })
+    const saved = outbox.snapshot(); saved[0].payload.frames = 99
+    outbox.enqueue({ event_id: 'two', stream: 'radar', payload: { frames: 2 } })
+    expect(() => outbox.enqueue({ event_id: 'three' })).toThrow('capacity')
+    outbox.ack(['one', 'unknown'])
+    expect(outbox.snapshot()).toEqual([{ event_id: 'two', stream: 'radar', payload: { frames: 2 } }])
+  })
+  it('limits each batch to 50 and never mixes streams or exceeds byte budget', () => {
+    const outbox = createTelemetryOutbox()
+    for (let n = 0; n < 51; n++) outbox.enqueue({ event_id: String(n), stream: 'gps', payload: {} })
+    expect(outbox.peekBatch()).toHaveLength(50)
+    outbox.ack(outbox.peekBatch().map(e => e.event_id))
+    outbox.enqueue({ event_id: 'next', stream: 'insole', payload: {} })
+    expect(outbox.peekBatch().map(e => e.stream)).toEqual(['gps'])
+    const large = createTelemetryOutbox({ events: [{ event_id: 'big', stream: 'radar', payload: 'x'.repeat(50000) }] })
+    expect(large.peekBatch()).toEqual([])
   })
 })
