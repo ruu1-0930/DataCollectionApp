@@ -214,7 +214,9 @@ class CollectionRadarRaw(db.Model):
     payload_json = db.Column(_canonical, nullable=False)
     frames = db.Column(db.BigInteger, nullable=False)
     bytes = db.Column(db.BigInteger, nullable=False)
-    age_ms = db.Column(db.Float().with_variant(mysql.DOUBLE(), 'mysql'))
+    # PyMySQL already returns DOUBLE as float; Decimal's default ten-place view
+    # would quantize valid ages and make the exact audit projection check fail.
+    age_ms = db.Column(db.Float().with_variant(mysql.DOUBLE(asdecimal=False), 'mysql'))
     stale = db.Column(db.Boolean, nullable=False)
     targets = db.relationship('CollectionRadarTarget', order_by='CollectionRadarTarget.ordinal', cascade='all, delete-orphan')
     __table_args__ = (
