@@ -1,5 +1,16 @@
 # AGENTS.md
 
+## 2026-10-23 室内雷达实施（本树当前权威）
+
+Ru1已确认室内雷达Spec/Plan并要求后端、uni-app、工作台、Agent独立子agent负责。
+Spec/Plan/进度位于D:/ME5001/.worktrees/Project-sarcogait-indoor-radar/docs/superpowers下2026-10-23-sarcogait-indoor-radar系列。
+本B树基于81ddc09隔离，原snapshot-v1树及其manifest用户改动不动；38字段原义不变。
+后端子agent只写back范围，uni-app子agent只写蓝牙uniapp范围；AGENTS/架构/共享进度由控制者维护。
+实现者不得stage/commit或派下级，控制者限文件串行提交并立即记进度；每模块限域审查与最终集成审查。
+先RED再实现，每完整块集中验证，保留实际失败和告警。禁止模型/生产/真实局域网操作，不读真实.env。
+雷达单独流、手机默认自动发现、同一capture唯一协调器；权限/API/原生APK真机与本地mock分开记录。
+不碰加密android-ble插件；新增独立UTS适配；后端006迁移不执行RDS，不重跑旧迁移。
+
 本文件为 Codex 在本仓库后续开发时使用的基本约束与导航。**开始任何开发前，请先阅读架构方案。**
 
 > 📐 **架构与改造方案（必读）**：[系统架构方案.md](系统架构方案.md)
