@@ -18,6 +18,8 @@ R02a/b已本地交付并经模块审查及一次修复复审：82passed集中，
 单probe超时与真实取消分开；可读v2恢复写失败可显式重试，v1迁移失败保原字节不发；同一capture三流协调。
 原生UTS/Kotlin未编译、最终manifest/targetSdk与Android16 opt-in/API37权限组合未验，不能宣称APK可直接上线。
 MySQL age结果处理续修d0f3652仅雷达DOUBLE asdecimal=False，12passed/独立复审通过；006不变，实库仍待验。
+最终b988e3d修复换网失败路径/原生请求绑定与bytes回退epoch，私有read必传expectedScope/subnetOnly，无旧签名降级。
+唯一最终限域复审三项ADDRESSED、无新重大问题；JS必要块35passed，原生编译/权限/真机仍门禁，不因源码审查通过宣称APK可用。
 
 本文件为 Codex 在本仓库后续开发时使用的基本约束与导航。**开始任何开发前，请先阅读架构方案。**
 

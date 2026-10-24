@@ -1,5 +1,9 @@
 # 室内雷达uni-app交付记录
 
+最终续修b988e3d：固定期望Wi-Fi scope并贯通JS/UTS/Kotlin，名称后/提交前/失败后/原生HTTP前复核，换网取消整轮；自动候选限定当前子网∩/24，手动私网兜底保留。
+frames或bytes任一回退令epoch只增一次，重连清空两基线。私有read参数为ip/timeoutMs/operationId/expectedScope/subnetOnly，不保留无scope降级。
+JS必要四文件35passed/1.19s、Vite告警保留；唯一最终复审I1/M1/M2均ADDRESSED、无新Critical/Important，允许本地代码整合，不等于原生/设备或部署通过。
+
 2026-10-24模块审查续修：原生probe超时不再冒充整轮取消，可读v2恢复freeze-stop写失败可手动先持久化再发送。
 独立复审两项ADDRESSED，quality approved。必要四文件45passed/1.31s（此前完整受影响块82passed），
 不将两次结果相加；Vite告警仍在，UTS/APK/权限/真机门禁不关闭。实际提交与统一进度见Project雷达进度表。
