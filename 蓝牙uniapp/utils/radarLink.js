@@ -1,8 +1,9 @@
 import { isPrivateIPv4, parseRadarPayload } from './radarProtocol'
+import { sameRadarScope } from './radarDiscovery'
 let serial = 0
 export function createRadarLink({ discovery, adapter, clock = Date.now, timers = globalThis, onFrame = () => {}, onState = () => {}, captureContext = () => null }) {
   let enabled = false, foreground = true, disposed = false, generation = 0, timer = null, operation = null, release = null
-  let epoch = 0, ip = null, networkToken = null, previousFrames = null, failures = 0, lastDiscovery = -Infinity
+  let epoch = 0, ip = null, networkToken = null, expectedScope = null, previousFrames = null, previousBytes = null, failures = 0, lastDiscovery = -Infinity
   let lastPollStarted = -Infinity
   const state = (status, extra = {}) => onState({ status, enabled, ip, epoch, networkToken, ...extra })
   function cancelWork() {
@@ -41,21 +42,32 @@ export function createRadarLink({ discovery, adapter, clock = Date.now, timers =
     try {
       const scope = await adapter.wifiScope()
       if (!valid(token)) return
-      if (scope.networkToken !== networkToken) throw Error('network_changed')
+      if (!sameRadarScope(scope, expectedScope)) throw Error('network_changed')
       const guard = new Promise((_, reject) => { release = () => reject(Error('cancelled')); timeout = timers.setTimeout(() => { adapter.cancel(id); reject(Error('network')) }, 2500) })
-      const raw = await Promise.race([adapter.readRadar(ip, 2500, id), guard])
+      const raw = await Promise.race([adapter.readRadar(ip, 2500, id, expectedScope, false), guard])
       if (!valid(token)) return
       const current = await adapter.wifiScope()
       if (!valid(token)) return
-      if (current.networkToken !== networkToken) throw Error('network_changed')
+      if (!sameRadarScope(current, expectedScope)) throw Error('network_changed')
       const payload = parseRadarPayload(raw), receivedAt = clock()
-      if (previousFrames !== null && payload.frames < previousFrames) epoch++
-      previousFrames = payload.frames; failures = 0
+      if ((previousFrames !== null && payload.frames < previousFrames) || (previousBytes !== null && payload.bytes < previousBytes)) epoch++
+      previousFrames = payload.frames; previousBytes = payload.bytes; failures = 0
       state('connected'); onFrame(payload, receivedAt, epoch, networkToken, context)
     } catch (e) {
       if (!valid(token)) return
       if (['permission', 'unsupported'].includes(e.message)) { state(e.message); return }
-      if (e.message === 'network_changed') { epoch++; ip = null; state('network_changed'); later(() => rediscover(token), 0, token); return }
+      if (e.message !== 'network_changed') {
+        try {
+          const current = await adapter.wifiScope()
+          if (!valid(token)) return
+          if (!sameRadarScope(current, expectedScope)) e = Error('network_changed')
+        } catch (scopeError) {
+          if (!valid(token)) return
+          if (scopeError.message === 'permission') { state('permission'); return }
+          e = Error('network_changed')
+        }
+      }
+      if (e.message === 'network_changed') { adapter.cancel(id); epoch++; ip = null; expectedScope = null; state('network_changed'); later(() => rediscover(token), 0, token); return }
       if (e.message === 'protocol') { failures = 0; state('protocol') }
       else { failures++; state('network', { failures }) }
       if (failures >= 3) { later(() => rediscover(token), 0, token); return }
@@ -78,7 +90,7 @@ export function createRadarLink({ discovery, adapter, clock = Date.now, timers =
       const scope = await adapter.wifiScope()
       if (!valid(token)) return
       if (!scope.networkToken) { state('wifi_unavailable'); return }
-      ip = address; networkToken = scope.networkToken; epoch++; failures = 0; previousFrames = null
+      ip = address; networkToken = scope.networkToken; expectedScope = { ...scope }; epoch++; failures = 0; previousFrames = null; previousBytes = null
       state('connecting'); later(() => poll(token), 0, token)
     } catch (e) { if (valid(token)) state(e.message || 'network') }
   }

@@ -4,7 +4,7 @@ const payload = (frames = 1) => ({ frames, bytes: 30, age_ms: 1, stale: false, t
 const candidates = ips => ({ networkToken: 'wifi', candidates: ips.map(ip => ({ ip, frames: 1, stale: false })) })
 function fixture(discover = async () => candidates(['10.0.0.2'])) {
   const states = [], frames = [], reads = []
-  const adapter = { capabilities: async () => ({ supported: true, permitted: true }), wifiScope: async () => ({ networkToken: 'wifi' }), cancel: vi.fn(), readRadar: async (ip, timeout, id) => { reads.push([ip, timeout, id]); return payload() } }
+  const adapter = { capabilities: async () => ({ supported: true, permitted: true }), wifiScope: async () => ({ networkToken: 'wifi', address: '10.0.0.4', prefixLength: 24 }), cancel: vi.fn(), readRadar: async (ip, timeout, id, expectedScope, subnetOnly) => { reads.push([ip, timeout, id, expectedScope, subnetOnly]); return payload() } }
   const discovery = { discover, cancel: vi.fn() }
   return { adapter, discovery, states, frames, reads, link: createRadarLink({ adapter, discovery, onState: s => states.push(s), onFrame: (...f) => frames.push(f) }) }
 }
@@ -53,6 +53,16 @@ it('a protocol error breaks the run of consecutive network failures', async () =
   expect(f.states.filter(s => s.status === 'network').map(s => s.failures)).toEqual([1, 1, 2])
   f.link.dispose()
 })
+
+it('test_manual_private_ip_poll_forwards_expected_scope_without_subnet_scan', async () => {
+  const f = fixture(), reads = []
+  f.adapter.wifiScope = async () => ({ networkToken: 'wifi', address: '10.0.0.4', prefixLength: 24 })
+  f.adapter.readRadar = async (...args) => { reads.push(args); return payload() }
+  await f.link.connect('192.168.8.9'); await vi.advanceTimersByTimeAsync(0)
+  expect(reads[0].slice(3)).toEqual([{ networkToken: 'wifi', address: '10.0.0.4', prefixLength: 24 }, false])
+  expect(f.frames).toHaveLength(1)
+  f.link.dispose()
+})
 it('capture cancellation cannot start another telemetry request inside the 5Hz budget', async () => {
   const f = fixture(), starts = []
   f.adapter.readRadar = () => { starts.push(Date.now()); return new Promise(() => {}) }
@@ -61,5 +71,25 @@ it('capture cancellation cannot start another telemetry request inside the 5Hz b
   expect(starts).toHaveLength(1)
   await vi.advanceTimersByTimeAsync(190)
   expect(starts).toHaveLength(2); expect(starts[1] - starts[0]).toBe(200)
+  f.link.dispose()
+})
+
+it.each([
+  [10, 30, 'bytes-only'], [11, 30, 'bytes-with-increasing-frames'], [1, 30, 'both-counters'],
+])('test_counter_rollback_advances_epoch_once_%s_%s_%s', async (frames, bytes) => {
+  const f = fixture(); let count = 0
+  f.adapter.readRadar = async () => ++count === 1 ? { ...payload(10), bytes: 300 } : { ...payload(frames), bytes }
+  await f.link.enable(); await vi.advanceTimersByTimeAsync(200)
+  expect(f.frames.map(row => row[2])).toEqual([1, 2])
+  f.link.dispose()
+})
+
+it('test_reconnect_clears_both_counter_baselines', async () => {
+  const f = fixture()
+  f.adapter.readRadar = async () => ({ ...payload(10), bytes: 300 })
+  await f.link.connect('10.0.0.2'); await vi.advanceTimersByTimeAsync(0)
+  f.adapter.readRadar = async () => ({ ...payload(1), bytes: 30 })
+  await f.link.connect('10.0.0.3'); await vi.advanceTimersByTimeAsync(200)
+  expect(f.frames.map(row => row[2])).toEqual([1, 2])
   f.link.dispose()
 })

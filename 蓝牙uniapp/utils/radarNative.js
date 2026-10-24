@@ -15,10 +15,11 @@ export function createRadarNative(plugin) {
     capabilities: () => plugin ? safe(() => plugin.capabilities()) : Promise.resolve({ supported: false, permitted: false }),
     wifiScope: () => plugin ? safe(() => plugin.wifiScope()) : Promise.reject(Error('unsupported')),
     resolveRadarName: () => plugin ? safe(() => plugin.resolveRadarName()) : Promise.reject(Error('unsupported')),
-    readRadar(ip, timeoutMs, operationId) {
+    readRadar(ip, timeoutMs, operationId, expectedScope, subnetOnly) {
       if (!isPrivateIPv4(ip)) return Promise.reject(Error('invalid_ip'))
       if (!plugin) return Promise.reject(Error('unsupported'))
-      return safe(async () => parseRadarPayload(await plugin.readRadar(ip, Math.min(2500, Math.max(1, timeoutMs)), operationId)))
+      if (!expectedScope?.networkToken || !isPrivateIPv4(expectedScope.address) || !Number.isInteger(expectedScope.prefixLength) || expectedScope.prefixLength < 0 || expectedScope.prefixLength > 32 || typeof subnetOnly !== 'boolean') return Promise.reject(Error('network_changed'))
+      return safe(async () => parseRadarPayload(await plugin.readRadar(ip, Math.min(2500, Math.max(1, timeoutMs)), operationId, expectedScope, subnetOnly)))
     },
     cancel(id) { if (plugin) plugin.cancel(id) },
   }

@@ -17,7 +17,7 @@ beforeEach(() => {
   globalThis.uni = { getStorageSync: key => disk.get(key), setStorageSync: (key, value) => disk.set(key, value), setKeepScreenOn: vi.fn(), showToast: vi.fn(), showLoading: vi.fn(), hideLoading: vi.fn() }
   const defineStore = (_, options) => () => { const value = options.state(); for (const [key, action] of Object.entries(options.actions)) value[key] = action.bind(value); return value }
   class Ble { connect(code, auto, cb) { cb({ type: 0 }) } scanServices(cb) { cb({ data: [null, null, { uuid: 's', characteristics: [{ uuid: 'n', properties: { NOTIFY: true } }] }] }) } setMtu() {} onNotityReadBleData(s, n, enabled, cb) { if (enabled) this.notify = cb } close() {} }
-  adapter = { capabilities: async () => ({ supported: true, permitted: true }), wifiScope: async () => ({ networkToken: 'wifi', address: '10.0.0.4', prefixLength: 30 }), resolveRadarName: async () => ['10.0.0.2'], readRadar: async () => payload, cancel: vi.fn() }
+  adapter = { capabilities: async () => ({ supported: true, permitted: true }), wifiScope: async () => ({ networkToken: 'wifi', address: '10.0.0.4', prefixLength: 24 }), resolveRadarName: async () => ['10.0.0.2'], readRadar: async () => payload, cancel: vi.fn() }
   const deps = { defineStore, store: {}, BleLib: Ble, usePatientStoreWithOut: () => patient, useOperatorStoreWithOut: () => operator,
     useBlueToothStoreWithOut: () => ble, useRadarStoreWithOut: () => radar, createBleLines, parseTelemetry, createCollectionCoordinator,
     createCollectionSession: opts => createCollectionSession({ ...opts, uuid: () => `00000000-0000-4000-8000-${String(++serial).padStart(12, '0')}` }),

@@ -3,9 +3,9 @@ import { RadarNative } from 'uts.sdk.modules.sarcogaitRadar'
 import { RadarCapabilities, RadarWifiScope } from '../interface.uts'
 let permissionRequested = false
 
-function invoke(method: string, ip: string = '', timeoutMs: number = 500, operationId: string = ''): Promise<string> {
+function invoke(method: string, ip: string = '', timeoutMs: number = 500, operationId: string = '', networkToken: string = '', address: string = '', prefixLength: number = -1, subnetOnly: boolean = false): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    RadarNative.execute(method, ip, timeoutMs.toInt(), operationId, (value: string, code: string) => {
+    RadarNative.execute(method, ip, timeoutMs.toInt(), operationId, networkToken, address, prefixLength.toInt(), subnetOnly, (value: string, code: string) => {
       if (code.length > 0) reject(new Error(code))
       else resolve(value)
     })
@@ -26,5 +26,7 @@ export async function capabilities(): Promise<RadarCapabilities> {
 }
 export async function wifiScope(): Promise<RadarWifiScope> { return JSON.parse<RadarWifiScope>(await invoke('wifiScope'))! }
 export async function resolveRadarName(): Promise<string[]> { return JSON.parse<string[]>(await invoke('name', '', 500, 'radar-name'))! }
-export function readRadar(ip: string, timeoutMs: number, operationId: string): Promise<string> { return invoke('read', ip, timeoutMs, operationId) }
+export function readRadar(ip: string, timeoutMs: number, operationId: string, expectedScope: RadarWifiScope, subnetOnly: boolean): Promise<string> {
+  return invoke('read', ip, timeoutMs, operationId, expectedScope.networkToken, expectedScope.address, expectedScope.prefixLength, subnetOnly)
+}
 export function cancel(operationId: string): void { RadarNative.cancel(operationId) }

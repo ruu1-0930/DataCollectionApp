@@ -53,6 +53,29 @@ object RadarNative {
     private data class Scope(val network: Network, val address: String, val prefix: Int) {
         fun json(): String = JSONObject().put("networkToken", network.networkHandle.toString()).put("address", address).put("prefixLength", prefix).toString()
     }
+    private fun requireScope(current: Scope, token: String, address: String, prefix: Int) {
+        if (token.isEmpty() || !privateIP(address) || prefix !in 0..32 ||
+            current.network.networkHandle.toString() != token || current.address != address || current.prefix != prefix) {
+            throw IllegalStateException("network_changed")
+        }
+    }
+    private fun requireCurrent(expected: Scope) {
+        val current = try { scope() } catch (e: IllegalStateException) {
+            if (e.message == "wifi_unavailable") throw IllegalStateException("network_changed")
+            throw e
+        }
+        requireScope(current, expected.network.networkHandle.toString(), expected.address, expected.prefix)
+    }
+    private fun inDiscoverySubnet(ip: String, current: Scope): Boolean {
+        if (current.prefix !in 1..30) return false
+        fun number(value: String): Long = value.split('.').fold(0L) { total, part -> (total shl 8) or part.toLong() }
+        val local = number(current.address)
+        val mask = (0xffffffffL shl (32 - current.prefix)) and 0xffffffffL
+        val first = maxOf(local and mask, local and 0xffffff00L)
+        val last = minOf((local and mask) or (mask xor 0xffffffffL), (local and 0xffffff00L) or 255L)
+        val candidate = number(ip)
+        return candidate > first && candidate < last && candidate != local
+    }
     private fun scope(): Scope {
         if (Build.VERSION.SDK_INT < 23) throw IllegalStateException("unsupported")
         val ctx = context()
@@ -74,7 +97,7 @@ object RadarNative {
         return p.all { it <= 255 } && (p[0] == 10 || p[0] == 172 && p[1] in 16..31 || p[0] == 192 && p[1] == 168)
     }
     fun cancel(id: String) { operations[id]?.cancel() }
-    fun execute(method: String, ip: String, timeoutMs: Int, id: String, callback: (String, String) -> Unit) {
+    fun execute(method: String, ip: String, timeoutMs: Int, id: String, expectedToken: String, expectedAddress: String, expectedPrefix: Int, subnetOnly: Boolean, callback: (String, String) -> Unit) {
         val operation = Operation()
         if (id.isNotEmpty()) operations.put(id, operation)?.cancel()
         io.execute {
@@ -86,7 +109,7 @@ object RadarNative {
                     "capabilities" -> capability()
                     "wifiScope" -> scope().json()
                     "name" -> resolveName(operation)
-                    "read" -> read(ip, timeoutMs.coerceIn(1, 2500), operation)
+                    "read" -> read(ip, timeoutMs.coerceIn(1, 2500), operation, expectedToken, expectedAddress, expectedPrefix, subnetOnly)
                     else -> throw IllegalStateException("unsupported")
                 }
                 operation.check()
@@ -105,9 +128,14 @@ object RadarNative {
             main.post { callback(result, error) }
         }
     }
-    private fun read(ip: String, timeout: Int, op: Operation): String {
+    private fun read(ip: String, timeout: Int, op: Operation, expectedToken: String, expectedAddress: String, expectedPrefix: Int, subnetOnly: Boolean): String {
         if (!privateIP(ip)) throw IllegalStateException("invalid_ip")
         val current = scope()
+        requireScope(current, expectedToken, expectedAddress, expectedPrefix)
+        if (subnetOnly && !inDiscoverySubnet(ip, current)) throw IllegalStateException("invalid_ip")
+        op.check()
+        // Retain this Network even if Wi-Fi changes after validation. A queued
+        // old-subnet request must never silently migrate to another network.
         val connection = current.network.openConnection(URL("http://$ip:80/api/targets")) as HttpURLConnection
         op.attach { connection.disconnect() }
         connection.instanceFollowRedirects = false
@@ -118,6 +146,8 @@ object RadarNative {
         connection.setRequestProperty("Authorization", "")
         // No cloud API client, cookies, Authorization or arbitrary caller headers.
         try {
+            op.check()
+            requireCurrent(current)
             op.check()
             val status = connection.responseCode
             if (status in 300..399) throw IllegalStateException("redirect")
@@ -134,7 +164,7 @@ object RadarNative {
                     if (data.size() > 32768) throw IllegalStateException("response_too_large")
                 }
             }
-            if (scope().network != current.network) throw IllegalStateException("network_changed")
+            requireCurrent(current)
             return data.toString("UTF-8")
         } finally { connection.disconnect() }
     }
@@ -157,7 +187,7 @@ object RadarNative {
                 try { socket.receive(packet) } catch (_: java.net.SocketTimeoutException) { break }
                 found.addAll(parseAnswers(bytes.copyOf(packet.length)))
             }
-            if (scope().network != current.network) throw IllegalStateException("network_changed")
+            requireCurrent(current)
             return JSONArray(found.toList()).toString()
         } finally { socket.close(); if (lock.isHeld) lock.release() }
     }
