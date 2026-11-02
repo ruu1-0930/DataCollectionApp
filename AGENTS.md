@@ -1,5 +1,12 @@
 # AGENTS.md
 
+## 2026-11-02 手机缓存阻塞修复
+
+Ru1反馈连接鞋垫后不久提示缓存不可用，并要求继续双语及修复报告入口；当前先处理App阻塞，双语在A另行继续。
+B038fe20仅改协调器的时间max实现和默认radar插件JS条件编译，新增两回归，RED7failed/2passed后六文件43passed/15.38s；限域审查0Critical/Important，可交付源码复测。
+缺Array.at/flatMap导致正常缓存被误报storage已本地复现；普通JS改APP-PLUS+Android限定，依据DCloud官方条件编译规范。无手机引擎日志，不称真机根因或APK已验证。
+不改manifest用户标记、UTS/Kotlin、后端/数据库，不清缓存/删除待发；Ru1自行完整APK覆盖升级保数据，源码/命令/门禁见docs/radar/2026-11-02-app-cache-hotfix.md。尚未push，禁止为此再迁移或重启ECS。
+
 ## 2026-11-02 隔离MySQL实际回执
 
 Ru1以固定e2384f5源码/Python3.10.12在lanya_radar_verify_20261023实际运行helper，取得preflight/service、1062/1452/3819三项代表性约束及cleanup全部OK和MYSQL_RADAR_VERIFY_OK。
