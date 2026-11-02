@@ -18,7 +18,11 @@ export async function capabilities(): Promise<RadarCapabilities> {
     if (activity == null) return result
     permissionRequested = true
     const granted = await new Promise<boolean>((resolve) => {
-      UTSAndroid.requestSystemPermission(activity!, [result.permission], (allRight: boolean, _: string[]) => resolve(allRight), (_: boolean, __: string[]) => resolve(false))
+      UTSAndroid.requestSystemPermission(
+        activity!, [result.permission],
+        (allRight: boolean, grantedList: string[]) => resolve(allRight),
+        (doNotAskAgain: boolean, grantedList: string[]) => resolve(false)
+      )
     })
     result.permitted = granted
   }
