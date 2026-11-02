@@ -1,5 +1,11 @@
 # AGENTS.md
 
+## 2026-11-02 隔离MySQL实际回执
+
+Ru1以固定e2384f5源码/Python3.10.12在lanya_radar_verify_20261023实际运行helper，取得preflight/service、1062/1452/3819三项代表性约束及cleanup全部OK和MYSQL_RADAR_VERIFY_OK。
+限定真实MySQL功能门禁已通过，自身合成行清理/九表空由helper校验；不等于全部约束矩阵、并发锁/规模、真机或生产验收。
+详见docs/radar/2026-11-02-mysql-acceptance.md。生产lanya仍未迁移006，服务未更新；以下早期未验说明保留其历史时点，不覆盖本回执。
+
 ## 2026-10-23 室内雷达实施（本树当前权威）
 
 Ru1已确认室内雷达Spec/Plan并要求后端、uni-app、工作台、Agent独立子agent负责。
