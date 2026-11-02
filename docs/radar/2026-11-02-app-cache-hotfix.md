@@ -33,3 +33,19 @@
 若仍失败，回报发生在启动/开始/第一帧/停止哪一步及手机系统/App构建版本；不发送账号口令、患者定位或缓存原文。
 
 本次仅App两源码文件，无B服务/数据库/Agent变更，ECS无需为此补丁再次迁移或重启。源码已本地提交，尚未push；新APK构建、安装与设备复测均待Ru1反馈。
+
+## 2026-11-03 手动配置弹窗及设备版本确认
+
+Ru1明确回复“还没重新打包”。因此目前手机提示“此系统暂不支持雷达”来自修复前安装包，尚未验证038fe20的模块加载修正；手动填写IP也必须通过原生能力/权限判断，不能使缺失模块变为支持。
+
+本次按要求将首页常驻IP输入移入既有uni-popup居中弹窗：点“手动配置”填写地址，取消关闭且保留本次输入；空地址、非私网或非法IPv4留在弹窗提示，不改变现有连接；合法地址去除两端空格后关闭弹窗，交给原radar.connect。连接结果仍在卡片显示，不改变自动发现、轮询或采集逻辑。
+
+新增测试先5failed（旧页面无弹窗处理器），实现后运行：
+
+```powershell
+.\node_modules\.bin\vitest.cmd run tests/radarManualConfig.test.js tests/radarAppPlatform.test.js tests/radarLink.test.js tests/radarWiring.test.js --pool=forks --poolOptions.forks.singleFork
+```
+
+结果四文件25passed/788ms，Vite CJS既有warning保留。新测试执行组件真实setup处理器，覆盖打开/取消、三类非法输入和合法地址单次派发；既有测试覆盖默认Android插件加载及连接/采集接线。本地没有Vue/原生渲染器，未执行HBuilderX模板编译、键盘遮挡或设备雷达测试。
+
+重新打包仍使用本文同一源目录；完整APK同签名覆盖安装以保留待发数据。先检查手动配置是否弹窗，再连接鞋垫观察缓存提示与显式记录；手机连雷达同一Wi-Fi后检查自动发现/手动连接。如修复包仍unsupported，再记录手机系统版本与构建输出中原生模块是否实际包含，不重复试不同IP来绕过检查。此次无需ECS更新。

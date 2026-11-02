@@ -1,5 +1,12 @@
 # AGENTS.md
 
+## 2026-11-03 雷达手动配置弹窗
+
+Ru1确认手机尚未重新打包安装038fe20，因此旧APK的unsupported提示不能判定前一修复无效。
+RadarPanel改为手动配置按钮→现有uni-popup居中弹窗，输入/取消/连接；私网IPv4校验通过才复用原radar.connect，不绕过能力/权限检查。
+新增五项组件真实setup处理器回归先5failed，完整相关块四文件25passed/788ms，既有Vite CJS warning保留；不是HBuilderX模板编译/真机视觉验收。
+不修改manifest、UTS/Kotlin、后端、数据库，不清缓存；需Ru1完整APK覆盖安装后再验。详情见docs/radar/2026-11-02-app-cache-hotfix.md。
+
 ## 2026-11-02 手机缓存阻塞修复
 
 Ru1反馈连接鞋垫后不久提示缓存不可用，并要求继续双语及修复报告入口；当前先处理App阻塞，双语在A另行继续。

@@ -14,21 +14,48 @@
     <view class="radar-note">{{ capture.active ? (capture.radarReason ? '雷达记录已暂停：' + capture.radarReason : '在共同采集窗口记录') : '连接仅显示；点击上方开始后记录' }} · 雷达待发 {{ capture.queue.radarPending || 0 }} / 5000</view>
     <view v-if="capture.queue.radarPaused" class="radar-note">雷达上传已暂停，待发保留；鞋垫与 GPS 继续。检查网络后点上方重试上传。</view>
     <view class="radar-note">槽位不代表患者身份；径向速度不代表完整步速。手机接收时间并非硬件对时。</view>
-    <button size="mini" @tap="advanced = !advanced">{{ advanced ? '收起高级设置' : '高级：手动 IP' }}</button>
-    <view v-if="advanced">
-      <input v-model="manualIP" placeholder="私网 IPv4，例如 192.168.1.20" />
-      <button size="mini" @tap="radar.connect(manualIP.trim())">连接</button>
+    <view class="radar-actions">
+      <button size="mini" @tap="openManualConfig">手动配置</button>
       <button size="mini" @tap="radar.disconnect()">断开并暂停自动连接</button>
     </view>
+    <uni-popup ref="manualPopup" type="center" :is-mask-click="false">
+      <view class="radar-dialog">
+        <view class="radar-title">手动连接雷达</view>
+        <view class="radar-note">手机需与雷达连接同一 Wi-Fi。请输入雷达的局域网 IPv4 地址。</view>
+        <text class="radar-input-label">雷达 IP 地址</text>
+        <input v-model="manualIP" class="radar-ip-input" type="text" :maxlength="32" placeholder="例如 192.168.1.20" confirm-type="done" @confirm="connectManual" />
+        <view v-if="manualError" class="radar-input-error">{{ manualError }}</view>
+        <view class="radar-dialog-actions">
+          <button size="mini" @tap="closeManualConfig">取消</button>
+          <button size="mini" type="primary" @tap="connectManual">连接</button>
+        </view>
+      </view>
+    </uni-popup>
   </view>
 </template>
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRadarStore } from '@/store/modules/radar'
 import { useBlueToothStore } from '@/store/modules/blueTooth'
-import { visibleRadarTargets } from '@/utils/radarProtocol'
+import { isPrivateIPv4, visibleRadarTargets } from '@/utils/radarProtocol'
 const radar = useRadarStore(), ble = useBlueToothStore()
-const advanced = ref(false), manualIP = ref('')
+const manualPopup = ref(null), manualIP = ref(''), manualError = ref('')
+function openManualConfig() {
+  manualError.value = ''
+  manualPopup.value.open()
+}
+function closeManualConfig() { manualPopup.value.close() }
+function connectManual() {
+  const ip = manualIP.value.trim()
+  if (!isPrivateIPv4(ip)) {
+    manualError.value = '请输入有效的私网 IPv4 地址，例如 192.168.1.20'
+    return
+  }
+  manualIP.value = ip
+  manualError.value = ''
+  closeManualConfig()
+  radar.connect(ip)
+}
 const capture = computed(() => ble.collectionState)
 const targets = computed(() => visibleRadarTargets(radar.realtime?.payload))
 const stale = computed(() => !targets.value.length)
@@ -41,6 +68,12 @@ onMounted(() => radar.open())
 .radar-row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; font-size: 24rpx; }
 .radar-note { color: #666; font-size: 22rpx; line-height: 1.7; overflow-wrap: anywhere; margin: 10rpx 0; }
 .radar-target { font-size: 24rpx; line-height: 1.8; }
-input { border-bottom: 1px solid #ddd; padding: 16rpx 0; margin: 12rpx 0; }
+.radar-actions { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.radar-dialog { box-sizing: border-box; width: 620rpx; max-width: 88vw; padding: 32rpx; background: #fff; border-radius: 24rpx; }
+.radar-input-label { display: block; margin-top: 24rpx; font-size: 24rpx; color: #334155; }
+.radar-ip-input { border: 1px solid #cbd5e1; border-radius: 12rpx; padding: 18rpx; margin-top: 12rpx; font-size: 28rpx; }
+.radar-input-error { margin-top: 12rpx; color: #b42318; font-size: 24rpx; line-height: 1.5; }
+.radar-dialog-actions { display: flex; justify-content: flex-end; gap: 16rpx; margin-top: 24rpx; }
+.radar-dialog-actions button { margin: 0; }
 button { margin: 12rpx 12rpx 0 0; }
 </style>
