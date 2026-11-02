@@ -1,5 +1,12 @@
 # AGENTS.md
 
+## 2026-11-03 雷达UTS云打包名称错误
+
+Ru1云端日志后两次进入sarcogait-radar的compileReleaseKotlin，生成index.kt报全下划线名称保留；本地index.uts权限回调使用_和__已定位。
+B cdf4831仅将回调参数改为具名allRight/grantedList与doNotAskAgain/grantedList，原成功/拒绝逻辑不变；新回归先1failed/3passed，相关四文件最终15passed/777ms，既有Vite warning保留。
+不是实际UTS/Kotlin云编译通过：由Ru1从同一蓝牙uniapp目录重打完整APK；不操作HBuilderX、不手改生成Gradle，不改manifest用户标记、Kotlin/配置、后端/数据库或手机缓存。首次模块缺失原因未独立确认，后两次已识别模块。
+交接docs/radar/2026-11-03-uts-cloud-build-fix.md；尚未push，无需ECS更新，双语及UI修复目标保留。
+
 ## 2026-11-03 雷达手动配置弹窗
 
 Ru1确认手机尚未重新打包安装038fe20，因此旧APK的unsupported提示不能判定前一修复无效。
