@@ -1,13 +1,13 @@
 import { isPrivateIPv4, parseRadarPayload } from './radarProtocol'
-// Conditional import keeps other targets explicit unsupported, without touching BLE.
-// #ifdef APP-ANDROID
+// Ordinary uni-app JS uses APP-PLUS; APP-ANDROID is a UTS-only symbol.
+// #ifdef APP-PLUS
 import * as radarPlugin from '@/uni_modules/sarcogait-radar'
 // #endif
 const codes = new Set(['unsupported', 'permission', 'wifi_unavailable', 'network_changed', 'network', 'timeout', 'cancelled', 'response_too_large', 'redirect', 'protocol', 'invalid_ip'])
 export function createRadarNative(plugin) {
   if (!plugin) {
-    // #ifdef APP-ANDROID
-    plugin = radarPlugin
+    // #ifdef APP-PLUS
+    if (typeof uni !== 'undefined' && uni.getSystemInfoSync().platform === 'android') plugin = radarPlugin
     // #endif
   }
   const safe = async fn => { try { return await fn() } catch (e) { throw Error(codes.has(e?.message) ? e.message : codes.has(e?.code) ? e.code : 'network') } }

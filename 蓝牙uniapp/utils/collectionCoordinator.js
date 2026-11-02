@@ -7,6 +7,7 @@ const receiptError = () => Object.assign(Error('receipt'), { statusCode: 422 })
 const statusOf = e => e?.statusCode ?? e?.data?.code
 const transient = e => { const status = e?.statusCode ?? e?.data?.code; return status ? status >= 500 && status <= 599 : /request:fail|timeout|network/i.test(e?.errMsg || e?.message || '') }
 const timestamp = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value))
+const latestTimestamp = values => values.reduce((latest, value) => timestamp(value) && (!latest || value > latest) ? value : latest, undefined)
 export function createCollectionCoordinator({ load, save, identity, api, clock = Date.now, wait = ms => new Promise(r => setTimeout(r, ms)), onChange = () => {} }) {
   let state = { version: 2, sessions: [] }, inFlight = null, halted = false, storageBroken = false, unreadable = false, error = ''
   const paused = new Set(), retries = new Map()
@@ -48,7 +49,9 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
       let next = copy(restored), changed = restored.version === 1
       if (changed) next = { version: 2, sessions: restored.sessions.map(({ events, ...s }) => ({ ...s, outboxes: { primary: copy(events), radar: [] } })) }
       for (const s of next.sessions) if (!s.mobile_stopped_at) {
-        s.mobile_stopped_at = [s.mobile_started_at, s.last_received_at, ...lanes.flatMap(l => s.outboxes[l].map(e => e.mobile_received_at))].filter(timestamp).sort().at(-1)
+        const stamps = [s.mobile_started_at, s.last_received_at]
+        for (const lane of lanes) for (const event of s.outboxes[lane]) stamps.push(event.mobile_received_at)
+        s.mobile_stopped_at = latestTimestamp(stamps)
         changed = true
       }
       if (changed) {
@@ -148,13 +151,13 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
       const lane = laneOf(event.stream); if (!lane) throw Error('stream')
       if (pending(lane) >= 5000) throw Error('capacity')
       const s = find(captureId); if (!s || s.mobile_stopped_at) throw Error('closed')
-      update(captureId, session => { const box = createTelemetryOutbox({ events: session.outboxes[lane] }); box.enqueue(event); session.outboxes[lane] = box.snapshot(); session.last_received_at = [session.last_received_at, event.mobile_received_at].sort().at(-1) })
+      update(captureId, session => { const box = createTelemetryOutbox({ events: session.outboxes[lane] }); box.enqueue(event); session.outboxes[lane] = box.snapshot(); session.last_received_at = latestTimestamp([session.last_received_at, event.mobile_received_at]) })
       wakeRun()
     },
     stop(captureId, stamp) {
       const session = find(captureId); if (!session || session.mobile_stopped_at) return
       const next = copy(state), s = next.sessions.find(s => s.capture_id === captureId)
-      s.mobile_stopped_at = [stamp, s.last_received_at, s.mobile_started_at].filter(timestamp).sort().at(-1)
+      s.mobile_stopped_at = latestTimestamp([stamp, s.last_received_at, s.mobile_started_at])
       try { persist(next) } catch (e) { state = next; throw e }
       wakeRun()
     },
