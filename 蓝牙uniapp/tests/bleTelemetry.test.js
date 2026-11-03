@@ -61,6 +61,21 @@ describe('BLE text stream', () => {
 })
 describe('GPS1 raw protocol', () => {
   it.each([
+    'GPS1,5,0,nan,nan,nan,nan,0,99.99,617,,16607,0',
+    'GPS1,6,0,nan,nan,nan,nan,0,99.99,626,,17551,0',
+  ])('preserves actual no-fix firmware messages as missing values: %s', raw => {
+    const parsed = parseTelemetry(raw)
+    expect(parsed.stream).toBe('gps')
+    expect(parsed.payload.raw_line).toBe(raw)
+    expect(parsed.gps).toMatchObject({ fix: false, lat: null, lon: null, alt: null, speed: null,
+      sats: 0, hdop: 99.99, utc: '', errors: 0 })
+    expect(JSON.stringify(parsed.gps)).not.toContain('NaN')
+  })
+  it('still rejects nan in fix-valid GPS and the unchanged 38-field stream', () => {
+    expect(() => parseTelemetry('GPS1,5,1,nan,nan,nan,nan,0,99.99,617,,16607,0')).toThrow()
+    expect(() => parseTelemetry(insole.replace(/^1,/, 'nan,'))).toThrow()
+  })
+  it.each([
     ['31.2304567', '121.4737654'], ['-31.2304567', '-121.4737654'],
     ['0.0000000', '0.0000000'], ['90.0000000', '180.0000000'],
   ])('accepts seven decimal places without an integer conversion: %s, %s', (lat, lon) => {

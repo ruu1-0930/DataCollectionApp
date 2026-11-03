@@ -27,8 +27,11 @@ export function parseTelemetry(line) {
     if (parts.length !== 13) throw protocolError({ fieldCount: parts.length })
     if (line.length > 1024 || /[\r\n]/.test(line)) throw protocolError({ reason: 'line' })
     if (!['0', '1'].includes(parts[2])) throw protocolError({ fieldIndex: 3 })
-    const gps = { seq: integer(parts[1], 2), fix: parts[2] === '1', lat: number(parts[3], true, 4), lon: number(parts[4], true, 5),
-      alt: number(parts[5], true, 6), speed: number(parts[6], true, 7), sats: integer(parts[7], 8), hdop: number(parts[8], true, 9),
+    // Firmware uses the exact token "nan" for unavailable no-fix measurements.
+    // Keep raw_line intact; JSON/UI values use null rather than IEEE NaN or zero.
+    const gpsNumber = index => parts[2] === '0' && parts[index] === 'nan' ? null : number(parts[index], true, index + 1)
+    const gps = { seq: integer(parts[1], 2), fix: parts[2] === '1', lat: gpsNumber(3), lon: gpsNumber(4),
+      alt: gpsNumber(5), speed: gpsNumber(6), sats: integer(parts[7], 8), hdop: gpsNumber(8),
       age: integer(parts[9], 10), utc: parts[10], chars: integer(parts[11], 12), errors: integer(parts[12], 13) }
     return { stream: 'gps', payload: { raw_line: line }, gps }
   }

@@ -150,6 +150,25 @@ describe('actual BLE collection wiring', () => {
     expect(events.map(e => e.stream)).toEqual(['insole', 'gps'])
     expect(events[1].payload.raw_line).toBe(raw)
   })
+  it('records no-fix nan GPS messages, previews missing values and uploads raw lines unchanged', async () => {
+    const rows = ['GPS1,5,0,nan,nan,nan,nan,0,99.99,617,,16607,0',
+      'GPS1,6,0,nan,nan,nan,nan,0,99.99,626,,17551,0']
+    store.connectDevice(3)
+    await vi.advanceTimersByTimeAsync(2000)
+    store.startCollection('IN-3')
+    const text = rows[0] + '\r\n' + line + '\n' + rows[1] + '\n'
+    native.notification({ data: Array.from(new Uint8Array(bytes(text.slice(0, 20)))) })
+    native.notification({ data: Array.from(new Uint8Array(bytes(text.slice(20)))) })
+    expect(store.collectionState).toMatchObject({ gpsReceived: 2, gpsRejected: 0, rejected: 0, insoleReceived: 1 })
+    expect(store.gpsRealtime).toMatchObject({ seq: 6, fix: false, lat: null, lon: null, alt: null,
+      speed: null, hdop: 99.99, utc: '', chars: 17551 })
+    store.stopCollection()
+    await store.retryCollectionUpload()
+    const events = requests.filter(r => r.url.endsWith('/batches')).flatMap(r => r.data.events)
+    expect(events.filter(e => e.stream === 'gps').map(e => e.payload.raw_line)).toEqual(rows)
+    expect(events.filter(e => e.stream === 'insole')).toHaveLength(1)
+    expect(store.collectionState.queue.pending).toBe(0)
+  })
   it('shows pressure and IMU and uploads 38 fields from numeric-array BLE notifications', async () => {
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)

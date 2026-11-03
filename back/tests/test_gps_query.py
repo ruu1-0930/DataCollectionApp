@@ -54,6 +54,36 @@ def test_quality_boundaries(client, capture, hdop, age, sats, fix, quality):
     assert (data['items'][0]['segment_id'] is None) == (quality == 'invalid')
 
 
+def test_actual_no_fix_nan_rows_are_stored_returned_and_excluded_from_track(client, capture, db):
+    from models.models import CollectionGpsRaw
+    rows = ['GPS1,5,0,nan,nan,nan,nan,0,99.99,617,,16607,0',
+            'GPS1,6,0,nan,nan,nan,nan,0,99.99,626,,17551,0']
+    seed_window(client, capture)
+    samples = [event(seq=i, ms=1000 + i * 1000, stream='gps', payload={'raw_line': raw})
+               for i, raw in enumerate(rows)]
+    response = batch(client, capture, samples)
+    assert response.status_code == 200
+    assert [item['status'] for item in response.get_json()['data']['results']] == ['accepted', 'accepted']
+    assert batch(client, capture, samples).status_code == 200
+    assert CollectionGpsRaw.query.count() == 2
+    data = gps_get(client, capture)
+    assert data['availability'] == 'available'
+    assert data['summary'] == dict(total=2, good=0, fair=0, weak=0, invalid=2)
+    assert [item['raw_line'] for item in data['items']] == rows
+    for item in data['items']:
+        assert item['fix'] is False and item['utc'] == ''
+        assert all(item[name] is None for name in ('lat', 'lon', 'alt', 'speed'))
+        assert item['hdop'] == 99.99
+        assert item['quality'] == 'invalid' and item['segment_id'] is None
+        assert 'no_fix' in item['reason_codes']
+
+
+def test_nan_is_not_accepted_when_firmware_claims_valid_fix(client, capture):
+    create(client, capture)
+    raw = 'GPS1,5,1,nan,nan,nan,nan,0,99.99,617,,16607,0'
+    assert batch(client, capture, [event(stream='gps', payload={'raw_line': raw})]).status_code == 400
+
+
 @pytest.mark.parametrize('offset,matched', [(1000, True), (1001, False)])
 def test_nearest_receive_boundary_uses_explicit_raw_speeds(client, capture, offset, matched):
     seed_window(client, capture)

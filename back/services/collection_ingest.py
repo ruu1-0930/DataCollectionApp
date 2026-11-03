@@ -91,7 +91,9 @@ def gps_payload(payload):
     values['fix'] = values['fix'] == '1'
     for name in ('lat','lon','alt','speed','hdop'):
         source = values[name]
-        if source == '':
+        # Firmware's lowercase nan is a missing-value marker only without a fix.
+        # Preserve raw_line while storing SQL NULL / emitting JSON null.
+        if source == '' or (not values['fix'] and source == 'nan'):
             values[name] = None
         elif NUMBER_PATTERN.fullmatch(source) is None:
             raise CollectionError()
