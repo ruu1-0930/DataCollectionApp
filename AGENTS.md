@@ -6,6 +6,8 @@ Ru1提供实际报文GPS1,5,0,nan,nan,nan,nan,0,99.99,617,,16607,0和seq6/age626
 仅fix=0时GPS五个可选浮点字段接受精确小写nan→null/SQL NULL，raw_line及UTC原样保留；旧空字段继续支持，不改38字段或有效定位的严格数字校验。工作台既有无效定位原始表/质量计数已支持null，不将缺失值变0或加入轨迹；Agent仍不读取GPS。
 另以真实MySQL dialect结果处理器→Flask JSON本地复现五个GPS DOUBLE默认转Decimal→JSON字符串；模型仅改asdecimal=False，DDL仍DOUBLE，无数据库迁移。详情及实际RED/GREEN、门禁见docs/radar/2026-11-03-gps-no-fix.md；尚未push、ECS和新APK真机待验。不操作manifest用户标记、HBuilderX、私密配置或A双语并发WIP。
 
+后续发布：Ru1开始打包并更新后端，B业务及交接提交已于本日push到0123995（含d78314c），不再按未推送处理；本发布记录提交只改文档。ECS/RDS未由控制者操作，后端需Ru1按固定远端版本更新后再用新APK采集；无SQL迁移、不升级Python3.10环境依赖、不部署A双语中间版本。
+
 ## 2026-11-03 GPS 格式现场差异待定位
 
 Ru1最新真机回执：压力/IMU/雷达已在工作台展示；GPS页有关联切片但0原始记录，手机显示通用异常182条。此前鞋垫实时缺失不再作为当前状态；不能把通用异常全部算作GPS。
