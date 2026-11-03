@@ -18,8 +18,13 @@ def seed_window(client, cap, end=10000):
     assert batch(client, cap, [event(seq=0, ms=0), event(seq=1, ms=end)]).status_code == 200
 
 
-def test_firmware_time_only_utc_sample_survives_ingest_and_workbench_read(client, capture):
-    raw = 'GPS1,42,1,31.2304000,121.4737000,12.5,1.20,8,0.95,180,083015.00,14632,0'
+@pytest.mark.parametrize('lat,lon', [
+    ('31.2304000', '121.4737000'),
+    ('31.2304567', '121.4737654'),
+    ('-31.2304567', '-121.4737654'),
+])
+def test_firmware_time_only_utc_sample_survives_ingest_and_workbench_read(client, capture, lat, lon):
+    raw = f'GPS1,42,1,{lat},{lon},12.5,1.20,8,0.95,180,083015.00,14632,0'
     seed_window(client, capture)
     assert batch(client, capture, [event(stream='gps', payload={'raw_line': raw})]).status_code == 200
     result = gps_get(client, capture)
@@ -27,7 +32,7 @@ def test_firmware_time_only_utc_sample_survives_ingest_and_workbench_read(client
     item = result['items'][0]
     assert item['raw_line'] == raw
     assert item['utc'] == '083015.00'
-    assert item['lat'] == 31.2304 and item['lon'] == 121.4737
+    assert item['lat'] == float(lat) and item['lon'] == float(lon)
     assert item['speed'] == 1.2 and item['seq'] == 42
     assert item['quality'] == 'good'
     assert item['insole_match']['left_speed'] == 1.1

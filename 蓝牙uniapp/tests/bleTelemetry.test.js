@@ -60,6 +60,16 @@ describe('BLE text stream', () => {
   })
 })
 describe('GPS1 raw protocol', () => {
+  it.each([
+    ['31.2304567', '121.4737654'], ['-31.2304567', '-121.4737654'],
+    ['0.0000000', '0.0000000'], ['90.0000000', '180.0000000'],
+  ])('accepts seven decimal places without an integer conversion: %s, %s', (lat, lon) => {
+    const raw = `GPS1,42,1,${lat},${lon},12.5,1.20,8,0.95,180,083015.00,14632,0`
+    const parsed = parseTelemetry(raw)
+    expect(parsed.gps.lat).toBe(Number(lat))
+    expect(parsed.gps.lon).toBe(Number(lon))
+    expect(parsed.payload.raw_line).toBe(raw)
+  })
   it('identifies a rejected GPS field or field count without retaining its value', () => {
     const raw = 'GPS1,42,1,31.2304000,121.4737000,12.5,1.20,8x,0.95,180,083015.00,14632,0'
     let failure
