@@ -25,7 +25,9 @@ export function parseTelemetry(line) {
     return { stream: 'gps', payload: { raw_line: line }, gps }
   }
   if (parts.length !== 38) throw new Error('protocol')
-  return { stream: 'insole', payload: Object.fromEntries(fields.map((key, i) => [key, number(parts[i])])) }
+  const payload = {}
+  fields.forEach((key, i) => { payload[key] = number(parts[i]) })
+  return { stream: 'insole', payload }
 }
 
 export function createBleLines(onLine, onError = () => {}, now = Date.now) {
@@ -33,7 +35,7 @@ export function createBleLines(onLine, onError = () => {}, now = Date.now) {
   return {
     reset() { pending = ''; discarding = false },
     push(input) {
-      const data = input instanceof ArrayBuffer ? new Uint8Array(input)
+      const data = input instanceof ArrayBuffer || Array.isArray(input) ? new Uint8Array(input)
         : new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
       for (const byte of data) {
         if (byte === 10) {

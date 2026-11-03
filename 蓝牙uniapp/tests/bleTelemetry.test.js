@@ -6,6 +6,27 @@ const gps = 'GPS1,8,0,,,,,0,,4294967295,,12,0'
 const bytes = s => Uint8Array.from([...s].map(c => c.charCodeAt(0)))
 
 describe('BLE text stream', () => {
+  it('keeps numeric-array notifications readable like the original BLE receiver', () => {
+    const rows = []
+    const stream = createBleLines(line => rows.push(parseTelemetry(line)))
+    stream.push(Array.from(bytes(insole + '\n')))
+    expect(rows).toHaveLength(1)
+    expect(rows[0].payload).toMatchObject({ lp1: 1, ax: 10, rp1: 20, right_ax: 29 })
+  })
+
+  it('parses the unchanged 38 fields without requiring Object.fromEntries', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Object, 'fromEntries')
+    let parsed, failure
+    try {
+      Object.defineProperty(Object, 'fromEntries', { value: undefined, configurable: true })
+      parsed = parseTelemetry(insole)
+    } catch (error) { failure = error }
+    finally { Object.defineProperty(Object, 'fromEntries', descriptor) }
+    expect(failure).toBeUndefined()
+    expect(Object.keys(parsed.payload)).toHaveLength(38)
+    expect(parsed.payload).toMatchObject({ lp1: 1, ax: 10, left_speed: 17, rp1: 20, right_ax: 29, right_speed: 36 })
+  })
+
   it('reassembles every byte split and preserves independent stream values', () => {
     const text = insole + '\r\n' + gps + '\n' + insole + '\n'
     for (let i = 0; i <= text.length; i++) {
