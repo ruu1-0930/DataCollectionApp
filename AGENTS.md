@@ -5,6 +5,7 @@
 Ru1实际截图/回复确认已同步记录、原生雷达有观测；鞋垫/GPS始终待发0且无实时压力/加速度，雷达待发持续增加。不能再假定未开始记录或旧APK无模块。
 B3fbc189仅修复bleTelemetry的旧数字数组通知误变空包和38解析依赖Object.fromEntries；先RED3failed/25passed，五文件最终51passed/853ms，独立限域审查无阻塞，可交付源码复测。通知真实类型尚未拿到，不称已证实真机唯一根因。
 上传积压独立待查：请求解包已核对正确，同手机保持雷达Wi-Fi访问公网context已回报Token缺失，浏览器公网可达；采集POST状态码尚未取得，不改队列、鉴权或后端。待发0不代表已上传；工作台须有鞋垫raw及相同patient选择，radar流不独立建gait会话。
+随后Ru1已提供连续batch/stop及另一create/stop均HTTP200，限定请求成功响应通过，无依据把持续增长直接认定上传故障；原“待取HTTP码”仅为此前时点。日志隐藏capture，具体三流落库及队列对应关系未证实，下一步仅查分表计数；不追加无证据上传修复。
 交接docs/radar/2026-11-03-ble-telemetry-hotfix.md；Ru1停止本轮后保留缓存、同手机雷达Wi-Fi验证公网可达，再APK同签名覆盖复测。不操作HBuilderX、manifest、加密BLE、ECS/RDS或模型，尚未push；双语目标继续。
 
 ## 2026-11-03 雷达UTS云打包名称错误
