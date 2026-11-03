@@ -98,6 +98,58 @@ describe('actual BLE collection wiring', () => {
     expect(store.gpsRealtime.speed).toBe(2.7)
     expect(store.realtime.left.speed).toBe(17)
   })
+  it('uploads the exact GPS sample with time-only UTC unchanged alongside insole data', async () => {
+    const raw = 'GPS1,42,1,31.2304000,121.4737000,12.5,1.20,8,0.95,180,083015.00,14632,0'
+    store.connectDevice(3)
+    await vi.advanceTimersByTimeAsync(2000)
+    store.startCollection('IN-3')
+    native.notification({ data: Array.from(new Uint8Array(bytes(line + '\r\n' + raw + '\r\n'))) })
+    expect(store.gpsRealtime).toMatchObject({ seq: 42, lat: 31.2304, lon: 121.4737, utc: '083015.00', speed: 1.2 })
+    expect(store.collectionState.rejected).toBe(0)
+    store.stopCollection()
+    await store.retryCollectionUpload()
+    const events = requests.filter(r => r.url.endsWith('/batches')).flatMap(r => r.data.events)
+    expect(events.find(e => e.stream === 'gps').payload).toEqual({ raw_line: raw })
+    expect(events.find(e => e.stream === 'insole').payload).toMatchObject({ left_speed: 17, right_speed: 36 })
+    expect(store.collectionState.queue.pending).toBe(0)
+  })
+  it('distinguishes GPS rejections from other rows and keeps accepting subsequent valid telemetry', async () => {
+    const raw = 'GPS1,42,1,31.2304000,121.4737000,12.5,1.20,8,0.95,180,083015.00,14632,0'
+    store.connectDevice(3)
+    await vi.advanceTimersByTimeAsync(2000)
+    native.notification({ data: bytes(raw.replace(',8,', ',8x,') + '\n') })
+    expect(store.collectionState).toMatchObject({ gpsRejected: 1, gpsReceived: 0, insoleReceived: 0,
+      gpsLastError: '第 8 字段格式错误' })
+    native.notification({ data: bytes('unrecognized status\n' + line + '\n' + raw + '\n') })
+    expect(store.collectionState).toMatchObject({ rejected: 2, gpsRejected: 1, gpsReceived: 1, insoleReceived: 1 })
+    expect(store.gpsRealtime.utc).toBe('083015.00')
+    expect(store.realtime.hasData).toBe(true)
+    expect(JSON.stringify(store.collectionState)).not.toContain('31.2304')
+    expect(requests).toEqual([])
+  })
+  it('reports GPS field-count and runtime errors without changing the recording or swallowing later rows', async () => {
+    const raw = 'GPS1,42,1,31.2304000,121.4737000,12.5,1.20,8,0.95,180,083015.00,14632,0'
+    store.connectDevice(3)
+    await vi.advanceTimersByTimeAsync(2000)
+    store.startCollection('IN-3')
+    native.notification({ data: bytes('GPS1,42,1\n') })
+    expect(store.collectionState.gpsLastError).toBe('字段数量为 3，应为 13')
+    const descriptor = Object.getOwnPropertyDescriptor(Number, 'isSafeInteger')
+    try {
+      Object.defineProperty(Number, 'isSafeInteger', { value: undefined, configurable: true })
+      native.notification({ data: bytes(raw + '\n' + line + '\n') })
+    } finally { Object.defineProperty(Number, 'isSafeInteger', descriptor) }
+    expect(store.collectionState.gpsLastError).toBe('解析执行异常（请反馈手机系统与 App 版本）')
+    expect(store.collectionState).toMatchObject({ gpsRejected: 2, insoleReceived: 1, rejected: 2 })
+    expect(store.collectionState.active).not.toBeNull()
+    native.notification({ data: bytes(raw + '\n') })
+    store.stopCollection()
+    await store.retryCollectionUpload()
+    expect(store.collectionState.queue.pending).toBe(0)
+    const events = requests.filter(r => r.url.endsWith('/batches')).flatMap(r => r.data.events)
+    expect(events.map(e => e.stream)).toEqual(['insole', 'gps'])
+    expect(events[1].payload.raw_line).toBe(raw)
+  })
   it('shows pressure and IMU and uploads 38 fields from numeric-array BLE notifications', async () => {
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)

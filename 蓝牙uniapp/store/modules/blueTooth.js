@@ -76,6 +76,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       realtime: emptyRealtime(),
       gpsRealtime: null,
       collectionState: { active: null, reason: '', radarReason: '', rejected: 0, waiting: false, lifecycle: 0,
+        insoleReceived: 0, gpsReceived: 0, gpsRejected: 0, gpsLastError: '',
         queue: { pending: 0, originalPending: 0, radarPending: 0, sessions: 0, sending: false, paused: false, error: '' } }
     }
   },
@@ -189,7 +190,19 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       if (!slot?.isConnected || slot.connectionEpoch !== epoch) return
       let parsed
       try { parsed = parseTelemetry(line) }
-      catch { this.collectionState.rejected += 1; return }
+      catch (error) {
+        this.collectionState.rejected += 1
+        if (line.split(',')[0] === 'GPS1') {
+          this.collectionState.gpsRejected += 1
+          this.collectionState.gpsLastError = error.fieldCount != null ? `字段数量为 ${error.fieldCount}，应为 13`
+            : error.fieldIndex ? `第 ${error.fieldIndex} 字段格式错误`
+              : error.reason === 'line' ? '消息过长或包含额外换行'
+                : '解析执行异常（请反馈手机系统与 App 版本）'
+        }
+        return
+      }
+      if (parsed.stream === 'gps') this.collectionState.gpsReceived += 1
+      else this.collectionState.insoleReceived += 1
       const runtime = this.ensureCollection()
       const active = runtime.session.active
       if (active && active.patient_id !== usePatientStoreWithOut().currentId) this.stopCollection('patient')

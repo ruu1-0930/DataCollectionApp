@@ -5,23 +5,31 @@ const fields = [
   'right_step_size', 'right_speed', 'right_single_sp_time', 'right_double_sp_time',
 ]
 const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/
-function number(text, optional = false) {
+function protocolError(details = {}) {
+  const error = new Error('protocol')
+  // Retain only field positions/counts, never rejected sensor or location text.
+  for (const key of Object.keys(details)) error[key] = details[key]
+  return error
+}
+function number(text, optional = false, fieldIndex = 0) {
   if (text === '' && optional) return null
-  if (!decimal.test(text) || !Number.isFinite(Number(text))) throw new Error('protocol')
+  if (!decimal.test(text) || !Number.isFinite(Number(text))) throw protocolError({ fieldIndex })
   return Number(text)
 }
-function integer(text) {
-  if (!/^\d+$/.test(text) || !Number.isSafeInteger(Number(text))) throw new Error('protocol')
+function integer(text, fieldIndex) {
+  if (!/^\d+$/.test(text) || !Number.isSafeInteger(Number(text))) throw protocolError({ fieldIndex })
   return Number(text)
 }
 
 export function parseTelemetry(line) {
   const parts = line.split(',')
   if (parts[0] === 'GPS1') {
-    if (parts.length !== 13 || line.length > 1024 || /[\r\n]/.test(line) || !['0', '1'].includes(parts[2])) throw new Error('protocol')
-    const gps = { seq: integer(parts[1]), fix: parts[2] === '1', lat: number(parts[3], true), lon: number(parts[4], true),
-      alt: number(parts[5], true), speed: number(parts[6], true), sats: integer(parts[7]), hdop: number(parts[8], true),
-      age: integer(parts[9]), utc: parts[10], chars: integer(parts[11]), errors: integer(parts[12]) }
+    if (parts.length !== 13) throw protocolError({ fieldCount: parts.length })
+    if (line.length > 1024 || /[\r\n]/.test(line)) throw protocolError({ reason: 'line' })
+    if (!['0', '1'].includes(parts[2])) throw protocolError({ fieldIndex: 3 })
+    const gps = { seq: integer(parts[1], 2), fix: parts[2] === '1', lat: number(parts[3], true, 4), lon: number(parts[4], true, 5),
+      alt: number(parts[5], true, 6), speed: number(parts[6], true, 7), sats: integer(parts[7], 8), hdop: number(parts[8], true, 9),
+      age: integer(parts[9], 10), utc: parts[10], chars: integer(parts[11], 12), errors: integer(parts[12], 13) }
     return { stream: 'gps', payload: { raw_line: line }, gps }
   }
   if (parts.length !== 38) throw new Error('protocol')

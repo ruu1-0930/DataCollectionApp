@@ -60,6 +60,29 @@ describe('BLE text stream', () => {
   })
 })
 describe('GPS1 raw protocol', () => {
+  it('identifies a rejected GPS field or field count without retaining its value', () => {
+    const raw = 'GPS1,42,1,31.2304000,121.4737000,12.5,1.20,8x,0.95,180,083015.00,14632,0'
+    let failure
+    try { parseTelemetry(raw) } catch (error) { failure = error }
+    expect(failure).toMatchObject({ message: 'protocol', fieldIndex: 8 })
+    expect(JSON.stringify(failure)).not.toContain('31.2304')
+    try { parseTelemetry('GPS1,42,1') } catch (error) { failure = error }
+    expect(failure).toMatchObject({ fieldCount: 3 })
+  })
+  it('preserves the firmware HHMMSS.ss UTC and latitude-first 13-field sample at every BLE split', () => {
+    const raw = 'GPS1,42,1,31.2304000,121.4737000,12.5,1.20,8,0.95,180,083015.00,14632,0'
+    const text = insole + '\r\n' + raw + '\r\n' + insole + '\n'
+    for (let split = 0; split <= text.length; split++) {
+      const rows = []
+      const stream = createBleLines(line => rows.push(parseTelemetry(line)))
+      stream.push(Array.from(bytes(text.slice(0, split))))
+      stream.push(Array.from(bytes(text.slice(split))))
+      expect(rows.map(row => row.stream)).toEqual(['insole', 'gps', 'insole'])
+      expect(rows[1].payload.raw_line).toBe(raw)
+      expect(rows[1].gps).toEqual({ seq: 42, fix: true, lat: 31.2304, lon: 121.4737,
+        alt: 12.5, speed: 1.2, sats: 8, hdop: 0.95, age: 180, utc: '083015.00', chars: 14632, errors: 0 })
+    }
+  })
   it('keeps no-fix empty fields and out-of-range coordinates without quality rescoring', () => {
     expect(parseTelemetry(gps).gps).toMatchObject({ fix: false, lat: null, lon: null, speed: null, utc: '' })
     const line = 'GPS1,9,1,100,181,3,2.7,4,8,200,120000,50,0'

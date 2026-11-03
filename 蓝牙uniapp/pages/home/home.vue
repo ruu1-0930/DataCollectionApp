@@ -15,6 +15,8 @@
       <view class="capture-note">{{ queueText }} · 鞋垫/GPS 待上传 {{ capture.queue.originalPending || 0 }} / 5000 条</view>
       <view v-if="reasonText" class="capture-warning">{{ reasonText }}</view>
       <view v-if="capture.rejected" class="capture-note">已忽略 {{ capture.rejected }} 条格式异常消息</view>
+      <view class="capture-note">本次打开 App 累计解析：鞋垫 {{ capture.insoleReceived }} 条 · GPS {{ capture.gpsReceived }} 条（不是上传计数）</view>
+      <view v-if="capture.gpsRejected" class="capture-warning">其中 GPS 拒收 {{ capture.gpsRejected }} 条；最近一次：{{ capture.gpsLastError }}</view>
       <view class="capture-note">采集时保持 App 前台；离开前台会停止记录。未开始时仅显示实时值。</view>
     </view>
     <RadarPanel />
