@@ -194,7 +194,10 @@ class AnalysisSnapshotRepository:
         payload = json.loads(row.canonical_payload)
         payload.update(snapshot_id=row.id, state=row.state, snapshot_state_version=row.state_version,
                        created_at=utc_text(row.created_at))
-        _validator("AnalysisSnapshotV1").validate(payload)
+        version = row.snapshot_schema_version
+        if version not in {'1', '2'} or payload['schema_version'] != version:
+            raise SnapshotError('snapshot_unavailable')
+        _validator(f"AnalysisSnapshotV{version}").validate(payload)
         return payload
 
     def projection_dto(self, row, version):
@@ -203,7 +206,9 @@ class AnalysisSnapshotRepository:
             raise SnapshotError("snapshot_unavailable")
         payload = json.loads(child.canonical_payload)
         payload.update(snapshot_id=row.id, snapshot_state_version=row.state_version)
-        _validator("AgentSnapshotProjectionV1").validate(payload)
+        if version not in {'1', '2'} or payload['projection_schema_version'] != version:
+            raise SnapshotError('snapshot_unavailable')
+        _validator(f"AgentSnapshotProjectionV{version}").validate(payload)
         return payload
 
     def status_dto(self, row):

@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from models.models import AnalysisSnapshot, GaitSessionRevision, SnapshotBuildAttempt, SnapshotPublicationClaim
 from services.clinical_audit import utc_naive, utc_text, write_audit
 from services.gait_session_revision import GaitSessionRevisionService, SessionResolutionError
-from services.snapshot_contracts import _validator
+from services.snapshot_contracts import _validator, DERIVATION_ANALYZER_SET_VERSION
 from services.snapshot_pipeline import SnapshotPipeline
 from services.snapshot_repository import AnalysisSnapshotRepository, SnapshotError, SnapshotIdentity, SnapshotVersions
 
@@ -81,11 +81,17 @@ class AnalysisSnapshotService:
     def __init__(self, *, repository=None, pipeline=None, versions=None, clock=None):
         self.repository = repository if repository is not None else AnalysisSnapshotRepository()
         self.versions = versions or SnapshotVersions()
-        if self.versions.projection_schema_version != "1":
+        if self.versions.projection_schema_version not in {"1", "2"}:
             raise ValueError("unsupported_projection_version")
-        if self.versions.snapshot_schema_version != "1":
+        if self.versions.snapshot_schema_version not in {"1", "2"}:
             raise ValueError("unsupported_snapshot_version")
-        self.pipeline = pipeline if pipeline is not None else SnapshotPipeline(row_loader=self.repository.load_revision_rows)
+        if self.versions.snapshot_schema_version != self.versions.projection_schema_version:
+            raise ValueError('unsupported_projection_version')
+        if (pipeline is None and self.versions.snapshot_schema_version == '2'
+                and self.versions.analyzer_set_version != DERIVATION_ANALYZER_SET_VERSION):
+            raise ValueError('unsupported_analyzer_version')
+        self.pipeline = pipeline if pipeline is not None else SnapshotPipeline(
+            row_loader=self.repository.load_revision_rows, schema_version=self.versions.snapshot_schema_version)
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     def _identity(self, resolved):
@@ -241,7 +247,7 @@ class AnalysisSnapshotService:
             if row.state != "published" and not include_superseded:
                 error = SnapshotError("snapshot_superseded", trace_id=trace_id)
             else:
-                payload = repo.projection_dto(row, self.versions.projection_schema_version) if projection else repo.full_dto(row)
+                payload = repo.projection_dto(row, row.snapshot_schema_version) if projection else repo.full_dto(row)
             write_audit(repo.session, actor_id=actor_id, patient_id=patient_id, snapshot_id=row.id,
                         trace_id=trace_id, action="snapshot.projection_read" if projection else "snapshot.read",
                         result=error.code if error else "ok", now=self.clock())

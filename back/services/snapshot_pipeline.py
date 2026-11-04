@@ -23,8 +23,10 @@ from services.gait_analysis import (
 )
 from services.gait_session_revision import raw_rows_fingerprint
 from services.pressure_analysis import summarize_snapshot_pressure_rows
+from services.gait_derivation_quality import analyze_derivation_quality
 from services.snapshot_contracts import (
     SNAPSHOT_ANALYZER_SET_VERSION,
+    DERIVATION_ANALYZER_SET_VERSION,
     AnalyzerStatus,
     SnapshotBuildProduct,
     SnapshotUnavailableError,
@@ -268,7 +270,11 @@ class SnapshotPipeline:
     """Build deterministic clinical and Agent payloads without publication side effects."""
 
     def __init__(self, *, row_loader: Callable[[object], Sequence[Mapping[str, object] | object]] | None = None,
-                 analyzers: AnalyzerFunctions | None = None):
+                 analyzers: AnalyzerFunctions | None = None, schema_version: str = '1'):
+        if schema_version not in {'1', '2'}:
+            raise ValueError('unsupported_snapshot_version')
+        self.schema_version = schema_version
+        self.analyzer_set_version = DERIVATION_ANALYZER_SET_VERSION if schema_version == '2' else SNAPSHOT_ANALYZER_SET_VERSION
         self._row_loader = row_loader or self._load_revision_rows
         self._analyzers = analyzers or AnalyzerFunctions.defaults()
 
@@ -300,6 +306,12 @@ class SnapshotPipeline:
             raise SnapshotUnavailableError(failed[0] + "_failed")
 
         metrics = _metric_dto(results["metrics"]["metrics"])
+        derivation = None
+        if self.schema_version == '2':
+            try:
+                derivation = analyze_derivation_quality(frames)
+            except Exception:
+                raise SnapshotUnavailableError('derivation_quality_failed') from None
         quality = _quality_dto(results["quality"])
         flags = _flag_dto(
             results["metrics"]["metrics"], withheld=quality["gate"] == "withheld"
@@ -315,6 +327,8 @@ class SnapshotPipeline:
         statuses["evidence_index"] = evidence_status
         if evidence_status.state != "success":
             raise SnapshotUnavailableError(evidence_status.reason_code)
+        if derivation is not None:
+            evidence.append({'evidence_id': 'quality.derivation', 'field_path': '/derivation_quality'})
         limitations = ["pressure_adc_uncalibrated"]
         if quality["gate"] == "withheld":
             limitations.append("data_quality_withheld")
@@ -342,8 +356,8 @@ class SnapshotPipeline:
             "patient_id": revision.patient_id,
             "session_id": revision.session_key,
             "provenance": {
-                "snapshot_schema_version": "1",
-                "analyzer_set_version": SNAPSHOT_ANALYZER_SET_VERSION,
+                "snapshot_schema_version": self.schema_version,
+                "analyzer_set_version": self.analyzer_set_version,
                 "threshold_profile_version": "pressure_asymmetry_research_v1",
                 "closure_policy_version": revision.closure_policy_version,
             },
@@ -357,11 +371,13 @@ class SnapshotPipeline:
             "analyzer_statuses": status_mapping,
             "analyzer_status_reasons": status_reasons,
             "limitations": limitations,
-            "schema_version": "1",
+            "schema_version": self.schema_version,
             "session_revision_id": revision.id,
             "session": session,
             "chart_series": chart,
         }
+        if derivation is not None:
+            full['derivation_quality'] = derivation
         full["content_hash"] = self._hash_without(full, "content_hash")
         projection = {
             key: full[key]
@@ -371,7 +387,9 @@ class SnapshotPipeline:
                 "analyzer_status_reasons", "limitations",
             )
         }
-        projection["projection_schema_version"] = "1"
+        if derivation is not None:
+            projection['derivation_quality'] = derivation
+        projection["projection_schema_version"] = self.schema_version
         projection["snapshot_content_hash"] = full["content_hash"]
         projection["projection_content_hash"] = self._hash_without(
             projection, "projection_content_hash"

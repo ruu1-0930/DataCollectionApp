@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## 2026-11-04 派生质量D02后端V2快照
+
+显式SnapshotPipeline(schema_version=2)及匹配SnapshotVersions支持快照/投影V2、analyzer snapshot-pipeline-v3；诊断与metrics取同一次过滤后冻结frames，必需诊断失败停止构建，诊断/证据参与两份hash与共享内容校验。严格V2 JSON契约独立，V1文件及默认生产路径不变；读历史按存储row版本选投影，SQLite新旧共存/复用/原V1字节不变通过。五文件113passed/232既有warnings，首审计数Important与配置Minor修复后新文件13passed/14warnings，重叠不相加；回执见docs/2026-11-04-derived-snapshot-v2.md。A消费者未实现V2，禁止单侧部署或将D02后端子块当全链已好；无SQL/设备/模型/生产操作，用户manifest未动。
+
 ## 2026-11-04 派生质量输入计数D01
 
 Ru1要求继续DATA-READ-01。新增纯函数gait_derivation_quality，记录四派生公式实际输入数/互斥排除原因与独立来源观察；CV输入不足2明确提示，不改旧统计n、数值、门禁或近零阈值。单均值比较数量与左右/配对样本数分别记录。新回归模块缺失RED后，两文件47passed/0.15s；溢出夹具修正与边界详见docs/2026-11-04-derived-quality.md。该模块尚未接SnapshotPipeline、页面、Agent，D02–04继续待实现。用户manifest改动保留，无App/数据库/生产/模型/push操作；本地Python3.14结果不外推ECS3.10。限域审查0C/0I/1Minor；available仅说明逐帧有限输入/数量，不保证最终CV存在，文档/docstring已按探针澄清。
