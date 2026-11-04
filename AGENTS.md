@@ -1,5 +1,11 @@
 # AGENTS.md
 
+## 2026-11-04 派生质量V2 HTTP配置
+
+联合A D03/D04提供GAIT_SNAPSHOT_SCHEMA_VERSION，默认文本1；显式2在HTTP工厂配对snapshot/projection2与analyzer3，非法配置启动拒绝，无SQL迁移/历史改写。先有效RED，再集中87passed/1新夹具字段名错误，修正后新文件5passed/12既有warnings。实际使用既有runtime/gps-backend-dev venv和临时SQLite，无ECS3.10/RDS/模型/设备操作。最终整块审查由A控制，docs/2026-11-04-derived-writer-configuration.md及A进度表记录；当前未push/部署，用户uni-app manifest修改保留。后续启用2需先联合部署支持V2的Agent/工作台，不能单侧切换。
+
+实现63f441f后紧接本次独立进度提交。整块审查B无发现；A静态source Schema一项Minor已有效RED→修复/11passed，复核因工具用量终止，由主执行者限域验证，不冒称独立复核通过。B提交后仅用户原manifest留存；A联合发布/真实效果仍另验。
+
 ## 2026-11-04 派生质量D02后端V2快照
 
 显式SnapshotPipeline(schema_version=2)及匹配SnapshotVersions支持快照/投影V2、analyzer snapshot-pipeline-v3；诊断与metrics取同一次过滤后冻结frames，必需诊断失败停止构建，诊断/证据参与两份hash与共享内容校验。严格V2 JSON契约独立，V1文件及默认生产路径不变；读历史按存储row版本选投影，SQLite新旧共存/复用/原V1字节不变通过。五文件113passed/232既有warnings，首审计数Important与配置Minor修复后新文件13passed/14warnings，重叠不相加；回执见docs/2026-11-04-derived-snapshot-v2.md。A消费者未实现V2，禁止单侧部署或将D02后端子块当全链已好；无SQL/设备/模型/生产操作，用户manifest未动。

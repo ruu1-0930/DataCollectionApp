@@ -12,4 +12,4 @@ D03/D04 联合交付增加 HTTP 工厂配置 `GAIT_SNAPSHOT_SCHEMA_VERSION`，�
 python -m pytest -p no:cacheprovider back/tests/test_snapshot_schema_configuration.py -q --tb=line --basetemp <new-temp>
 ```
 
-5 passed表示默认／显式V2正式HTTP／启动配置检查通过；不代表MySQL或生产验收。最终审查与提交回执在A进度表记录。
+5 passed表示默认／显式V2正式HTTP／启动配置检查通过；不代表MySQL或生产验收。B本地实现提交63f441f4d41010ed57d018dfe9d2357a0365c89b，随后独立进度提交；最终整块审查未发现B问题，A的一项静态source诊断Schema Minor由A修复。未push，manifest不在提交内。
