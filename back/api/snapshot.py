@@ -12,8 +12,8 @@ from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 from auth import decode_token
 from access import AccessError, load_account_context, require_capability
 from services.analysis_snapshot import AnalysisSnapshotService, PublicationClaimRequest
-from services.snapshot_contracts import _validator
-from services.snapshot_repository import SnapshotError
+from services.snapshot_contracts import _validator, DERIVATION_ANALYZER_SET_VERSION
+from services.snapshot_repository import SnapshotError, SnapshotVersions
 
 
 snapshot_bp = Blueprint("snapshot", __name__)
@@ -118,8 +118,14 @@ def _authenticate():
 
 
 def _service():
-    factory = current_app.config.get("SNAPSHOT_SERVICE_FACTORY", AnalysisSnapshotService)
-    return factory()
+    factory = current_app.config.get("SNAPSHOT_SERVICE_FACTORY")
+    if factory is not None:
+        return factory()
+    version = current_app.config['GAIT_SNAPSHOT_SCHEMA_VERSION']
+    versions = SnapshotVersions() if version == '1' else SnapshotVersions(
+        snapshot_schema_version='2', projection_schema_version='2',
+        analyzer_set_version=DERIVATION_ANALYZER_SET_VERSION)
+    return AnalysisSnapshotService(versions=versions)
 
 
 def _patient_id(value):

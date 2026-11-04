@@ -37,6 +37,10 @@ def create_app(test_config=None):
         )
         app.config['SECRET_KEY'] = _require('SECRET_KEY')
 
+    app.config.setdefault('GAIT_SNAPSHOT_SCHEMA_VERSION',
+                          os.environ.get('GAIT_SNAPSHOT_SCHEMA_VERSION', '1') if test_config is None else '1')
+    if app.config['GAIT_SNAPSHOT_SCHEMA_VERSION'] not in ('1', '2'):
+        raise ValueError('unsupported_snapshot_schema_configuration')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config.setdefault('LOGIN_FAILURE_LIMIT', 5)
     app.config.setdefault('LOGIN_FAILURE_WINDOW_SECONDS', 300)
