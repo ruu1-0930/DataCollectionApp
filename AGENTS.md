@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## 2026-11-04 联合发布推送回执
+
+Ru1明确授权“push吧”，B e7f462bc53534c04926f906cb9b81cb2c076406c与A22edb3be290c5aa7f62f3d35b5bc8df7921151ce已正常推送各自feature/sarcogait-indoor-radar-v1，独立ls-remote核对一致。本回执纯文档随后补推，ECS更新以会话最终核对完整SHA为准。未force/改认证配置，无ECS/RDS/模型/设备操作，默认写1未切，用户manifest修改未提交。前文“未push”是实施时点记录，不作为当前发布状态。
+
 ## 2026-11-04 派生质量V2 HTTP配置
 
 联合A D03/D04提供GAIT_SNAPSHOT_SCHEMA_VERSION，默认文本1；显式2在HTTP工厂配对snapshot/projection2与analyzer3，非法配置启动拒绝，无SQL迁移/历史改写。先有效RED，再集中87passed/1新夹具字段名错误，修正后新文件5passed/12既有warnings。实际使用既有runtime/gps-backend-dev venv和临时SQLite，无ECS3.10/RDS/模型/设备操作。最终整块审查由A控制，docs/2026-11-04-derived-writer-configuration.md及A进度表记录；当前未push/部署，用户uni-app manifest修改保留。后续启用2需先联合部署支持V2的Agent/工作台，不能单侧切换。

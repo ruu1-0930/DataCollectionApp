@@ -13,3 +13,5 @@ python -m pytest -p no:cacheprovider back/tests/test_snapshot_schema_configurati
 ```
 
 5 passed表示默认／显式V2正式HTTP／启动配置检查通过；不代表MySQL或生产验收。B本地实现提交63f441f4d41010ed57d018dfe9d2357a0365c89b，随后独立进度提交；最终整块审查未发现B问题，A的一项静态source诊断Schema Minor由A修复。未push，manifest不在提交内。
+
+发布补充：Ru1授权后，B e7f462bc53534c04926f906cb9b81cb2c076406c及A22edb3b已正常push，ls-remote核对一致；本段回执仅文档随后补推。此前未push描述为历史时点；未部署或切版本，manifest未提交。
