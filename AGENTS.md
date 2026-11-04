@@ -1,5 +1,10 @@
 # AGENTS.md
 
+## 2026-11-04 ECS后端及V2常驻配置回执
+
+用户回报B_DEPLOY_OK=3f3c303f14f2eb782ba440da5756ab5d59622e34，实际服务目录校验、原Python3.10依赖/导入及临时V2工厂通过。随后专属/etc/sarcogait-snapshot.env、lanya.service.d/99-sarcogait-snapshot.conf持久启用GAIT_SNAPSHOT_SCHEMA_VERSION=2；进程环境核对2、PID356311、active/running、NRestarts0、context401、SNAPSHOT_V2_ENABLED_OK。Agent/WB A b2f4015已先部署并健康通过，无SQL/依赖升级/App更新，用户manifest改动保留。初始连接拒绝/超时重试后成功，不能冒称无启动瞬时失败。
+实际RDS新V2构建和浏览器/新模型效果尚待验，A两条UI控制路径均本机os error3；不把服务回执当临床或页面通过。此纯文档本地回执不改变线上目标，不为文档再次部署；详见A进度表。
+
 ## 2026-11-04 联合发布推送回执
 
 Ru1明确授权“push吧”，B e7f462bc53534c04926f906cb9b81cb2c076406c与A22edb3be290c5aa7f62f3d35b5bc8df7921151ce已正常推送各自feature/sarcogait-indoor-radar-v1，独立ls-remote核对一致。本回执纯文档随后补推，ECS更新以会话最终核对完整SHA为准。未force/改认证配置，无ECS/RDS/模型/设备操作，默认写1未切，用户manifest修改未提交。前文“未push”是实施时点记录，不作为当前发布状态。
