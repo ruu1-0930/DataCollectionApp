@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## 2026-11-04 派生质量输入计数D01
+
+Ru1要求继续DATA-READ-01。新增纯函数gait_derivation_quality，记录四派生公式实际输入数/互斥排除原因与独立来源观察；CV输入不足2明确提示，不改旧统计n、数值、门禁或近零阈值。单均值比较数量与左右/配对样本数分别记录。新回归模块缺失RED后，两文件47passed/0.15s；溢出夹具修正与边界详见docs/2026-11-04-derived-quality.md。该模块尚未接SnapshotPipeline、页面、Agent，D02–04继续待实现。用户manifest改动保留，无App/数据库/生产/模型/push操作；本地Python3.14结果不外推ECS3.10。限域审查0C/0I/1Minor；available仅说明逐帧有限输入/数量，不保证最终CV存在，文档/docstring已按探针澄清。
+
 ## 2026-11-03 GPS 无定位 nan 根因已复现（F07）
 
 Ru1提供实际报文GPS1,5,0,nan,nan,nan,nan,0,99.99,617,,16607,0和seq6/age626/chars17551，明确要求正常记录显示。手机第4字段拒收与后端400均已复现；不是七位小数问题。原F06待定位仅为此前状态。
