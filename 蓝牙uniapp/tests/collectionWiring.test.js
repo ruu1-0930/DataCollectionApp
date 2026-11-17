@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { createBleLines, parseTelemetry } from '../utils/bleTelemetry'
 import { createCollectionSession } from '../utils/collectionSession'
 import { createCollectionCoordinator } from '../utils/collectionCoordinator'
-import { createRegistrationDraft } from '../utils/collectionRegistration'
+import { COLLECTION_TEST_TYPES, createRegistrationDraft } from '../utils/collectionRegistration'
 import { createOperatorSessionRuntime, resetOperatorSession } from '../utils/operatorSession'
 import { normalizePatient } from '../utils/apiShape'
 import { normalizePatientProfile } from '../utils/patient'
@@ -94,13 +94,13 @@ describe('actual BLE collection wiring', () => {
     return { getPatientProfileApi, savePatientProfileApi }
   }
 
-  function loadHome(watch = () => {}) {
+  function loadHome(watch = () => {}, result = 'openStartConfirmation') {
     const source = readFileSync(new URL('../pages/home/home.vue', import.meta.url), 'utf8')
       .match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
     uni.showModal = vi.fn()
-    return new Function('useBlueToothStore', 'usePatientStoreWithOut', 'useOperatorStoreWithOut', 'ref', 'computed', 'reactive', 'watch',
-      source + '\nreturn openStartConfirmation;')(
-      () => store, () => patient, () => operator, value => ({ value }), get => ({ get value() { return get() } }), value => value, watch)
+    return new Function('useBlueToothStore', 'usePatientStoreWithOut', 'useOperatorStoreWithOut', 'ref', 'computed', 'reactive', 'watch', 'COLLECTION_TEST_TYPES',
+      source + `\nreturn ${result};`)(
+      () => store, () => patient, () => operator, value => ({ value }), get => ({ get value() { return get() } }), value => value, watch, COLLECTION_TEST_TYPES)
   }
 
   it('keeps selected profile measurements across the legacy list and updates the displayed patient after PUT', async () => {
@@ -236,16 +236,37 @@ describe('actual BLE collection wiring', () => {
     const counts = { insole: 1, gps: 0, radar: 0 }
     const stamp = '2026-10-19T00:00:00.000Z'
     const { verification } = collectionStopReceipt('finished', { schema_version: 2, mobile_stopped_at: stamp, final_counts: counts })
-    storage.set('collection_queue_v1', JSON.stringify({ version: 3, sessions: [], completed: [{ capture_id: 'finished',
-      clinicianId: 11, patient_id: 7, mobile_started_at: stamp, verification }] }))
+    storage.set('collection_queue_v1', JSON.stringify({ version: 3, last_capture_sequence: 1, sessions: [], completed: [{ capture_id: 'finished',
+      clinicianId: 11, patient_id: 7, mobile_started_at: stamp, mobile_stopped_at: stamp, test_type: 'tug', capture_sequence: 1, verification }] }))
     operator.unlocked = false
     store.ensureCollection()
     expect(store.collectionUpload).toBeNull()
     operator.unlocked = true
     patient.prepareRegistration = vi.fn()
-    loadHome((_, callback, options) => { if (options.immediate) callback() })
+    const homeReceipt = loadHome((_, callback, options) => { if (options.immediate) callback() }, 'uploadRecordDetails.value')
     expect(store.collectionUpload).toMatchObject({ capture_id: 'finished', upload_state: 'verified', received_counts: counts })
+    expect(homeReceipt).toEqual({ captureId: 'finished', typeLabel: 'TUG综合测试', startedAt: '2026-10-19 00:00:00.000 UTC',
+      stoppedAt: '2026-10-19 00:00:00.000 UTC' })
     expect(requests).toEqual([])
+  })
+  it('shows the stopped capture type and times from its frozen registration on the actual home page', async () => {
+    store.bles_objs['IN-3'].isConnected = true
+    let registration = { ...savedRegistration(7), test_type: 'tug' }
+    patient.savedRegistration = () => registration
+    store.startCollection('IN-3', registration)
+    const firstId = store.collectionState.active.capture_id
+    vi.setSystemTime(new Date('2026-10-19T00:00:03.000Z'))
+    store.stopCollection()
+    registration = { ...registration, test_type: 'static_standing' }
+    const firstDetails = { captureId: firstId, typeLabel: 'TUG综合测试',
+      startedAt: '2026-10-19 00:00:00.000 UTC', stoppedAt: '2026-10-19 00:00:03.000 UTC' }
+    expect(store.collectionUpload).toMatchObject({ capture_id: firstId, test_type: 'tug', upload_state: 'pending' })
+    expect(loadHome(undefined, 'uploadRecordDetails.value')).toEqual(firstDetails)
+    await store.retryCollectionUpload()
+    expect(store.collectionUpload.upload_state).toBe('verified')
+    expect(loadHome(undefined, 'uploadRecordDetails.value')).toEqual(firstDetails)
+    store.startCollection('IN-3', registration)
+    expect(loadHome(undefined, 'uploadRecordDetails.value')).toMatchObject({ typeLabel: '静止站立测试', stoppedAt: '—' })
   })
   it('uploads the exact GPS sample with time-only UTC unchanged alongside insole data', async () => {
     const raw = 'GPS1,42,1,31.2304000,121.4737000,12.5,1.20,8,0.95,180,083015.00,14632,0'

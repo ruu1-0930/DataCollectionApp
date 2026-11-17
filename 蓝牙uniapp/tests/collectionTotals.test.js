@@ -99,6 +99,70 @@ describe('durable V3 collection finalization', () => {
     expect(f.queue.snapshot()).toMatchObject({ pending: 0, sessions: 1, paused: true, uploads: [{ upload_state: 'pending' }] })
   })
 
+  it.each([
+    ['impossible calendar date', { observed_at: '2026-02-31T10:00:00.000Z' }],
+    ['unknown quality observation', { quality_observations: ['invented_code'] }],
+    ['duplicate quality observation', { quality_observations: ['no_insole_frames', 'no_insole_frames'] }],
+  ])('rejects a structurally invalid stop receipt with %s and preserves the declaration', async (_, changes) => {
+    const f = fixture()
+    f.queue.add(context('capture'))
+    f.queue.stop('capture', stoppedAt)
+    const response = finalReceipt('capture', zero)
+    f.api.stop.mockResolvedValueOnce({ ...response, verification: { ...response.verification, ...changes } })
+    await f.queue.drain()
+    expect(f.queue.snapshot()).toMatchObject({ sessions: 1, paused: true, uploads: [{ upload_state: 'pending' }] })
+    expect(JSON.parse(f.disk()).completed).toEqual([])
+    expect(JSON.parse(f.disk()).sessions[0]).toMatchObject({ capture_id: 'capture', totals: zero, mobile_stopped_at: stoppedAt })
+    await f.queue.drain(true)
+    expect(f.api.stop.mock.calls[1][1]).toEqual(f.api.stop.mock.calls[0][1])
+    expect(f.queue.snapshot()).toMatchObject({ sessions: 0, uploads: [{ upload_state: 'verified' }] })
+  })
+
+  it('keeps the newly started capture through phone clock rollback, completion and restart', async () => {
+    const f = fixture()
+    f.queue.add({ ...context('old'), mobile_started_at: '2026-10-23T10:00:00.000Z' })
+    f.queue.stop('old', '2026-10-23T10:00:01.000Z')
+    await f.queue.drain()
+    f.queue.add({ ...context('new'), mobile_started_at: '2026-10-23T09:00:00.000Z' })
+    expect(f.queue.snapshot().uploads[0]).toMatchObject({ capture_id: 'new', upload_state: 'pending' })
+    f.queue.stop('new', '2026-10-23T09:00:01.000Z')
+    await f.queue.drain()
+    expect(f.queue.snapshot().uploads[0]).toMatchObject({ capture_id: 'new', upload_state: 'verified' })
+    expect(fixture(f.disk()).queue.snapshot().uploads[0]).toMatchObject({ capture_id: 'new', upload_state: 'verified' })
+  })
+
+  it('keeps the latest capture when an earlier capture completes late after restart', async () => {
+    const f = fixture()
+    f.queue.add(context('old'))
+    f.queue.stop('old', stoppedAt)
+    f.api.stop.mockRejectedValueOnce({ statusCode: 422 })
+    await f.queue.drain()
+    f.queue.add(context('new'))
+    f.queue.stop('new', stoppedAt)
+    await f.queue.drain()
+    expect(f.queue.snapshot().uploads[0]).toMatchObject({ capture_id: 'new', upload_state: 'verified' })
+    const restarted = fixture(f.disk())
+    expect(restarted.queue.snapshot().uploads[0]).toMatchObject({ capture_id: 'new', upload_state: 'verified' })
+    await restarted.queue.drain()
+    expect(restarted.api.stop.mock.calls[0][0]).toBe('old')
+    expect(restarted.queue.snapshot().uploads[0]).toMatchObject({ capture_id: 'new', upload_state: 'verified' })
+    expect(JSON.parse(restarted.disk()).completed).toHaveLength(2)
+  })
+
+  it('projects the frozen test type and capture times before and after a durable stop receipt', async () => {
+    const f = fixture()
+    const opened = context('tug')
+    opened.registration = { ...opened.registration, test_type: 'tug' }
+    f.queue.add(opened)
+    opened.registration.test_type = 'static_standing'
+    f.queue.stop('tug', stoppedAt)
+    const expected = { capture_id: 'tug', test_type: 'tug', mobile_started_at: stamp, mobile_stopped_at: stoppedAt }
+    expect(f.queue.snapshot().uploads[0]).toMatchObject({ ...expected, upload_state: 'pending' })
+    await f.queue.drain()
+    expect(JSON.parse(f.disk()).completed[0]).toMatchObject(expected)
+    expect(fixture(f.disk()).queue.snapshot().uploads[0]).toMatchObject({ ...expected, upload_state: 'verified' })
+  })
+
   it.each([1, 2])('migrates V%s with the original queue bytes and unknown historical totals', async version => {
     const original = sample('gps-event', 'gps', { raw_line: 'GPS1,12,0,nan,nan,nan,nan,0,nan,0,,39,0' })
     const old = { ...context('legacy'), created: false, mobile_stopped_at: null,
@@ -113,6 +177,7 @@ describe('durable V3 collection finalization', () => {
     expect(f.api.batch.mock.calls[0][1]).toEqual({ events: [original] })
     expect(f.api.stop.mock.calls[0][1]).toEqual({ mobile_stopped_at: stamp })
     expect(f.queue.snapshot().uploads).toEqual([expect.objectContaining({ capture_id: 'legacy', patient_id: 7,
+      test_type: null, mobile_started_at: stamp, mobile_stopped_at: stamp,
       expected_counts: null, received_counts: null, upload_state: 'unknown' })])
   })
 

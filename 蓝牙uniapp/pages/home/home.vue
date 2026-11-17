@@ -19,6 +19,10 @@
       <view class="capture-note">{{ queueText }}</view>
       <view v-if="upload" class="capture-upload">
         <view :class="upload.upload_state === 'mismatch' ? 'capture-warning' : 'capture-note'">{{ uploadText[upload.upload_state] }}</view>
+        <view class="capture-note">记录编号 · {{ uploadRecordDetails.captureId }}</view>
+        <view class="capture-note">测试类型 · {{ uploadRecordDetails.typeLabel }}</view>
+        <view class="capture-note">手机开始 · {{ uploadRecordDetails.startedAt }}</view>
+        <view class="capture-note">手机停止 · {{ uploadRecordDetails.stoppedAt }}</view>
         <view class="capture-note">手机累计 · {{ countText(upload.expected_counts) }}</view>
         <view class="capture-note">服务端实收 · {{ countText(upload.received_counts) }}</view>
       </view>
@@ -88,6 +92,7 @@ import { reactive, computed, ref, watch } from 'vue'
 import { useBlueToothStore } from '@/store/modules/blueTooth'
 import { usePatientStoreWithOut } from '@/store/modules/patient'
 import { useOperatorStoreWithOut } from '@/store/modules/operator'
+import { COLLECTION_TEST_TYPES } from '@/utils/collectionRegistration'
 import { shade, mToCm } from '@/utils/footMetrics'
 import RadarPanel from '@/components/RadarPanel.vue'
 import CollectionRegistration from '@/components/CollectionRegistration.vue'
@@ -116,6 +121,13 @@ const capture = computed(() => ble.collectionState)
 const upload = computed(() => ble.collectionUpload)
 const uploadText = { pending: '本次上传尚待服务端核对', verified: '本次上传已核对一致',
   mismatch: '本次上传数量不符', unknown: '旧记录缺少手机累计数，无法核对上传数量' }
+const captureTime = value => value ? value.replace('T', ' ').replace('Z', ' UTC') : '—'
+const uploadRecordDetails = computed(() => {
+  if (!upload.value) return null
+  const { capture_id, test_type, mobile_started_at, mobile_stopped_at } = upload.value
+  return { captureId: capture_id, typeLabel: COLLECTION_TEST_TYPES.find(type => type.code === test_type)?.label ?? '未知',
+    startedAt: captureTime(mobile_started_at), stoppedAt: captureTime(mobile_stopped_at) }
+})
 const countText = counts => `鞋垫 ${counts?.insole ?? '—'} 帧 · GPS ${counts?.gps ?? '—'} 条 · 雷达 ${counts?.radar ?? '—'} 条`
 const selectedCode = ref('')
 const connectedDevices = computed(() => Object.keys(ble.bles_objs)

@@ -1,8 +1,10 @@
 import { assertCollectionIdentity } from './collectionSession'
+import { COLLECTION_TEST_TYPES } from './collectionRegistration'
 import { createTelemetryOutbox } from './telemetryQueue'
 const copy = value => JSON.parse(JSON.stringify(value))
 const lanes = ['primary', 'radar']
 const streams = ['insole', 'gps', 'radar']
+const qualityObservations = new Set(['no_insole_frames', 'gps_contains_no_fix', 'radar_contains_stale'])
 const completionLimit = 20
 const emptyCounts = () => ({ insole: 0, gps: 0, radar: 0 })
 const laneOf = stream => stream === 'radar' ? 'radar' : ['insole', 'gps'].includes(stream) ? 'primary' : null
@@ -10,23 +12,27 @@ const receiptError = () => Object.assign(Error('receipt'), { statusCode: 422 })
 const statusOf = e => e?.statusCode ?? e?.data?.code
 const transient = e => { const status = e?.statusCode ?? e?.data?.code; return status ? status >= 500 && status <= 599 : /request:fail|timeout|network/i.test(e?.errMsg || e?.message || '') }
 const timestamp = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value))
+const observationTime = value => timestamp(value) && !value.startsWith('0000-') && new Date(value).toISOString() === value
 const latestTimestamp = values => values.reduce((latest, value) => timestamp(value) && (!latest || value > latest) ? value : latest, undefined)
 const exact = (value, keys) => value && typeof value === 'object' && Object.keys(value).length === keys.length && keys.every(key => Object.prototype.hasOwnProperty.call(value, key))
 const countsValid = value => exact(value, streams) && streams.every(stream => Number.isSafeInteger(value[stream]) && value[stream] >= 0)
 const countsEqual = (a, b) => streams.every(stream => a[stream] === b[stream])
-const registrationBound = (value, patientId) => value?.schema_version === 1 && value.patient_id === patientId && value.patient_snapshot
+const knownType = value => COLLECTION_TEST_TYPES.some(type => type.code === value)
+const registrationBound = (value, patientId) => value?.schema_version === 1 && value.patient_id === patientId
+  && !!value.patient_snapshot && knownType(value.test_type)
 
 function validVerification(value, id, expected) {
   const fields = ['record_id', 'record_version', 'observed_at', 'expected_counts', 'received_counts', 'upload_state', 'quality_observations']
   if (!exact(value, fields) || value.record_id !== id || typeof value.record_version !== 'string' || !/^[a-f0-9]{64}$/.test(value.record_version)
-    || !timestamp(value.observed_at) || !countsValid(value.expected_counts) || !countsValid(value.received_counts)
-    || !Array.isArray(value.quality_observations) || value.quality_observations.some(observation => typeof observation !== 'string')
+    || !observationTime(value.observed_at) || !countsValid(value.expected_counts) || !countsValid(value.received_counts)
+    || !Array.isArray(value.quality_observations) || value.quality_observations.some(observation => !qualityObservations.has(observation))
+    || new Set(value.quality_observations).size !== value.quality_observations.length
     || !countsEqual(expected, value.expected_counts)) return false
   return value.upload_state === (countsEqual(expected, value.received_counts) ? 'verified' : 'mismatch')
 }
 
 export function createCollectionCoordinator({ load, save, identity, api, clock = Date.now, wait = ms => new Promise(r => setTimeout(r, ms)), onChange = () => {} }) {
-  let state = { version: 3, sessions: [], completed: [] }, inFlight = null, halted = false, storageBroken = false, unreadable = false, error = ''
+  let state = { version: 3, last_capture_sequence: 0, sessions: [], completed: [] }, inFlight = null, halted = false, storageBroken = false, unreadable = false, error = ''
   const paused = new Set(), retries = new Map()
   let wake = null
   const wakeRun = () => { if (wake) wake(); wake = null }
@@ -34,22 +40,23 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
   function scopedUploads() {
     const actor = identity(), latest = new Map()
     if (!actor.unlocked || !actor.clinicianId) return []
-    for (const completed of state.completed) {
-      const previous = latest.get(completed.patient_id)
-      if (completed.clinicianId !== actor.clinicianId || previous?.mobile_started_at >= completed.mobile_started_at) continue
-      const v = completed.verification
-      latest.set(completed.patient_id, { capture_id: completed.capture_id, clinicianId: completed.clinicianId,
-        patient_id: completed.patient_id, mobile_started_at: completed.mobile_started_at, completed: true,
-        upload_state: v?.upload_state ?? 'unknown', expected_counts: v?.expected_counts ?? null, received_counts: v?.received_counts ?? null })
+    // The phone clock can change between recordings, and an older upload can finish later.
+    function consider(capture, completed) {
+      if (capture.clinicianId !== actor.clinicianId) return
+      const previous = latest.get(capture.patient_id)
+      if (!previous || capture.capture_sequence > previous.capture.capture_sequence) latest.set(capture.patient_id, { capture, completed })
     }
-    for (const session of state.sessions) {
-      const previous = latest.get(session.patient_id)
-      if (session.clinicianId !== actor.clinicianId || previous?.mobile_started_at > session.mobile_started_at) continue
-      latest.set(session.patient_id, { capture_id: session.capture_id, clinicianId: session.clinicianId,
-        patient_id: session.patient_id, mobile_started_at: session.mobile_started_at, completed: false,
-        upload_state: 'pending', expected_counts: session.totals, received_counts: null })
-    }
-    return copy([...latest.values()])
+    for (const capture of state.completed) consider(capture, true)
+    for (const capture of state.sessions) consider(capture, false)
+    return copy([...latest.values()].map(({ capture, completed }) => {
+      const { capture_id, clinicianId, patient_id, mobile_started_at, mobile_stopped_at } = capture
+      const verification = completed ? capture.verification : null
+      const test_type = completed ? capture.test_type : capture.totals === null ? null : capture.registration.test_type
+      return { capture_id, clinicianId, patient_id, mobile_started_at, mobile_stopped_at, test_type, completed,
+        upload_state: completed ? verification?.upload_state ?? 'unknown' : 'pending',
+        expected_counts: completed ? verification?.expected_counts ?? null : capture.totals,
+        received_counts: verification?.received_counts ?? null }
+    }))
   }
   function snapshot() {
     const originalPending = pending('primary'), radarPending = pending('radar')
@@ -66,6 +73,12 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
   function validate(restored) {
     if (![1, 2, 3].includes(restored?.version) || !Array.isArray(restored.sessions) || restored.sessions.length > 100) throw Error('storage')
     const captures = new Set()
+    const sequences = new Set()
+    function validateSequence(sequence) {
+      if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > restored.last_capture_sequence || sequences.has(sequence)) throw Error('storage')
+      sequences.add(sequence)
+    }
+    if (restored.version === 3 && (!Number.isSafeInteger(restored.last_capture_sequence) || restored.last_capture_sequence < 0)) throw Error('storage')
     for (const s of restored.sessions) {
       if (!s || typeof s.capture_id !== 'string' || !s.capture_id || captures.has(s.capture_id) || !s.clinicianId || !s.patient_id || !s.device_code || !timestamp(s.mobile_started_at) ||
         typeof s.created !== 'boolean' || !(s.mobile_stopped_at === null || timestamp(s.mobile_stopped_at))) throw Error('storage')
@@ -79,15 +92,21 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
         ids.add(e.event_id)
         queued[e.stream] += 1
       }
-      if (restored.version === 3 && s.totals !== null && (!countsValid(s.totals) || !registrationBound(s.registration, s.patient_id)
-        || streams.some(stream => s.totals[stream] < queued[stream]))) throw Error('storage')
+      if (restored.version === 3) {
+        validateSequence(s.capture_sequence)
+        if (s.totals !== null && (!countsValid(s.totals) || !registrationBound(s.registration, s.patient_id)
+          || streams.some(stream => s.totals[stream] < queued[stream]))) throw Error('storage')
+      }
     }
     for (const lane of lanes) if (restored.sessions.reduce((n, s) => n + (restored.version === 1 ? lane === 'primary' ? s.events.length : 0 : s.outboxes[lane].length), 0) > 5000) throw Error('storage')
     if (restored.version === 3) {
       if (!Array.isArray(restored.completed) || restored.completed.length > completionLimit) throw Error('storage')
       for (const s of restored.completed) {
         if (!s || typeof s.capture_id !== 'string' || !s.capture_id || captures.has(s.capture_id) || !s.clinicianId || !s.patient_id || !timestamp(s.mobile_started_at)
-          || (s.verification !== null && !validVerification(s.verification, s.capture_id, s.verification?.expected_counts))) throw Error('storage')
+          || !timestamp(s.mobile_stopped_at) || s.mobile_stopped_at < s.mobile_started_at
+          || (s.verification === null ? s.test_type !== null : !knownType(s.test_type)
+            || !validVerification(s.verification, s.capture_id, s.verification?.expected_counts))) throw Error('storage')
+        validateSequence(s.capture_sequence)
         captures.add(s.capture_id)
       }
     }
@@ -98,7 +117,8 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
       const restored = JSON.parse(saved); validate(restored)
       let next = copy(restored), changed = restored.version < 3
       if (changed) {
-        next = { version: 3, completed: [], sessions: next.sessions.map(({ events, ...s }) => ({ ...s, totals: null,
+        next = { version: 3, last_capture_sequence: next.sessions.length, completed: [],
+          sessions: next.sessions.map(({ events, ...s }, index) => ({ ...s, totals: null, capture_sequence: index + 1,
           outboxes: restored.version === 1 ? { primary: events, radar: [] } : s.outboxes })) }
       }
       for (const s of next.sessions) if (!s.mobile_stopped_at) {
@@ -165,9 +185,10 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
         if (result?.capture_id !== id || !exact(result, known ? ['capture_id', 'verification'] : ['capture_id'])
           || (known && !validVerification(result.verification, id, session.totals))) throw receiptError()
         update(id, (s, next) => {
-          const { capture_id, clinicianId, patient_id, mobile_started_at } = s
-          next.completed.unshift({ capture_id, clinicianId, patient_id, mobile_started_at,
-            verification: known ? copy(result.verification) : null })
+          const { capture_id, clinicianId, patient_id, mobile_started_at, mobile_stopped_at, capture_sequence } = s
+          next.completed.push({ capture_id, clinicianId, patient_id, mobile_started_at, mobile_stopped_at, capture_sequence,
+            test_type: known ? s.registration.test_type : null, verification: known ? copy(result.verification) : null })
+          next.completed.sort((a, b) => b.capture_sequence - a.capture_sequence)
           next.completed.length = Math.min(next.completed.length, completionLimit)
           next.sessions = next.sessions.filter(s => s.capture_id !== id)
         })
@@ -206,12 +227,14 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
     snapshot,
     add(context) {
       if (storageBroken || unreadable) throw Error('storage')
-      if (state.sessions.length >= 100 || pending('primary') >= 5000) throw Error('capacity')
+      if (state.sessions.length >= 100 || pending('primary') >= 5000 || state.last_capture_sequence >= Number.MAX_SAFE_INTEGER) throw Error('capacity')
       if (find(context.capture_id) || state.completed.some(s => s.capture_id === context.capture_id)) throw Error('capture_exists')
       const { capture_id, clinicianId, patient_id, device_code, mobile_started_at, registration } = context
       if (!registrationBound(registration, patient_id)) throw Error('registration_unsaved')
       const next = copy(state)
+      next.last_capture_sequence += 1
       next.sessions.push({ capture_id, clinicianId, patient_id, device_code, mobile_started_at, registration: copy(registration),
+        capture_sequence: next.last_capture_sequence,
         created: false, mobile_stopped_at: null, last_received_at: mobile_started_at,
         outboxes: { primary: [], radar: [] }, totals: emptyCounts() })
       persist(next)
