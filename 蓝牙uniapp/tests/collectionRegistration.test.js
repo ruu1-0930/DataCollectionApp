@@ -11,6 +11,7 @@ function setup(options = {}) {
   const dependencies = { load: key => disk.get(key), save: (key, value) => disk.set(key, value),
     saveProfile: vi.fn(async value => value), identity: () => actor, ...options }
   const registration = createRegistrationDraft(dependencies)
+  registration.seed(profile)
   const queue = { add: vi.fn(), stop: vi.fn() }
   let serial = 0
   const uuid = vi.fn(() => `capture-${++serial}`)
@@ -78,6 +79,7 @@ describe('pre-capture registration gate', () => {
     expect(registration.value.remarks).toBe('')
     actor.actorId = 11
     actor.patientId = 7
+    registration.seed(profile)
     expect(registration.value.remarks).toBe('甲的草稿')
     expect(registration.savedFor(7, 11)).toBeNull()
     expect(await registration.save()).toEqual(saved)
@@ -92,6 +94,7 @@ describe('pre-capture registration gate', () => {
     registration.edit(form)
     const previous = expect(registration.save()).rejects.toThrow('registration_changed')
     actor.patientId = 8
+    registration.seed(profile)
     registration.edit({ ...form, remarks: '乙的登记' })
     const current = expect(registration.save()).resolves.toMatchObject({ patient_id: 8, remarks: '乙的登记' })
     completePrevious()
@@ -106,5 +109,50 @@ describe('pre-capture registration gate', () => {
     actor.unlocked = false
     expect(registration.value.name).toBe('')
     expect(registration.savedFor(7, 11)).toBeNull()
+  })
+
+  it('restores test and remarks without PUT overwriting newer patient measurements', async () => {
+    const { registration, dependencies } = setup()
+    registration.seed(profile)
+    registration.edit({ test_type: 'tug', remarks: '保留备注' })
+    await registration.save()
+    registration.edit({ remarks: '尚未保存的备注' })
+    const restored = createRegistrationDraft(dependencies)
+    restored.seed({ ...profile, height_cm: 180, weight_kg: 68 })
+    await restored.save()
+    expect(dependencies.saveProfile).toHaveBeenLastCalledWith({ ...profile, height_cm: 180, weight_kg: 68 }, expect.anything())
+    expect(restored.value).toMatchObject({ test_type: 'tug', remarks: '尚未保存的备注' })
+  })
+
+  it('blocks silent PUT when the same patient field changed on the server and in the local draft', async () => {
+    const { registration, dependencies } = setup()
+    registration.seed(profile)
+    registration.edit({ height_cm: '175', test_type: 'tug', remarks: '保留备注' })
+    const restored = createRegistrationDraft(dependencies)
+    restored.seed({ ...profile, height_cm: 180, weight_kg: 68 })
+    await expect(restored.save()).rejects.toThrow('资料')
+    expect(dependencies.saveProfile).not.toHaveBeenCalled()
+    expect(restored.value).toMatchObject({ height_cm: '175', weight_kg: 68, remarks: '保留备注' })
+    expect(restored.conflicts).toEqual([{ field: 'height_cm', serverValue: 180 }])
+    restored.resolve('height_cm', true)
+    restored.seed({ ...profile, height_cm: 181, weight_kg: 68 })
+    await expect(restored.save()).rejects.toThrow('资料')
+    expect(dependencies.saveProfile).not.toHaveBeenCalled()
+    restored.resolve('height_cm', true)
+    await restored.save()
+    expect(dependencies.saveProfile).toHaveBeenLastCalledWith({ ...profile, height_cm: 175, weight_kg: 68 }, expect.anything())
+  })
+
+  it('accepts a server value explicitly while preserving other edits and retains decimal input before a new GET', async () => {
+    const { registration, dependencies } = setup()
+    registration.edit({ height_cm: '170.' })
+    expect(registration.value.height_cm).toBe('170.')
+    registration.seed({ ...profile, height_cm: 180 })
+    expect(registration.value.height_cm).toBe(180)
+    registration.edit({ height_cm: '175', weight_kg: '67', test_type: 'tug', remarks: '保留备注' })
+    registration.seed({ ...profile, height_cm: 181 })
+    registration.resolve('height_cm', false)
+    await registration.save()
+    expect(dependencies.saveProfile).toHaveBeenLastCalledWith({ ...profile, height_cm: 181, weight_kg: 67 }, expect.anything())
   })
 })

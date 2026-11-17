@@ -1,8 +1,8 @@
 // 蓝牙uniapp/api/patient.js
 import { instance } from '@/utils'
 
-export async function createPatientApi(data) {
-  return instance.request({ url: '/v2/patients', method: 'post', data })
+export async function createPatientApi(data, custom) {
+  return instance.request({ url: '/v2/patients', method: 'post', data, custom })
 }
 export async function getPatientProfileApi(id, custom) {
   return instance.request({ url: `/v2/patients/${id}/profile`, method: 'get', custom })

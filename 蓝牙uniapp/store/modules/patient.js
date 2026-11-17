@@ -14,12 +14,14 @@ const registrationActor = patientId => {
   return { actorId: op.operator?.clinicianId, patientId, authEpoch: op.authRuntime.authEpoch, unlocked: op.unlocked }
 }
 const requestIdentity = actor => ({ collectionIdentity: { clinicianId: actor.actorId, authEpoch: actor.authEpoch } })
+const registrationView = () => ({ form: {}, conflicts: [], ready: false, loading: false, saving: false, error: '' })
+const showDraft = (state, model) => { state.form = model.value; state.conflicts = model.conflicts }
 
 export const usePatientStore = defineStore('patientStore', {
   state: () => ({
     patients: getPatients() || [],          // 后端患者的本地缓存（离线展示用）
     currentId: getCurrentPatientId() || null, // 后端 patient_id
-    registrationState: { form: {}, ready: false, loading: false, saving: false, error: '' }
+    registrationState: registrationView()
   }),
   getters: {
     current: (s) => s.patients.find((p) => p.id === s.currentId) || null,
@@ -32,7 +34,11 @@ export const usePatientStore = defineStore('patientStore', {
   actions: {
     // V2 full-profile writes; a duplicate phone returns the existing profile.
     async create(input) {
-      const res = await createPatientApi(normalizePatientProfile(input))
+      const actor = registrationActor(null)
+      if (!actor.unlocked || !actor.actorId) return null
+      const res = await createPatientApi(normalizePatientProfile(input), requestIdentity(actor))
+      const current = registrationActor(null)
+      if (!current.unlocked || current.actorId !== actor.actorId || current.authEpoch !== actor.authEpoch) return null
       const p = normalizePatient(res)
       const idx = this.patients.findIndex((x) => x.id === p.id)
       if (idx >= 0) this.patients.splice(idx, 1)
@@ -67,12 +73,12 @@ export const usePatientStore = defineStore('patientStore', {
     },
     async prepareRegistration() {
       const actor = registrationActor(this.currentId), binding = JSON.stringify(actor)
-      this.registrationState = { form: {}, ready: false, loading: true, saving: false, error: '' }
+      this.registrationState = { ...registrationView(), loading: true }
       const state = this.registrationState
       const current = () => this.registrationState === state && binding === JSON.stringify(registrationActor(this.currentId))
       try {
         const model = this.registrationModel()
-        state.form = model.value
+        showDraft(state, model)
         if (!actor.unlocked || !actor.actorId || !actor.patientId) return
         const profile = normalizePatient(await getPatientProfileApi(actor.patientId, requestIdentity(actor)))
         if (!current()) return
@@ -81,9 +87,9 @@ export const usePatientStore = defineStore('patientStore', {
         else this.patients.push(profile)
         setPatients(this.patients)
         model.seed(profile)
-        state.form = model.value
+        showDraft(state, model)
         state.ready = !!model.savedFor(actor.patientId, actor.actorId)
-      } catch (e) { if (current()) state.error = e.message || '资料读取失败 / Profile unavailable' }
+      } catch (e) { if (current()) state.error = e.message || '资料读取失败' }
       finally { if (current()) state.loading = false }
     },
     editRegistration(patch) {
@@ -92,20 +98,34 @@ export const usePatientStore = defineStore('patientStore', {
       this.registrationState.ready = false
       this.registrationState.error = ''
       try { model.edit(patch) }
-      catch { this.registrationState.error = '草稿保存失败，请重试 / Draft storage failed' }
-      this.registrationState.form = model.value
+      catch { this.registrationState.error = '草稿保存失败，请重试' }
+      showDraft(this.registrationState, model)
+    },
+    resolveRegistrationConflict({ field, keepLocal }) {
+      const state = this.registrationState
+      if (useBlueToothStoreWithOut().collectionState.active || state.loading || state.saving) return
+      const model = this.registrationModel()
+      state.error = ''
+      try { model.resolve(field, keepLocal) }
+      catch { state.error = '草稿保存失败，请重试' }
+      showDraft(state, model)
     },
     async saveRegistration() {
       if (useBlueToothStoreWithOut().collectionState.active || this.registrationState.loading || this.registrationState.saving) return
       const actor = registrationActor(this.currentId), binding = JSON.stringify(actor)
+      if (!actor.unlocked || !actor.actorId || !actor.patientId) return
       const state = this.registrationState
       const current = () => this.registrationState === state && binding === JSON.stringify(registrationActor(this.currentId))
       state.saving = true; state.ready = false; state.error = ''
       try {
         const model = this.registrationModel()
+        const profile = normalizePatient(await getPatientProfileApi(actor.patientId, requestIdentity(actor)))
+        if (!current()) return
+        model.seed(profile)
+        showDraft(state, model)
         const result = await model.save()
         if (current() && model.savedFor(actor.patientId, actor.actorId) === result) {
-          state.form = model.value
+          showDraft(state, model)
           state.ready = true
           const index = this.patients.findIndex(patient => patient.id === actor.patientId)
           if (index >= 0) {
@@ -113,14 +133,14 @@ export const usePatientStore = defineStore('patientStore', {
           }
         }
         return result
-      } catch (e) { if (current()) state.error = e.message || '登记保存失败 / Save failed' }
+      } catch (e) { if (current()) state.error = e.message || '登记保存失败' }
       finally { if (current()) state.saving = false }
     },
     select(id) {
       if (this.currentId !== id) {
         useBlueToothStoreWithOut().stopCollection('patient')
         registrationRuntimes.get(this)?.invalidate()
-        this.registrationState = { form: {}, ready: false, loading: false, saving: false, error: '' }
+        this.registrationState = registrationView()
       }
       this.currentId = id
       setCurrentPatientId(id)
@@ -129,7 +149,7 @@ export const usePatientStore = defineStore('patientStore', {
       useBlueToothStoreWithOut().stopCollection('patient')
       registrationRuntimes.get(this)?.invalidate()
       this.currentId = null
-      this.registrationState = { form: {}, ready: false, loading: false, saving: false, error: '' }
+      this.registrationState = registrationView()
       clearCurrentPatientId()
     },
     // 本地缓存按 lastAt 倒序 + 关键字过滤（离线展示）

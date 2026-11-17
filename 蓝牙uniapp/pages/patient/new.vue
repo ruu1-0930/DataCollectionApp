@@ -1,35 +1,37 @@
 <template>
   <view class="page">
-    <CaInput label="姓名 / Name" icon="👤" required placeholder="患者姓名 / Patient name" v-model="f.name" />
-    <CaInput label="手机号 / Phone" icon="📞" type="number" placeholder="选填 / Optional" v-model="f.phone" />
+    <CaInput label="姓名" icon="👤" required placeholder="患者姓名" v-model="f.name" />
+    <CaInput label="手机号" icon="📞" type="number" placeholder="选填" v-model="f.phone" />
     <view class="row2">
       <view class="col">
-        <view class="lab">性别 / Gender *</view>
+        <view class="lab">性别 *</view>
         <view class="seg">
           <view :class="['seg-i', f.gender==='男'&&'on']" @tap="f.gender='男'">男</view>
           <view :class="['seg-i', f.gender==='女'&&'on']" @tap="f.gender='女'">女</view>
         </view>
       </view>
       <view class="col">
-        <CaInput label="年龄 / Age" required type="number" placeholder="0–150" v-model="f.age" />
+        <CaInput label="年龄" required type="number" placeholder="0–150 岁" v-model="f.age" />
       </view>
     </view>
-    <CaInput label="身高 / Height (cm)" required type="digit" v-model="f.height_cm" />
-    <CaInput label="体重 / Weight (kg)" required type="digit" v-model="f.weight_kg" />
-    <CaInput label="EU 鞋码 / Shoe size" required type="digit" placeholder="0.5 步进 / increments" v-model="f.shoe_size_eu" />
-    <view class="lab">患者编号 / Patient ID</view>
-    <view class="idrow"><text class="idtag">创建后由系统自动分配 / Assigned at creation</text></view>
-    <button class="btn" :disabled="saving" @tap="onCreate">创建并设为当前患者 / Create patient</button>
-    <view class="hint">手机号选填；无手机号或同名患者不会自动合并，请按患者编号选择。/ Phone optional; select existing patients by ID.</view>
-    <view class="hint">患者资料按账号权限查看。/ Access to patient details depends on account permissions.</view>
+    <CaInput label="身高（厘米）" required type="digit" v-model="f.height_cm" />
+    <CaInput label="体重（千克）" required type="digit" v-model="f.weight_kg" />
+    <CaInput label="欧码鞋码" required type="digit" placeholder="支持半码" v-model="f.shoe_size_eu" />
+    <view class="lab">患者编号</view>
+    <view class="idrow"><text class="idtag">创建后由系统自动分配</text></view>
+    <button class="btn" :disabled="saving" @tap="onCreate">创建并设为当前患者</button>
+    <view class="hint">手机号选填。请按患者编号选择既有患者。</view>
+    <view class="hint">患者资料按账号权限查看。</view>
   </view>
 </template>
 
 <script setup>
 import { reactive, ref } from 'vue'
 import { usePatientStoreWithOut } from '@/store/modules/patient'
+import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { normalizePatientProfile } from '@/utils/patient'
 const ps = usePatientStoreWithOut()
+const op = useOperatorStoreWithOut()
 const f = reactive({ name: '', phone: '', gender: '', age: '', height_cm: '', weight_kg: '', shoe_size_eu: '' })
 const saving = ref(false)
 async function onCreate() {
@@ -37,17 +39,18 @@ async function onCreate() {
   let profile
   try { profile = normalizePatientProfile(f) }
   catch (e) { return uni.showToast({ title: e.message, icon: 'none' }) }
+  const clinicianId = op.operator?.clinicianId, authEpoch = op.authRuntime.authEpoch
+  const current = () => op.unlocked && op.operator?.clinicianId === clinicianId && op.authRuntime.authEpoch === authEpoch
   saving.value = true
   uni.showLoading({ title: '创建中', mask: true })
   try {
     const p = await ps.create(profile)
-    uni.hideLoading()
+    if (!p || !current()) return
     if (p.existed) uni.showToast({ title: '该患者已存在，已为你选中', icon: 'none', duration: 2000 })
     uni.switchTab({ url: '/pages/home/home' })
   } catch (e) {
-    uni.hideLoading()
-    uni.showToast({ title: '创建失败：请检查网络', icon: 'none' })
-  } finally { saving.value = false }
+    if (current()) uni.showToast({ title: '创建失败：请检查网络', icon: 'none' })
+  } finally { uni.hideLoading(); saving.value = false }
 }
 </script>
 

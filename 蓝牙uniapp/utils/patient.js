@@ -34,16 +34,17 @@ export function validatePatient({ name, phone } = {}) {
 export function normalizePatientProfile(input = {}) {
   const result = validatePatient(input)
   if (!result.ok) throw Error(result.msg)
-  if (!['男', '女'].includes(input.gender)) throw Error('请选择性别 / Select gender')
-  const numeric = (key, max, integer = false) => {
+  if (!['男', '女'].includes(input.gender)) throw Error('请选择性别')
+  const numeric = (key, label, max, integer = false) => {
     const value = input[key]
     const number = typeof value === 'number' || typeof value === 'string' && value.trim() ? Number(value) : NaN
-    if (!Number.isFinite(number) || number > max || (key === 'age' ? number < 0 : number <= 0) || integer && !Number.isInteger(number)) throw Error(`请检查 ${key}`)
+    if (!Number.isFinite(number) || number > max || (key === 'age' ? number < 0 : number <= 0) || integer && !Number.isInteger(number)) throw Error(`请检查${label}`)
     return number
   }
   const profile = { name: String(input.name).trim(), phone: input.phone == null || !String(input.phone).trim() ? null : String(input.phone).trim(),
-    gender: input.gender, age: numeric('age', 150, true), height_cm: numeric('height_cm', 300), weight_kg: numeric('weight_kg', 1000), shoe_size_eu: numeric('shoe_size_eu', 100) }
-  if (!Number.isInteger(profile.shoe_size_eu * 2)) throw Error('鞋码以 0.5 为步进 / EU shoe size: 0.5 increments')
+    gender: input.gender, age: numeric('age', '年龄', 150, true), height_cm: numeric('height_cm', '身高', 300),
+    weight_kg: numeric('weight_kg', '体重', 1000), shoe_size_eu: numeric('shoe_size_eu', '鞋码', 100) }
+  if (!Number.isInteger(profile.shoe_size_eu * 2)) throw Error('鞋码请按半码填写')
   return profile
 }
 

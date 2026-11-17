@@ -134,7 +134,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         this.collectionState.waiting = false
         this.scheduleCollectionUpload(0)
       } catch {
-        uni.showToast({ title: '无法开始：请先保存登记、解锁并连接设备 / Save registration first', icon: 'none', duration: 3000 })
+        uni.showToast({ title: '无法开始：请先保存登记、解锁并连接设备', icon: 'none', duration: 3000 })
       }
     },
     stopCollection(reason = 'user') {

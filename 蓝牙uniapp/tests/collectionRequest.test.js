@@ -57,6 +57,20 @@ describe('actual request interceptor collection owner fence', () => {
     await expect(api.savePatientProfileApi(7, profile, config().custom)).rejects.toThrow('collection_identity_changed')
     expect(sends).toHaveLength(3)
   })
+  it('carries the create patient owner and prevents an old 401 refresh under a new epoch', async () => {
+    const source = readFileSync(new URL('../api/patient.js', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace(/export /g, '')
+    const api = new Function('instance', source + '\nreturn { createPatientApi };')({
+      request: value => instance.request({ ...value, header: {}, custom: value.custom || {} }),
+    })
+    await api.createPatientApi({}, config().custom)
+    const sent = sends[0]
+    op.refreshToken = vi.fn(async () => {})
+    op.operator.clinicianId = 12
+    op.authRuntime.authEpoch = 2
+    await expect(instance.failure({ statusCode: 401, config: sent })).rejects.toBeTruthy()
+    expect(op.refreshToken).not.toHaveBeenCalled()
+    expect(sends).toHaveLength(1)
+  })
   it('does not refresh an old collection under a new authentication epoch', async () => {
     let refreshes = 0
     op.refreshToken = async () => { refreshes++ }

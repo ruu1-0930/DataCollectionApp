@@ -76,7 +76,7 @@ describe('actual BLE collection wiring', () => {
     store.isBluetoothOpen = true
   })
 
-  function loadPatient(profile = { id: 7, subject_id: '#00007', ...savedRegistration(7).patient_snapshot, phone: null }) {
+  function loadPatient(profile = { id: 7, subject_id: '#00007', ...savedRegistration(7).patient_snapshot, phone: null }, overrides = {}) {
     const getPatientProfileApi = vi.fn(async () => profile)
     const savePatientProfileApi = vi.fn(async (id, update) => ({ ...profile, ...update, id }))
     const listPatientsApi = async () => [{ id: profile.id, subject_id: profile.subject_id, name: profile.name,
@@ -85,8 +85,18 @@ describe('actual BLE collection wiring', () => {
       store: {}, getPatients: () => [], getCurrentPatientId: () => 7, setCurrentPatientId: () => {}, setPatients: () => {},
       normalizePatient, normalizePatientProfile, createRegistrationDraft, getPatientProfileApi, savePatientProfileApi, listPatientsApi,
       useBlueToothStoreWithOut: () => store, useOperatorStoreWithOut: () => operator,
+      ...overrides,
     })
     return { getPatientProfileApi, savePatientProfileApi }
+  }
+
+  function loadHome() {
+    const source = readFileSync(new URL('../pages/home/home.vue', import.meta.url), 'utf8')
+      .match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
+    uni.showModal = vi.fn()
+    return new Function('useBlueToothStore', 'usePatientStoreWithOut', 'useOperatorStoreWithOut', 'ref', 'computed', 'reactive', 'watch',
+      source + '\nreturn openStartConfirmation;')(
+      () => store, () => patient, () => operator, value => ({ value }), get => ({ get value() { return get() } }), value => value, () => {})
   }
 
   it('keeps selected profile measurements across the legacy list and updates the displayed patient after PUT', async () => {
@@ -97,6 +107,87 @@ describe('actual BLE collection wiring', () => {
     patient.editRegistration({ name: '更新姓名', test_type: 'tug' })
     await patient.saveRegistration()
     expect(patient.patients[0]).toMatchObject({ name: '更新姓名', height_cm: 170, phone: null })
+  })
+
+  it('refreshes the selected profile before PUT and exposes conflicts for an explicit choice', async () => {
+    const profile = { id: 7, subject_id: '#00007', ...savedRegistration(7).patient_snapshot, phone: null }
+    const { getPatientProfileApi, savePatientProfileApi } = loadPatient(profile)
+    await patient.prepareRegistration()
+    patient.editRegistration({ height_cm: '175', test_type: 'tug', remarks: '保留备注' })
+    getPatientProfileApi.mockResolvedValue({ ...profile, height_cm: 180, weight_kg: 68 })
+    await patient.saveRegistration()
+    expect(savePatientProfileApi).not.toHaveBeenCalled()
+    expect(patient.registrationState).toMatchObject({ ready: false, conflicts: [{ field: 'height_cm', serverValue: 180 }],
+      form: { height_cm: '175', weight_kg: 68, remarks: '保留备注' } })
+    patient.resolveRegistrationConflict({ field: 'height_cm', keepLocal: false })
+    await patient.saveRegistration()
+    expect(savePatientProfileApi).toHaveBeenCalledWith(7, expect.objectContaining({ height_cm: 180, weight_kg: 68 }), expect.anything())
+    expect(patient.savedRegistration()).toMatchObject({ test_type: 'tug', remarks: '保留备注' })
+  })
+
+  it('drops a late create response before cache, patient selection or navigation changes under the new identity', async () => {
+    let finish
+    const profile = { ...savedRegistration(7).patient_snapshot, phone: null }
+    const createPatientApi = vi.fn(() => new Promise(resolve => { finish = resolve }))
+    const setPatients = vi.fn(), setCurrentPatientId = vi.fn()
+    loadPatient(undefined, { createPatientApi, setPatients, setCurrentPatientId })
+    const source = readFileSync(new URL('../pages/patient/new.vue', import.meta.url), 'utf8')
+      .match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
+    const page = new Function('reactive', 'ref', 'usePatientStoreWithOut', 'useOperatorStoreWithOut', 'normalizePatientProfile',
+      source + '\nreturn { f, onCreate };')(value => value, value => ({ value }), () => patient, () => operator, normalizePatientProfile)
+    uni.switchTab = vi.fn()
+    Object.assign(page.f, profile)
+    const creating = page.onCreate()
+    expect(createPatientApi).toHaveBeenCalledWith(profile, { collectionIdentity: { clinicianId: 11, authEpoch: 1 } })
+    operator.operator.clinicianId = 12
+    operator.authRuntime.authEpoch = 2
+    patient.currentId = 9
+    finish({ id: 7, subject_id: '#00007', ...profile })
+    await creating
+    expect(patient.currentId).toBe(9)
+    expect(setPatients).not.toHaveBeenCalled()
+    expect(setCurrentPatientId).not.toHaveBeenCalled()
+    expect(uni.switchTab).not.toHaveBeenCalled()
+    const creatingNow = page.onCreate()
+    finish({ id: 10, subject_id: '#00010', ...profile })
+    await creatingNow
+    expect(setCurrentPatientId).toHaveBeenCalledWith(10)
+    expect(uni.switchTab).toHaveBeenCalledOnce()
+  })
+
+  it('reopens start after cancellation and a quick retry during the old 300 ms close window', async () => {
+    store.connectDevice(3)
+    await vi.advanceTimersByTimeAsync(2000)
+    patient.registrationState = { ready: true }
+    const openStartConfirmation = loadHome()
+    openStartConfirmation()
+    const first = uni.showModal.mock.calls[0][0]
+    first.success({ cancel: true })
+    openStartConfirmation()
+    expect(uni.showModal).toHaveBeenCalledTimes(2)
+    const second = uni.showModal.mock.calls[1][0]
+    first.complete()
+    openStartConfirmation()
+    expect(uni.showModal).toHaveBeenCalledTimes(2)
+    second.complete()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(store.collectionState.active).toBeNull()
+    expect(storage.has('collection_queue_v1')).toBe(false)
+    openStartConfirmation()
+    expect(uni.showModal).toHaveBeenCalledTimes(3)
+    const third = uni.showModal.mock.calls[2][0]
+    third.success({ confirm: true })
+    third.success({ confirm: true })
+    third.complete()
+    expect(JSON.parse(storage.get('collection_queue_v1')).sessions).toHaveLength(1)
+  })
+
+  it('keeps the modified App registration and validation copy in Chinese', () => {
+    for (const file of ['../components/CollectionRegistration.vue', '../pages/home/home.vue', '../pages/patient/new.vue',
+      '../utils/patient.js', '../utils/collectionRegistration.js', '../store/modules/patient.js', '../store/modules/blueTooth.js']) {
+      const source = readFileSync(new URL(file, import.meta.url), 'utf8')
+      expect(source, file).not.toMatch(/\s\/\s(?:[A-Z][a-z]+)\b/)
+    }
   })
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); delete globalThis.uni })
 
@@ -341,16 +432,11 @@ describe('actual BLE collection wiring', () => {
   })
   it('actual patient select action closes the old window before assigning another patient', async () => {
     const { getPatientProfileApi, savePatientProfileApi } = loadPatient()
-    const source = readFileSync(new URL('../pages/home/home.vue', import.meta.url), 'utf8')
-      .match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
-    const home = new Function('useBlueToothStore', 'usePatientStoreWithOut', 'useOperatorStoreWithOut', 'ref', 'computed', 'reactive', 'watch',
-      source + '\nreturn { startPopup, openStartConfirmation, confirmStart, cancelStart };')(
-      () => store, () => patient, () => operator, value => ({ value }), get => ({ get value() { return get() } }), value => value, () => {})
-    home.startPopup.value = { open: vi.fn(), close: vi.fn() }
+    const openStartConfirmation = loadHome()
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    home.openStartConfirmation()
-    expect(home.startPopup.value.open).not.toHaveBeenCalled()
+    openStartConfirmation()
+    expect(uni.showModal).not.toHaveBeenCalled()
     await patient.prepareRegistration()
     expect(patient.registrationState.form).toMatchObject({ height_cm: 170, phone: null })
     expect(getPatientProfileApi).toHaveBeenCalledWith(7, { collectionIdentity: { clinicianId: 11, authEpoch: 1 } })
@@ -360,13 +446,15 @@ describe('actual BLE collection wiring', () => {
       { collectionIdentity: { clinicianId: 11, authEpoch: 1 } })
     expect(store.collectionState.active).toBe(null)
     expect(storage.has('collection_queue_v1')).toBe(false)
-    home.openStartConfirmation()
-    home.cancelStart()
-    home.confirmStart()
+    openStartConfirmation()
+    const cancelled = uni.showModal.mock.calls[0][0]
+    cancelled.success({ cancel: true })
+    cancelled.success({ confirm: true })
     expect(storage.has('collection_queue_v1')).toBe(false)
-    home.openStartConfirmation()
-    home.confirmStart()
-    home.confirmStart()
+    openStartConfirmation()
+    const confirmed = uni.showModal.mock.calls[1][0]
+    confirmed.success({ confirm: true })
+    confirmed.success({ confirm: true })
     expect(store.collectionState.active.registration).toMatchObject({ patient_id: 7, test_type: 'tug', remarks: '登记备注' })
     expect(JSON.parse(storage.get('collection_queue_v1')).sessions).toHaveLength(1)
     patient.editRegistration({ remarks: '采集中尝试编辑' })
