@@ -1,6 +1,9 @@
 <template>
   <view class="container">
     <CaPatientBar />
+    <CollectionRegistration :patient-id="ps.currentId" :form="ps.registrationState.form" :saved="ps.registrationState.ready"
+      :busy="ps.registrationState.loading || ps.registrationState.saving" :disabled="!!capture.active"
+      :error="ps.registrationState.error" @edit="ps.editRegistration($event)" @save="ps.saveRegistration()" />
     <view class="capture-card">
       <view class="capture-title">{{ capture.active ? (capture.waiting ? '采集中 · 等待重新连接' : '正在同步记录') : '同步记录鞋垫、GPS 与可选雷达' }}</view>
       <picker v-if="!capture.active" :range="connectedDevices" range-key="name" :value="selectedIndex" @change="selectDevice">
@@ -8,7 +11,7 @@
       </picker>
       <view v-else class="capture-device">采集设备：{{ capture.active.device_code }}</view>
       <view class="capture-actions">
-        <button v-if="!capture.active" class="capture-start" :disabled="!chosenDevice" @tap="ble.startCollection(chosenDevice.code)">开始同步记录</button>
+        <button v-if="!capture.active" class="capture-start" :disabled="!chosenDevice || !ps.registrationState.ready" @tap="openStartConfirmation">开始同步记录 / Start</button>
         <button v-else class="capture-stop" @tap="ble.stopCollection()">停止记录</button>
         <button v-if="capture.queue.sessions" class="capture-retry" :disabled="capture.queue.sending" @tap="ble.retryCollectionUpload()">重试上传</button>
       </view>
@@ -19,6 +22,16 @@
       <view v-if="capture.gpsRejected" class="capture-warning">其中 GPS 拒收 {{ capture.gpsRejected }} 条；最近一次：{{ capture.gpsLastError }}</view>
       <view class="capture-note">采集时保持 App 前台；离开前台会停止记录。未开始时仅显示实时值。</view>
     </view>
+    <uni-popup ref="startPopup" type="center" :is-mask-click="false">
+      <view class="start-dialog">
+        <view class="capture-title">确认开始？/ Start capture?</view>
+        <view class="capture-note">使用已保存登记开始本次记录。/ Use the saved registration.</view>
+        <view class="capture-actions">
+          <button @tap="cancelStart">取消 / Cancel</button>
+          <button class="capture-start" @tap="confirmStart">确认开始 / Start</button>
+        </view>
+      </view>
+    </uni-popup>
     <RadarPanel />
     <!-- 足部示意（固定点位） -->
     <view class="foot-card">
@@ -75,12 +88,35 @@
 </template>
 
 <script setup>
-import { reactive, computed, ref } from 'vue'
+import { reactive, computed, ref, watch } from 'vue'
 import { useBlueToothStore } from '@/store/modules/blueTooth'
+import { usePatientStoreWithOut } from '@/store/modules/patient'
+import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { shade, mToCm } from '@/utils/footMetrics'
 import RadarPanel from '@/components/RadarPanel.vue'
+import CollectionRegistration from '@/components/CollectionRegistration.vue'
 
 const ble = useBlueToothStore()
+const ps = usePatientStoreWithOut(), operator = useOperatorStoreWithOut()
+const startPopup = ref(null)
+let pendingStart = null
+function cancelStart() { pendingStart = null; startPopup.value.close() }
+function openStartConfirmation() {
+  if (capture.value.active || pendingStart || !chosenDevice.value || !ps.registrationState.ready) return
+  const registration = ps.savedRegistration()
+  if (!registration) return
+  pendingStart = { deviceCode: chosenDevice.value.code, registration }
+  startPopup.value.open()
+}
+function confirmStart() {
+  const request = pendingStart
+  cancelStart()
+  if (request) ble.startCollection(request.deviceCode, request.registration)
+}
+watch(() => [ps.currentId, operator.operator?.clinicianId, operator.authRuntime.authEpoch, operator.unlocked], () => {
+  if (pendingStart) cancelStart()
+  ps.prepareRegistration()
+}, { immediate: true })
 const capture = computed(() => ble.collectionState)
 const selectedCode = ref('')
 const connectedDevices = computed(() => Object.keys(ble.bles_objs)
@@ -175,6 +211,7 @@ const imu = computed(() => {
   padding: 24rpx;
 }
 .capture-card, .gps-card { @include ca-font; background: #fff; border-radius: 12rpx; padding: 24rpx; margin-bottom: 24rpx; }
+.start-dialog { box-sizing: border-box; width: 620rpx; max-width: 88vw; background: #fff; border-radius: 24rpx; padding: 32rpx; }
 .gps-card { margin-top: 24rpx; }
 .capture-title { font-size: 28rpx; font-weight: 700; color: $ca-t1; margin-bottom: 14rpx; }
 .capture-device, .gps-row { font-size: 24rpx; color: $ca-t1; line-height: 1.8; overflow-wrap: anywhere; }

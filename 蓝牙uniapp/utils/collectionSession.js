@@ -14,7 +14,7 @@ export function assertCollectionIdentity(custom, actor) {
   }
 }
 
-export function createCollectionSession({ queue, identity, uuid = createUuid, now = Date.now, onChange = () => {} }) {
+export function createCollectionSession({ queue, identity, registrationFor = () => null, uuid = createUuid, now = Date.now, onChange = () => {} }) {
   let active = null, reason = '', radarReason = '', lastTime = null, sequences = { insole: 0, gps: 0, radar: 0 }
   const publish = () => onChange({ active: active ? { ...active } : null, reason, radarReason })
   function stop(why = 'user', at = now()) {
@@ -31,12 +31,15 @@ export function createCollectionSession({ queue, identity, uuid = createUuid, no
     get active() { return active },
     get reason() { return reason },
     get radarReason() { return radarReason },
-    start({ patientId, deviceCode, connected }) {
+    start({ patientId, deviceCode, connected, registration }) {
       const actor = identity()
       if (active || !connected || !actor.unlocked || !actor.clinicianId || !patientId || !deviceCode) throw new Error('capture_unavailable')
+      if (!registration || registration !== registrationFor(patientId, actor.clinicianId) || registration.patient_id !== patientId) throw new Error('registration_unsaved')
+      const frozen = JSON.parse(JSON.stringify(registration))
+      Object.freeze(frozen.patient_snapshot); Object.freeze(frozen)
       const stamp = now()
       const context = { capture_id: uuid(), clinicianId: actor.clinicianId, authEpoch: actor.authEpoch,
-        patient_id: patientId, device_code: deviceCode, mobile_started_at: new Date(stamp).toISOString() }
+        patient_id: patientId, device_code: deviceCode, mobile_started_at: new Date(stamp).toISOString(), registration: frozen }
       queue.add(context)
       active = context; lastTime = stamp; sequences = { insole: 0, gps: 0, radar: 0 }; reason = ''; radarReason = ''
       publish()

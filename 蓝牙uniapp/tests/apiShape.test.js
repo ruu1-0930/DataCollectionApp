@@ -6,19 +6,25 @@ describe('normalizePatient', () => {
   it('后端患者对象映射为前端形状', () => {
     const p = normalizePatient({
       id: 7, subject_id: '#00007', name: '张三', phone: '13812346543',
-      gender: '男', age: 60, last_collected_at: '2026-06-07T03:00:00', existed: true
+      gender: '男', age: 60, height_cm: 170, weight_kg: 62.5, shoe_size_eu: 40.5,
+      last_collected_at: '2026-06-07T03:00:00', existed: true
     })
     expect(p).toEqual({
       id: 7, subjectId: '#00007', name: '张三', phone: '13812346543',
-      gender: '男', age: 60, lastAt: Date.parse('2026-06-07T03:00:00'), existed: true
+      gender: '男', age: 60, height_cm: 170, weight_kg: 62.5, shoe_size_eu: 40.5,
+      lastAt: Date.parse('2026-06-07T03:00:00'), existed: true
     })
   })
   it('缺省字段安全降级', () => {
     const p = normalizePatient({ id: 1, subject_id: '#00001' })
     expect(p.gender).toBe('')
-    expect(p.age).toBe('')
+    expect(p).toMatchObject({ age: null, phone: null, height_cm: null, weight_kg: null, shoe_size_eu: null })
     expect(p.lastAt).toBe(null)
     expect(p.existed).toBe(false)
+  })
+  it('保留 V2 显式 NULL 及合法零岁', () => {
+    const values = { phone: null, age: 0, height_cm: null, weight_kg: null, shoe_size_eu: null }
+    expect(normalizePatient({ id: 1, ...values })).toMatchObject(values)
   })
 })
 

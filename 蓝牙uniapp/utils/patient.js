@@ -26,8 +26,25 @@ export function isValidPhone(phone) {
 // 新建患者字段校验，返回 { ok, msg }
 export function validatePatient({ name, phone } = {}) {
   if (!name || !String(name).trim()) return { ok: false, msg: '请输入患者姓名' }
-  if (!isValidPhone(phone)) return { ok: false, msg: '请输入正确的 11 位手机号' }
+  if (String(name).trim().length > 50) return { ok: false, msg: '姓名最多 50 字' }
+  if (phone != null && String(phone).trim() && !isValidPhone(phone)) return { ok: false, msg: '请输入正确的 11 位手机号' }
   return { ok: true, msg: '' }
+}
+
+export function normalizePatientProfile(input = {}) {
+  const result = validatePatient(input)
+  if (!result.ok) throw Error(result.msg)
+  if (!['男', '女'].includes(input.gender)) throw Error('请选择性别 / Select gender')
+  const numeric = (key, max, integer = false) => {
+    const value = input[key]
+    const number = typeof value === 'number' || typeof value === 'string' && value.trim() ? Number(value) : NaN
+    if (!Number.isFinite(number) || number > max || (key === 'age' ? number < 0 : number <= 0) || integer && !Number.isInteger(number)) throw Error(`请检查 ${key}`)
+    return number
+  }
+  const profile = { name: String(input.name).trim(), phone: input.phone == null || !String(input.phone).trim() ? null : String(input.phone).trim(),
+    gender: input.gender, age: numeric('age', 150, true), height_cm: numeric('height_cm', 300), weight_kg: numeric('weight_kg', 1000), shoe_size_eu: numeric('shoe_size_eu', 100) }
+  if (!Number.isInteger(profile.shoe_size_eu * 2)) throw Error('鞋码以 0.5 为步进 / EU shoe size: 0.5 increments')
+  return profile
 }
 
 // 搜索：按 姓名 / 手机号 / 编号(数字或#) 匹配，返回过滤后的列表

@@ -41,6 +41,22 @@ describe('actual request interceptor collection owner fence', () => {
     expect(sends[0].data).toEqual(request.data)
     expect(sends[0].custom.collectionIdentity).toEqual({ clinicianId: 11, authEpoch: 1 })
   })
+  it('uses the actual V2 patient create, profile read and profile replacement URLs', async () => {
+    const source = readFileSync(new URL('../api/patient.js', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace(/export /g, '')
+    const api = new Function('instance', source + '\nreturn { createPatientApi, getPatientProfileApi, savePatientProfileApi };')({
+      request: value => instance.request({ ...value, header: {}, custom: value.custom || {} }),
+    })
+    const profile = { name: '合成患者', phone: null, gender: '男', age: 60, height_cm: 170, weight_kg: 65, shoe_size_eu: 40.5 }
+    await api.createPatientApi(profile)
+    await api.getPatientProfileApi(7, config().custom)
+    await api.savePatientProfileApi(7, profile, config().custom)
+    expect(sends.map(r => [r.method, r.url])).toEqual([['post', '/v2/patients'], ['get', '/v2/patients/7/profile'], ['put', '/v2/patients/7/profile']])
+    expect(sends[0].data).toEqual(profile)
+    expect(sends[2].data).toEqual(profile)
+    op.authRuntime.authEpoch = 2
+    await expect(api.savePatientProfileApi(7, profile, config().custom)).rejects.toThrow('collection_identity_changed')
+    expect(sends).toHaveLength(3)
+  })
   it('does not refresh an old collection under a new authentication epoch', async () => {
     let refreshes = 0
     op.refreshToken = async () => { refreshes++ }

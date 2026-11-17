@@ -1,3 +1,4 @@
+import { savedRegistration } from './helpers/savedRegistration'
 import { describe, expect, it, vi } from 'vitest'
 import { createTelemetryOutbox } from '../utils/telemetryQueue'
 import { createCollectionCoordinator } from '../utils/collectionCoordinator'
@@ -17,7 +18,7 @@ function fixture({ fail, saveFailure = false, restored } = {}) {
   }
   const queue = createCollectionCoordinator({ load: () => disk, save: value => { if (savingFails) throw Error('disk'); disk = value },
     identity: () => actor, api, wait: async () => {} })
-  const session = createCollectionSession({ queue, uuid, now: () => now, identity: () => actor })
+  const session = createCollectionSession({ registrationFor: savedRegistration, queue, uuid, now: () => now, identity: () => actor })
   return { queue, session, api, requests, disk: () => disk, actor: value => { actor = value }, time: value => { now = value },
     savingFails: value => { savingFails = value } }
 }
@@ -25,7 +26,7 @@ function fixture({ fail, saveFailure = false, restored } = {}) {
 describe('fixed collection window and durable FIFO', () => {
   it('persists before send and drains create, matching stream batches, then stop', async () => {
     const f = fixture()
-    f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     for (let i = 0; i < 51; i++) f.session.receive('IN-3', 4, gps, Date.parse(start) + i)
     f.session.receive('IN-3', 4, { stream: 'insole', payload: { left_speed: 1, right_speed: 2 } }, Date.parse(start) + 60)
     f.time(Date.parse(start) + 100)
@@ -41,7 +42,7 @@ describe('fixed collection window and durable FIFO', () => {
   })
   it('keeps identities after response loss, retries three times, then waits for manual retry', async () => {
     const f = fixture({ fail: () => { throw { statusCode: 503 } } })
-    f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     f.session.receive('IN-3', 1, gps, Date.parse(start))
     await f.queue.drain()
     expect(f.requests).toHaveLength(4)
@@ -61,14 +62,14 @@ describe('fixed collection window and durable FIFO', () => {
   })
   it.each([400, 401, 403, 409, 422])('retains pending on HTTP %i without automatic retry', async statusCode => {
     const f = fixture({ fail: () => { throw { statusCode } } })
-    f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     await f.queue.drain()
     expect(f.requests).toHaveLength(1)
     expect(f.queue.snapshot().sessions).toBe(1)
   })
   it('never deletes events from unrelated or incomplete receipts', async () => {
     const f = fixture()
-    f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     f.session.receive('IN-3', 0, gps, Date.parse(start))
     f.api.batch = async captureId => ({ capture_id: captureId, results: [{ event_id: uuid(), stream: 'gps', status: 'accepted', server_received_at: start }] })
     await f.queue.drain()
@@ -76,7 +77,7 @@ describe('fixed collection window and durable FIFO', () => {
   })
   it('restores pending after restart, closes at last persisted sample, and uses same event ID', async () => {
     const f = fixture()
-    f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     f.session.receive('IN-3', 2, gps, Date.parse(start) + 20)
     const oldId = JSON.parse(f.disk()).sessions[0].outboxes.primary[0].event_id
     const restored = fixture({ restored: f.disk() })
@@ -87,7 +88,7 @@ describe('fixed collection window and durable FIFO', () => {
   })
   it('halts capture at last sample on clock rollback and prevents new events', () => {
     const f = fixture()
-    f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     f.session.receive('IN-3', 1, gps, Date.parse(start) + 20)
     f.session.receive('IN-3', 1, gps, Date.parse(start) - 1)
     const saved = JSON.parse(f.disk()).sessions[0]
@@ -98,7 +99,7 @@ describe('fixed collection window and durable FIFO', () => {
   })
   it('stops and retains old identity when actor/auth epoch changes', async () => {
     const f = fixture()
-    f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     f.actor({ clinicianId: 12, authEpoch: 2, unlocked: true })
     f.session.receive('IN-3', 1, gps, Date.parse(start))
     await f.queue.drain()
@@ -109,7 +110,7 @@ describe('fixed collection window and durable FIFO', () => {
   })
   it('rechecks identity after an in-flight create before sending events', async () => {
     const f = fixture()
-    f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     f.session.receive('IN-3', 1, gps, Date.parse(start))
     f.api.create = async body => { f.actor({ clinicianId: 12, authEpoch: 2, unlocked: true }); return { capture_id: body.capture_id } }
     await f.queue.drain()
@@ -118,14 +119,14 @@ describe('fixed collection window and durable FIFO', () => {
   })
   it('refuses event 5001 without overwriting and stops capture', () => {
     const old = fixture()
-    old.session.start({ patientId: 6, deviceCode: 'IN-3', connected: true })
+    old.session.start({ patientId: 6, registration: savedRegistration(6), deviceCode: 'IN-3', connected: true })
     old.session.receive('IN-3', 1, gps, Date.parse(start))
     const document = JSON.parse(old.disk())
     document.sessions[0].mobile_stopped_at = start
     const sample = document.sessions[0].outboxes.primary[0]
     document.sessions[0].outboxes.primary = Array.from({ length: 4999 }, (_, stream_sequence) => ({ ...sample, event_id: uuid(), stream_sequence }))
     const f = fixture({ restored: JSON.stringify(document) })
-    f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     f.session.receive('IN-3', 1, gps, Date.parse(start))
     expect(f.queue.snapshot().pending).toBe(5000)
     expect(f.session.active).toBe(null)
@@ -140,7 +141,7 @@ describe('fixed collection window and durable FIFO', () => {
   })
   it('does not send overlapping requests when two drains race', async () => {
     const f = fixture()
-    f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     f.session.receive('IN-3', 1, gps, Date.parse(start))
     const first = f.queue.drain()
     const second = f.queue.drain()
@@ -150,7 +151,7 @@ describe('fixed collection window and durable FIFO', () => {
   })
   it('stops explicitly on storage failure and preserves the prior durable queue', () => {
     const f = fixture()
-    f.session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     f.savingFails(true)
     f.session.receive('IN-3', 1, gps, Date.parse(start))
     expect(f.session.active).toBe(null)

@@ -4,9 +4,12 @@ export function normalizePatient(b = {}) {
     id: b.id,
     subjectId: b.subject_id,
     name: b.name,
-    phone: b.phone,
+    phone: b.phone ?? null,
     gender: b.gender || '',
-    age: b.age == null ? '' : b.age,
+    age: b.age ?? null,
+    height_cm: b.height_cm ?? null,
+    weight_kg: b.weight_kg ?? null,
+    shoe_size_eu: b.shoe_size_eu ?? null,
     lastAt: b.last_collected_at ? Date.parse(b.last_collected_at) : null,
     existed: !!b.existed
   }

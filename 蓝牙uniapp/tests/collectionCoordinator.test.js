@@ -1,3 +1,4 @@
+import { savedRegistration } from './helpers/savedRegistration'
 import { it, expect, vi } from 'vitest'
 import { createCollectionCoordinator } from '../utils/collectionCoordinator'
 import { createCollectionSession } from '../utils/collectionSession'
@@ -36,16 +37,19 @@ it('test_radar_failure_does_not_block_insole', async () => {
 it('test_radar_capacity_pauses_only_radar', () => {
   const full = { ...context('old'), created: true, mobile_stopped_at: stamp, outboxes: { primary: [], radar: Array.from({ length: 5000 }, () => event('radar')) } }
   const f = fixture({ restored: JSON.stringify({ version: 2, sessions: [full] }) })
-  const session = createCollectionSession({ queue: f.queue, identity: f.options.identity, uuid: () => 'new', now: () => Date.parse(stamp) })
-  session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+  const session = createCollectionSession({ registrationFor: savedRegistration, queue: f.queue, identity: f.options.identity, uuid: () => 'new', now: () => Date.parse(stamp) })
+  session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
   session.receiveRadar('new', 5, {}, Date.parse(stamp))
   session.receive('IN-3', 1, { stream: 'insole', payload: {} }, Date.parse(stamp))
   expect(session.active.capture_id).toBe('new'); expect(session.radarReason).toBe('capacity')
   expect(f.queue.snapshot()).toMatchObject({ originalPending: 1, radarPending: 5000 })
 })
 it('test_restore_stop_covers_latest_durable_radar', async () => {
-  const f = fixture(); f.queue.add(context('one')); f.queue.enqueue('one', event('radar', '2026-10-23T00:00:05.000Z'))
-  const recovered = fixture({ restored: f.disk() }); await recovered.queue.drain()
+  const f = fixture(); f.queue.add({ ...context('one'), registration: savedRegistration(7) })
+  f.queue.enqueue('one', event('radar', '2026-10-23T00:00:05.000Z'))
+  const recovered = fixture({ restored: f.disk() })
+  expect(JSON.parse(recovered.disk()).sessions[0].registration).toEqual(savedRegistration(7))
+  await recovered.queue.drain()
   expect(recovered.sent.at(-1)).toEqual(['stop', 'one', { mobile_stopped_at: '2026-10-23T00:00:05.000Z' }])
 })
 it('test_legacy_queue_migration_preserves_ids', async () => {
@@ -64,9 +68,9 @@ it('test_migration_failure_preserves_old_bytes', async () => {
 })
 it('test_old_callback_cannot_enter_new_capture', () => {
   const f = fixture(); let id = 0
-  const session = createCollectionSession({ queue: f.queue, identity: f.options.identity, uuid: () => `capture-${++id}`, now: () => Date.parse(stamp) })
-  const old = session.start({ patientId: 7, deviceCode: 'IN-3', connected: true }); session.stop()
-  const current = session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+  const session = createCollectionSession({ registrationFor: savedRegistration, queue: f.queue, identity: f.options.identity, uuid: () => `capture-${++id}`, now: () => Date.parse(stamp) })
+  const old = session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true }); session.stop()
+  const current = session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
   session.receiveRadar(old, 1, {}, Date.parse(stamp)); session.receiveRadar(current, 1, {}, Date.parse(stamp))
   expect(f.queue.snapshot().radarPending).toBe(1)
   expect(JSON.parse(f.disk()).sessions[0].outboxes.radar).toEqual([])

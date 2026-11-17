@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  formatSubjectId, nextSeq, maskPhone, isValidPhone, validatePatient, searchPatients
+  formatSubjectId, nextSeq, maskPhone, isValidPhone, validatePatient, searchPatients, normalizePatientProfile
 } from '../utils/patient.js'
 
 describe('formatSubjectId', () => {
@@ -43,6 +43,22 @@ describe('validatePatient', () => {
   })
   it('合法通过', () => {
     expect(validatePatient({ name: '张三', phone: '13812346543' }).ok).toBe(true)
+  })
+  it('患者手机号可选，医生共用手机号校验仍要求填写', () => {
+    for (const phone of [undefined, null, '', '  ']) {
+      expect(validatePatient({ name: '张三', phone }).ok).toBe(true)
+      expect(isValidPhone(phone)).toBe(false)
+    }
+  })
+  it('年龄零有效，空白年龄和缺失测量值会拒绝，鞋码只允许半码步进', () => {
+    const input = { name: ' 张三 ', gender: '男', age: '0', height_cm: '170', weight_kg: '60', shoe_size_eu: '40.5' }
+    expect(normalizePatientProfile(input)).toEqual({ name: '张三', phone: null, gender: '男', age: 0,
+      height_cm: 170, weight_kg: 60, shoe_size_eu: 40.5 })
+    for (const age of ['', '  ', null]) expect(() => normalizePatientProfile({ ...input, age })).toThrow()
+    for (const key of ['height_cm', 'weight_kg', 'shoe_size_eu']) {
+      for (const value of ['', null, 0, Infinity]) expect(() => normalizePatientProfile({ ...input, [key]: value })).toThrow()
+    }
+    expect(() => normalizePatientProfile({ ...input, shoe_size_eu: '40.2' })).toThrow()
   })
 })
 

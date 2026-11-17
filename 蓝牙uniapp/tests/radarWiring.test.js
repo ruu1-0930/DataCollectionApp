@@ -1,3 +1,4 @@
+import { savedRegistration } from './helpers/savedRegistration'
 import { beforeEach, afterEach, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { createRadarLink } from '../utils/radarLink'
@@ -13,7 +14,7 @@ function load(path, name, dependencies) {
 let ble, radar, disk, sent, operator, patient, adapter, native, serial
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-23T00:00:00.000Z'))
-  disk = new Map(); sent = []; serial = 0; patient = { currentId: 7 }; operator = { operator: { clinicianId: 11 }, unlocked: true, authRuntime: { authEpoch: 1 } }
+  disk = new Map(); sent = []; serial = 0; patient = { currentId: 7, savedRegistration }; operator = { operator: { clinicianId: 11 }, unlocked: true, authRuntime: { authEpoch: 1 } }
   globalThis.uni = { getStorageSync: key => disk.get(key), setStorageSync: (key, value) => disk.set(key, value), setKeepScreenOn: vi.fn(), showToast: vi.fn(), showLoading: vi.fn(), hideLoading: vi.fn() }
   const defineStore = (_, options) => () => { const value = options.state(); for (const [key, action] of Object.entries(options.actions)) value[key] = action.bind(value); return value }
   class Ble { connect(code, auto, cb) { cb({ type: 0 }) } scanServices(cb) { cb({ data: [null, null, { uuid: 's', characteristics: [{ uuid: 'n', properties: { NOTIFY: true } }] }] }) } setMtu() {} onNotityReadBleData(s, n, enabled, cb) { if (enabled) this.notify = cb } close() {} }
@@ -35,7 +36,7 @@ it('actual BLE notification and HTTP frame enter the same capture and stop after
   ble.connectDevice(3); await vi.advanceTimersByTimeAsync(2000)
   await radar.open(); await vi.advanceTimersByTimeAsync(0)
   expect(ble.ensureCollection().queue.snapshot().pending).toBe(0)
-  ble.startCollection('IN-3')
+  ble.startCollection('IN-3', savedRegistration(patient.currentId))
   const text = Array.from({ length: 38 }, (_, i) => i + 1).join(',') + '\nGPS1,1,0,,,,2.7,0,,0,,0,0\n'
   native.notify({ data: Uint8Array.from([...text].map(c => c.charCodeAt(0))).buffer })
   await vi.advanceTimersByTimeAsync(200); ble.stopCollection(); await ble.retryCollectionUpload()
@@ -48,11 +49,11 @@ it('an HTTP response begun before capture start cannot enter a new capture', asy
   let finish
   adapter.readRadar = () => new Promise(resolve => { finish = resolve })
   await radar.connect('10.0.0.2'); await vi.advanceTimersByTimeAsync(0)
-  ble.startCollection('IN-3'); finish(payload); await vi.advanceTimersByTimeAsync(0)
+  ble.startCollection('IN-3', savedRegistration(patient.currentId)); finish(payload); await vi.advanceTimersByTimeAsync(0)
   expect(ble.collectionState.queue.radarPending).toBe(0)
 })
 it('actual App background stops all recording and foreground never reopens capture', async () => {
-  ble.bles_objs['IN-3'].isConnected = true; await radar.open(); await vi.advanceTimersByTimeAsync(0); ble.startCollection('IN-3')
+  ble.bles_objs['IN-3'].isConnected = true; await radar.open(); await vi.advanceTimersByTimeAsync(0); ble.startCollection('IN-3', savedRegistration(patient.currentId))
   const source = readFileSync(new URL('../App.vue', import.meta.url), 'utf8').match(/<script>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '').replace('export default', 'return')
   const app = new Function('useBlueToothStoreWithOut', 'useRadarStoreWithOut', source)(() => ble, () => radar)
   app.onHide(); await vi.advanceTimersByTimeAsync(1000)
@@ -62,17 +63,17 @@ it('actual App background stops all recording and foreground never reopens captu
 })
 it('permission denial leaves the old BLE/GPS capture usable', async () => {
   adapter.capabilities = async () => ({ supported: true, permitted: false }); await radar.open()
-  ble.bles_objs['IN-3'].isConnected = true; ble.startCollection('IN-3')
+  ble.bles_objs['IN-3'].isConnected = true; ble.startCollection('IN-3', savedRegistration(patient.currentId))
   expect(ble.collectionState.active.patient_id).toBe(7); expect(radar.connection.status).toBe('permission')
 })
 it('a stopped capture cannot leak a late native response into the next patient window', async () => {
   ble.bles_objs['IN-3'].isConnected = true
   let finishOld
   adapter.readRadar = () => new Promise(resolve => { finishOld = resolve })
-  ble.startCollection('IN-3'); await radar.connect('10.0.0.2'); await vi.advanceTimersByTimeAsync(0)
+  ble.startCollection('IN-3', savedRegistration(patient.currentId)); await radar.connect('10.0.0.2'); await vi.advanceTimersByTimeAsync(0)
   const oldCapture = ble.collectionState.active.capture_id
   const old = finishOld
-  ble.stopCollection('patient'); patient.currentId = 8; ble.startCollection('IN-3')
+  ble.stopCollection('patient'); patient.currentId = 8; ble.startCollection('IN-3', savedRegistration(patient.currentId))
   old(payload); await vi.advanceTimersByTimeAsync(0)
   expect(ble.collectionState.active.patient_id).toBe(8)
   expect(ble.collectionState.queue.radarPending).toBe(0)

@@ -9,6 +9,7 @@
         class="ca-ipt"
         :type="type"
         :password="password"
+        :disabled="disabled"
         :placeholder="placeholder"
         :value="modelValue"
         placeholder-class="ca-ph"
@@ -24,7 +25,8 @@ defineProps({
   modelValue: [String, Number],
   type: { type: String, default: 'text' },
   password: { type: Boolean, default: false },
-  required: { type: Boolean, default: false }
+  required: { type: Boolean, default: false },
+  disabled: { type: Boolean, default: false }
 })
 defineEmits(['update:modelValue'])
 </script>

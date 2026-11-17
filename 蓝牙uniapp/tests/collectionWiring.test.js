@@ -1,9 +1,13 @@
+import { savedRegistration } from './helpers/savedRegistration'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { createBleLines, parseTelemetry } from '../utils/bleTelemetry'
 import { createCollectionSession } from '../utils/collectionSession'
 import { createCollectionCoordinator } from '../utils/collectionCoordinator'
+import { createRegistrationDraft } from '../utils/collectionRegistration'
 import { createOperatorSessionRuntime, resetOperatorSession } from '../utils/operatorSession'
+import { normalizePatient } from '../utils/apiShape'
+import { normalizePatientProfile } from '../utils/patient'
 
 // The UTS plugin and Pinia are supplied by HBuilderX, not this Node package.
 // Execute the actual store actions with only those native/framework seams replaced.
@@ -30,7 +34,7 @@ describe('actual BLE collection wiring', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-10-19T00:00:00.000Z'))
-    patient = { currentId: 7 }
+    patient = { currentId: 7, savedRegistration }
     operator = { operator: { clinicianId: 11 }, unlocked: true, authRuntime: { authEpoch: 1 } }
     requests = []
     storage = new Map()
@@ -71,6 +75,29 @@ describe('actual BLE collection wiring', () => {
     store.bles_objs['IN-3'] = { ble: native, isConnected: false }
     store.isBluetoothOpen = true
   })
+
+  function loadPatient(profile = { id: 7, subject_id: '#00007', ...savedRegistration(7).patient_snapshot, phone: null }) {
+    const getPatientProfileApi = vi.fn(async () => profile)
+    const savePatientProfileApi = vi.fn(async (id, update) => ({ ...profile, ...update, id }))
+    const listPatientsApi = async () => [{ id: profile.id, subject_id: profile.subject_id, name: profile.name,
+      phone: profile.phone, age: profile.age, gender: profile.gender }]
+    patient = lifecycleStore('../store/modules/patient.js', 'usePatientStore', {
+      store: {}, getPatients: () => [], getCurrentPatientId: () => 7, setCurrentPatientId: () => {}, setPatients: () => {},
+      normalizePatient, normalizePatientProfile, createRegistrationDraft, getPatientProfileApi, savePatientProfileApi, listPatientsApi,
+      useBlueToothStoreWithOut: () => store, useOperatorStoreWithOut: () => operator,
+    })
+    return { getPatientProfileApi, savePatientProfileApi }
+  }
+
+  it('keeps selected profile measurements across the legacy list and updates the displayed patient after PUT', async () => {
+    loadPatient()
+    await patient.prepareRegistration()
+    await patient.loadList()
+    expect(patient.patients[0]).toMatchObject({ height_cm: 170, weight_kg: 65, shoe_size_eu: 40.5, phone: null })
+    patient.editRegistration({ name: '更新姓名', test_type: 'tug' })
+    await patient.saveRegistration()
+    expect(patient.patients[0]).toMatchObject({ name: '更新姓名', height_cm: 170, phone: null })
+  })
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); delete globalThis.uni })
 
   it('reassembles a split 38-value notification before refreshing realtime', async () => {
@@ -86,7 +113,7 @@ describe('actual BLE collection wiring', () => {
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
     native.notification({ data: bytes(line + '\n') })
-    store.startCollection('IN-3')
+    store.startCollection('IN-3', savedRegistration(patient.currentId))
     native.notification({ data: bytes('GPS1,1,0,,,,2.7,0,,0,,0,0\n' + line + '\n') })
     store.stopCollection()
     await store.retryCollectionUpload()
@@ -102,7 +129,7 @@ describe('actual BLE collection wiring', () => {
     const raw = 'GPS1,42,1,31.2304000,121.4737000,12.5,1.20,8,0.95,180,083015.00,14632,0'
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    store.startCollection('IN-3')
+    store.startCollection('IN-3', savedRegistration(patient.currentId))
     native.notification({ data: Array.from(new Uint8Array(bytes(line + '\r\n' + raw + '\r\n'))) })
     expect(store.gpsRealtime).toMatchObject({ seq: 42, lat: 31.2304, lon: 121.4737, utc: '083015.00', speed: 1.2 })
     expect(store.collectionState.rejected).toBe(0)
@@ -131,7 +158,7 @@ describe('actual BLE collection wiring', () => {
     const raw = 'GPS1,42,1,31.2304000,121.4737000,12.5,1.20,8,0.95,180,083015.00,14632,0'
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    store.startCollection('IN-3')
+    store.startCollection('IN-3', savedRegistration(patient.currentId))
     native.notification({ data: bytes('GPS1,42,1\n') })
     expect(store.collectionState.gpsLastError).toBe('字段数量为 3，应为 13')
     const descriptor = Object.getOwnPropertyDescriptor(Number, 'isSafeInteger')
@@ -155,7 +182,7 @@ describe('actual BLE collection wiring', () => {
       'GPS1,6,0,nan,nan,nan,nan,0,99.99,626,,17551,0']
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    store.startCollection('IN-3')
+    store.startCollection('IN-3', savedRegistration(patient.currentId))
     const text = rows[0] + '\r\n' + line + '\n' + rows[1] + '\n'
     native.notification({ data: Array.from(new Uint8Array(bytes(text.slice(0, 20)))) })
     native.notification({ data: Array.from(new Uint8Array(bytes(text.slice(20)))) })
@@ -172,7 +199,7 @@ describe('actual BLE collection wiring', () => {
   it('shows pressure and IMU and uploads 38 fields from numeric-array BLE notifications', async () => {
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    store.startCollection('IN-3')
+    store.startCollection('IN-3', savedRegistration(patient.currentId))
     native.notification({ data: Array.from(new Uint8Array(bytes(line + '\n'))) })
     expect(store.realtime.hasData).toBe(true)
     expect(store.realtime.left.pressure).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
@@ -189,7 +216,7 @@ describe('actual BLE collection wiring', () => {
   it('stops before changed patient can receive a new sample', async () => {
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    store.startCollection('IN-3')
+    store.startCollection('IN-3', savedRegistration(patient.currentId))
     native.notification({ data: bytes(line + '\n') })
     patient.currentId = 8
     native.notification({ data: bytes(line + '\n') })
@@ -201,7 +228,7 @@ describe('actual BLE collection wiring', () => {
   it('preserves capture on unexpected disconnect, resets partial rows and ignores old callbacks', async () => {
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    store.startCollection('IN-3')
+    store.startCollection('IN-3', savedRegistration(patient.currentId))
     const capture = store.collectionState.active.capture_id
     const oldNotify = native.notification
     oldNotify({ data: bytes('GPS1,1,') })
@@ -291,7 +318,7 @@ describe('actual BLE collection wiring', () => {
   it('ends recording before the delete request even when deletion fails', async () => {
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    store.startCollection('IN-3')
+    store.startCollection('IN-3', savedRegistration(patient.currentId))
     native.notification({ data: bytes(line + '\n') })
     let activeAtDelete = 'not-called'
     deleteApi = async () => { activeAtDelete = store.collectionState.active; throw Error('network') }
@@ -303,7 +330,7 @@ describe('actual BLE collection wiring', () => {
   it('refuses to send a pending capture with a new clinician credential', async () => {
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    store.startCollection('IN-3')
+    store.startCollection('IN-3', savedRegistration(patient.currentId))
     native.notification({ data: bytes(line + '\n') })
     store.endCollectionContext()
     operator.operator.clinicianId = 12
@@ -313,13 +340,39 @@ describe('actual BLE collection wiring', () => {
     expect(store.collectionState.queue.pending).toBe(1)
   })
   it('actual patient select action closes the old window before assigning another patient', async () => {
-    patient = lifecycleStore('../store/modules/patient.js', 'usePatientStore', {
-      store: {}, getPatients: () => [], getCurrentPatientId: () => 7, setCurrentPatientId: () => {},
-      useBlueToothStoreWithOut: () => store,
-    })
+    const { getPatientProfileApi, savePatientProfileApi } = loadPatient()
+    const source = readFileSync(new URL('../pages/home/home.vue', import.meta.url), 'utf8')
+      .match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
+    const home = new Function('useBlueToothStore', 'usePatientStoreWithOut', 'useOperatorStoreWithOut', 'ref', 'computed', 'reactive', 'watch',
+      source + '\nreturn { startPopup, openStartConfirmation, confirmStart, cancelStart };')(
+      () => store, () => patient, () => operator, value => ({ value }), get => ({ get value() { return get() } }), value => value, () => {})
+    home.startPopup.value = { open: vi.fn(), close: vi.fn() }
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    store.startCollection('IN-3')
+    home.openStartConfirmation()
+    expect(home.startPopup.value.open).not.toHaveBeenCalled()
+    await patient.prepareRegistration()
+    expect(patient.registrationState.form).toMatchObject({ height_cm: 170, phone: null })
+    expect(getPatientProfileApi).toHaveBeenCalledWith(7, { collectionIdentity: { clinicianId: 11, authEpoch: 1 } })
+    patient.editRegistration({ test_type: 'tug', remarks: '登记备注' })
+    await patient.saveRegistration()
+    expect(savePatientProfileApi).toHaveBeenCalledWith(7, expect.objectContaining({ height_cm: 170, phone: null }),
+      { collectionIdentity: { clinicianId: 11, authEpoch: 1 } })
+    expect(store.collectionState.active).toBe(null)
+    expect(storage.has('collection_queue_v1')).toBe(false)
+    home.openStartConfirmation()
+    home.cancelStart()
+    home.confirmStart()
+    expect(storage.has('collection_queue_v1')).toBe(false)
+    home.openStartConfirmation()
+    home.confirmStart()
+    home.confirmStart()
+    expect(store.collectionState.active.registration).toMatchObject({ patient_id: 7, test_type: 'tug', remarks: '登记备注' })
+    expect(JSON.parse(storage.get('collection_queue_v1')).sessions).toHaveLength(1)
+    patient.editRegistration({ remarks: '采集中尝试编辑' })
+    await patient.saveRegistration()
+    expect(patient.registrationState.form.remarks).toBe('登记备注')
+    expect(savePatientProfileApi).toHaveBeenCalledTimes(1)
     native.notification({ data: bytes(line + '\n') })
     patient.select(8)
     expect(store.collectionState.active).toBe(null)
@@ -337,7 +390,7 @@ describe('actual BLE collection wiring', () => {
     operator.unlocked = true
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    store.startCollection('IN-3')
+    store.startCollection('IN-3', savedRegistration(patient.currentId))
     native.notification({ data: bytes(line + '\n') })
     operator.reset()
     await store.retryCollectionUpload()
@@ -354,7 +407,7 @@ describe('actual BLE collection wiring', () => {
     const app = new Function('useBlueToothStoreWithOut', 'useRadarStoreWithOut', source)(() => store, () => ({ setForeground() {} }))
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
-    store.startCollection('IN-3')
+    store.startCollection('IN-3', savedRegistration(patient.currentId))
     native.notification({ data: bytes(line + '\n') })
     expect(uni.setKeepScreenOn).toHaveBeenLastCalledWith({ keepScreenOn: true })
     app.onHide()

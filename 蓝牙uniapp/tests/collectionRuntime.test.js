@@ -1,3 +1,4 @@
+import { savedRegistration } from './helpers/savedRegistration'
 import { it, expect } from 'vitest'
 import { createCollectionCoordinator } from '../utils/collectionCoordinator'
 import { createCollectionSession } from '../utils/collectionSession'
@@ -33,10 +34,10 @@ function withAppArrayMethods(operation) {
 it.each(['insole', 'gps', 'radar'])('records %s without recent Array methods instead of reporting broken storage', stream => {
   const f = queueFixture()
   let serial = 0
-  const session = createCollectionSession({ queue: f.queue, identity: f.identity,
+  const session = createCollectionSession({ registrationFor: savedRegistration, queue: f.queue, identity: f.identity,
     uuid: () => serial++ ? 'event-runtime' : 'capture-runtime', now: () => Date.parse(started) })
   withAppArrayMethods(() => {
-    session.start({ patientId: 7, deviceCode: 'IN-3', connected: true })
+    session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     session.receive('IN-3', 1, { stream, payload: {} }, Date.parse(received), 'capture-runtime')
   })
   expect(session.active?.capture_id).toBe('capture-runtime')

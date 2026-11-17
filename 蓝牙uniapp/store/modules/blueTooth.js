@@ -99,6 +99,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       })
       this.collectionState.queue = runtime.queue.snapshot()
       runtime.session = createCollectionSession({ queue: runtime.queue, identity,
+        registrationFor: (patientId, actorId) => usePatientStoreWithOut().savedRegistration(patientId, actorId),
         onChange: value => {
           this.collectionState.active = value.active
           this.collectionState.reason = value.reason
@@ -122,18 +123,18 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         if (status.pending && !status.paused) this.scheduleCollectionUpload()
       }, delay)
     },
-    startCollection(deviceCode) {
+    startCollection(deviceCode, registration) {
       const runtime = this.ensureCollection()
       const ps = usePatientStoreWithOut()
       try {
-        runtime.session.start({ patientId: ps.currentId, deviceCode, connected: !!this.bles_objs[deviceCode]?.isConnected })
+        runtime.session.start({ patientId: ps.currentId, deviceCode, connected: !!this.bles_objs[deviceCode]?.isConnected, registration })
         this.collectionState.lifecycle++
         useRadarStoreWithOut().invalidateCapture()
         this.bles_objs[deviceCode]?.lineStream?.reset()
         this.collectionState.waiting = false
         this.scheduleCollectionUpload(0)
       } catch {
-        uni.showToast({ title: '无法开始：请解锁、选择患者并连接设备，检查本地缓存', icon: 'none', duration: 3000 })
+        uni.showToast({ title: '无法开始：请先保存登记、解锁并连接设备 / Save registration first', icon: 'none', duration: 3000 })
       }
     },
     stopCollection(reason = 'user') {
