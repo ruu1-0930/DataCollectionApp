@@ -1,9 +1,11 @@
 import { savedRegistration } from './helpers/savedRegistration'
+import { collectionStopReceipt } from './helpers/collectionStopReceipt'
 import { it, expect, vi } from 'vitest'
 import { createCollectionCoordinator } from '../utils/collectionCoordinator'
 import { createCollectionSession } from '../utils/collectionSession'
 const stamp = '2026-10-23T00:00:00.000Z'
-const context = capture_id => ({ capture_id, clinicianId: 11, patient_id: 7, device_code: 'IN-3', mobile_started_at: stamp })
+const context = capture_id => ({ capture_id, clinicianId: 11, patient_id: 7, device_code: 'IN-3', mobile_started_at: stamp,
+  registration: savedRegistration(7) })
 let serial = 0
 const event = (stream, at = stamp) => ({ event_id: `event-${++serial}`, stream, stream_sequence: serial, connection_epoch: 1, mobile_received_at: at, payload: {} })
 export function fixture({ restored, failSave = false, failRadar = false } = {}) {
@@ -12,7 +14,7 @@ export function fixture({ restored, failSave = false, failRadar = false } = {}) 
   const api = {
     create: async body => { sent.push(['create', body.capture_id]); return { capture_id: body.capture_id } },
     batch: async (id, body) => { sent.push(['batch', id, body]); if (failRadar && body.events[0].stream === 'radar') throw { statusCode: 503 }; return { capture_id: id, results: body.events.map(e => ({ event_id: e.event_id, stream: e.stream, status: 'accepted', server_received_at: stamp })) } },
-    stop: async (id, body) => { sent.push(['stop', id, body]); return { capture_id: id } },
+    stop: async (id, body) => { sent.push(['stop', id, body]); return collectionStopReceipt(id, body) },
   }
   const options = { load: () => disk, save: value => { if (fail) throw Error('disk'); disk = value }, identity: () => actor, api, wait: async () => {} }
   const queue = createCollectionCoordinator(options)
@@ -45,19 +47,21 @@ it('test_radar_capacity_pauses_only_radar', () => {
   expect(f.queue.snapshot()).toMatchObject({ originalPending: 1, radarPending: 5000 })
 })
 it('test_restore_stop_covers_latest_durable_radar', async () => {
-  const f = fixture(); f.queue.add({ ...context('one'), registration: savedRegistration(7) })
+  const f = fixture(); f.queue.add(context('one'))
   f.queue.enqueue('one', event('radar', '2026-10-23T00:00:05.000Z'))
   const recovered = fixture({ restored: f.disk() })
   expect(JSON.parse(recovered.disk()).sessions[0].registration).toEqual(savedRegistration(7))
   await recovered.queue.drain()
-  expect(recovered.sent.at(-1)).toEqual(['stop', 'one', { mobile_stopped_at: '2026-10-23T00:00:05.000Z' }])
+  expect(recovered.sent.at(-1)).toEqual(['stop', 'one', { mobile_stopped_at: '2026-10-23T00:00:05.000Z', schema_version: 2,
+    final_counts: { insole: 0, gps: 0, radar: 1 } }])
 })
 it('test_legacy_queue_migration_preserves_ids', async () => {
   const original = event('gps')
   const old = JSON.stringify({ version: 1, sessions: [{ ...context('legacy'), created: true, mobile_stopped_at: stamp, last_received_at: stamp, events: [original] }] })
   const f = fixture({ restored: old })
   const migrated = JSON.parse(f.disk())
-  expect(migrated.version).toBe(2); expect(migrated.sessions[0]).toMatchObject({ created: true, mobile_stopped_at: stamp, outboxes: { primary: [original], radar: [] } })
+  expect(migrated.version).toBe(3); expect(migrated.sessions[0]).toMatchObject({ created: true, mobile_stopped_at: stamp, totals: null,
+    outboxes: { primary: [original], radar: [] } })
   await f.queue.drain()
   expect(f.sent.map(r => r[0])).toEqual(['batch', 'stop']); expect(f.sent[0][2].events[0]).toEqual(original)
 })

@@ -16,7 +16,12 @@
         <button v-else class="capture-stop" @tap="ble.stopCollection()">停止记录</button>
         <button v-if="capture.queue.sessions" class="capture-retry" :disabled="capture.queue.sending" @tap="ble.retryCollectionUpload()">重试上传</button>
       </view>
-      <view class="capture-note">{{ queueText }} · 鞋垫/GPS 待上传 {{ capture.queue.originalPending || 0 }} / 5000 条</view>
+      <view class="capture-note">{{ queueText }}</view>
+      <view v-if="upload" class="capture-upload">
+        <view :class="upload.upload_state === 'mismatch' ? 'capture-warning' : 'capture-note'">{{ uploadText[upload.upload_state] }}</view>
+        <view class="capture-note">手机累计 · {{ countText(upload.expected_counts) }}</view>
+        <view class="capture-note">服务端实收 · {{ countText(upload.received_counts) }}</view>
+      </view>
       <view v-if="reasonText" class="capture-warning">{{ reasonText }}</view>
       <view v-if="capture.rejected" class="capture-note">已忽略 {{ capture.rejected }} 条格式异常消息</view>
       <view class="capture-note">本次打开 App 累计解析：鞋垫 {{ capture.insoleReceived }} 条 · GPS {{ capture.gpsReceived }} 条（不是上传计数）</view>
@@ -104,9 +109,14 @@ function openStartConfirmation() {
   uni.showModal({ title: '确认开始采集', content: '使用已保存的登记开始记录？', success: finish, complete: () => finish() })
 }
 watch(() => [ps.currentId, operator.operator?.clinicianId, operator.authRuntime.authEpoch, operator.unlocked], () => {
+  ble.refreshCollectionStatus()
   ps.prepareRegistration()
 }, { immediate: true })
 const capture = computed(() => ble.collectionState)
+const upload = computed(() => ble.collectionUpload)
+const uploadText = { pending: '本次上传尚待服务端核对', verified: '本次上传已核对一致',
+  mismatch: '本次上传数量不符', unknown: '旧记录缺少手机累计数，无法核对上传数量' }
+const countText = counts => `鞋垫 ${counts?.insole ?? '—'} 帧 · GPS ${counts?.gps ?? '—'} 条 · 雷达 ${counts?.radar ?? '—'} 条`
 const selectedCode = ref('')
 const connectedDevices = computed(() => Object.keys(ble.bles_objs)
   .filter(code => ble.bles_objs[code].isConnected)
@@ -209,6 +219,7 @@ const imu = computed(() => {
 .capture-stop { background: $ca-danger; color: #fff; }
 .capture-retry { background: $ca-primary-light; color: $ca-primary; }
 .capture-note, .source-note { color: $ca-t2; font-size: 22rpx; line-height: 1.7; overflow-wrap: anywhere; }
+.capture-upload { margin-top: 12rpx; }
 .source-note { margin-bottom: 16rpx; }
 .capture-warning { color: $ca-danger; font-size: 24rpx; line-height: 1.7; margin: 12rpx 0; }
 

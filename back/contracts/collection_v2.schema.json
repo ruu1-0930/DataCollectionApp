@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Registered capture requests and verification",
+  "$defs": {
+    "CaptureID": {"type": "string", "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$"},
+    "Time": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
+    "SafeCount": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "CollectionCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["insole", "gps", "radar"],
+      "properties": {
+        "insole": {"$ref": "#/$defs/SafeCount"},
+        "gps": {"$ref": "#/$defs/SafeCount"},
+        "radar": {"$ref": "#/$defs/SafeCount"}
+      }
+    },
+    "CollectionCreateV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "capture_id", "patient_id", "device_code", "mobile_started_at", "registration"],
+      "properties": {
+        "schema_version": {"type": "integer", "const": 2},
+        "capture_id": {"$ref": "#/$defs/CaptureID"},
+        "patient_id": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "device_code": {"type": "string", "minLength": 1},
+        "mobile_started_at": {"$ref": "#/$defs/Time"},
+        "registration": {"$ref": "collection_registration_v1.schema.json"}
+      }
+    },
+    "CollectionStopV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "mobile_stopped_at", "final_counts"],
+      "properties": {
+        "schema_version": {"type": "integer", "const": 2},
+        "mobile_stopped_at": {"$ref": "#/$defs/Time"},
+        "final_counts": {"$ref": "#/$defs/CollectionCounts"}
+      }
+    },
+    "CollectionVerificationV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_id", "record_version", "observed_at", "expected_counts", "received_counts", "upload_state", "quality_observations"],
+      "properties": {
+        "record_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "record_version": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Opaque SHA-256 version of persisted evidence and upload state. The observation time is independent of the version."},
+        "observed_at": {"$ref": "#/$defs/Time"},
+        "expected_counts": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/CollectionCounts"}]},
+        "received_counts": {"$ref": "#/$defs/CollectionCounts"},
+        "upload_state": {"enum": ["pending", "verified", "mismatch", "unknown"]},
+        "quality_observations": {"type": "array", "uniqueItems": true, "items": {"enum": ["no_insole_frames", "gps_contains_no_fix", "radar_contains_stale"]}}
+      }
+    },
+    "CollectionStopReceiptV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capture_id", "verification"],
+      "properties": {
+        "capture_id": {"$ref": "#/$defs/CaptureID"},
+        "verification": {"$ref": "#/$defs/CollectionVerificationV1"}
+      }
+    }
+  }
+}

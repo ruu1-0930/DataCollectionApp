@@ -55,14 +55,14 @@ it.each([1, 2])('restores open v%s records without losing queued events when Arr
   const f = withAppArrayMethods(() => queueFixture(JSON.stringify({ version, sessions: [session] })))
   expect(f.queue.snapshot()).toMatchObject({ sessions: 1, pending: 1, error: '', paused: false })
   const saved = JSON.parse(f.disk())
-  expect(saved.version).toBe(2)
+  expect(saved.version).toBe(3)
   expect(saved.sessions[0].mobile_stopped_at).toBe(received)
   expect(saved.sessions[0].outboxes.primary).toEqual([event])
 })
 
 it('stops at the latest durable event without Array.at or Array.flatMap', () => {
   const f = queueFixture()
-  f.queue.add(context)
+  f.queue.add({ ...context, registration: savedRegistration(7) })
   f.queue.enqueue(context.capture_id, event)
   withAppArrayMethods(() => f.queue.stop(context.capture_id, started))
   const saved = JSON.parse(f.disk()).sessions[0]

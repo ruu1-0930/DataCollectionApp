@@ -17,11 +17,13 @@ export async function uploadRawDataApi(deviceCode, data) {
 }
 
 export async function createCollectionApi(data, collectionIdentity) {
-  return instance.request({ url: '/collection-sessions', method: 'post', data, custom: { collectionIdentity } })
+  const prefix = data.schema_version === 2 ? '/v2' : ''
+  return instance.request({ url: `${prefix}/collection-sessions`, method: 'post', data, custom: { collectionIdentity } })
 }
 export async function uploadCollectionBatchApi(captureId, data, collectionIdentity) {
   return instance.request({ url: `/collection-sessions/${captureId}/batches`, method: 'post', data, custom: { collectionIdentity } })
 }
 export async function stopCollectionApi(captureId, data, collectionIdentity) {
-  return instance.request({ url: `/collection-sessions/${captureId}/stop`, method: 'post', data, custom: { collectionIdentity } })
+  const prefix = data.schema_version === 2 ? '/v2' : ''
+  return instance.request({ url: `${prefix}/collection-sessions/${captureId}/stop`, method: 'post', data, custom: { collectionIdentity } })
 }

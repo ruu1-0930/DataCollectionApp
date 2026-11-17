@@ -77,11 +77,22 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       gpsRealtime: null,
       collectionState: { active: null, reason: '', radarReason: '', rejected: 0, waiting: false, lifecycle: 0,
         insoleReceived: 0, gpsReceived: 0, gpsRejected: 0, gpsLastError: '',
-        queue: { pending: 0, originalPending: 0, radarPending: 0, sessions: 0, sending: false, paused: false, error: '' } }
+        queue: { pending: 0, originalPending: 0, radarPending: 0, sessions: 0, sending: false, paused: false, error: '', uploads: [] } }
     }
   },
-  getters: {},
+  getters: {
+    collectionUpload(state) {
+      const operator = useOperatorStoreWithOut()
+      const clinicianId = operator.operator?.clinicianId
+      const patientId = usePatientStoreWithOut().currentId
+      if (!operator.unlocked || !clinicianId || !patientId) return null
+      return state.collectionState.queue.uploads.find(upload => upload.clinicianId === clinicianId && upload.patient_id === patientId) || null
+    },
+  },
   actions: {
+    refreshCollectionStatus() {
+      this.collectionState.queue = this.ensureCollection().queue.snapshot()
+    },
     ensureCollection() {
       if (collectionRuntimes.has(this)) return collectionRuntimes.get(this)
       const identity = () => {

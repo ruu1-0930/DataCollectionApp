@@ -1,4 +1,5 @@
 import { savedRegistration } from './helpers/savedRegistration'
+import { collectionStopReceipt } from './helpers/collectionStopReceipt'
 import { beforeEach, afterEach, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { createRadarLink } from '../utils/radarLink'
@@ -24,7 +25,7 @@ beforeEach(() => {
     createCollectionSession: opts => createCollectionSession({ ...opts, uuid: () => `00000000-0000-4000-8000-${String(++serial).padStart(12, '0')}` }),
     createCollectionApi: async body => { sent.push(['create', body]); return { capture_id: body.capture_id } },
     uploadCollectionBatchApi: async (id, body) => { sent.push(['batch', id, body]); return { capture_id: id, results: body.events.map(e => ({ event_id: e.event_id, stream: e.stream, status: 'accepted', server_received_at: '2026-10-23T00:00:01.000Z' })) } },
-    stopCollectionApi: async (id, body) => { sent.push(['stop', id, body]); return { capture_id: id } },
+    stopCollectionApi: async (id, body) => { sent.push(['stop', id, body]); return collectionStopReceipt(id, body) },
     createRadarNative: () => adapter, createRadarDiscovery, createRadarLink,
   }
   ble = load('../store/modules/blueTooth.js', 'useBlueToothStore', deps)

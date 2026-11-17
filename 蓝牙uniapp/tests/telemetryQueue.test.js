@@ -1,4 +1,5 @@
 import { savedRegistration } from './helpers/savedRegistration'
+import { collectionStopReceipt } from './helpers/collectionStopReceipt'
 import { describe, expect, it, vi } from 'vitest'
 import { createTelemetryOutbox } from '../utils/telemetryQueue'
 import { createCollectionCoordinator } from '../utils/collectionCoordinator'
@@ -14,7 +15,7 @@ function fixture({ fail, saveFailure = false, restored } = {}) {
   const api = {
     create: async (body, identity) => { requests.push(['create', body, identity]); if (fail) fail('create'); return { capture_id: body.capture_id } },
     batch: async (captureId, body, identity) => { requests.push(['batch', captureId, body, identity]); if (fail) fail('batch'); return { capture_id: captureId, results: body.events.map(e => ({ event_id: e.event_id, stream: e.stream, status: 'accepted', server_received_at: start })) } },
-    stop: async (captureId, body, identity) => { requests.push(['stop', captureId, body, identity]); if (fail) fail('stop'); return { capture_id: captureId } },
+    stop: async (captureId, body, identity) => { requests.push(['stop', captureId, body, identity]); if (fail) fail('stop'); return collectionStopReceipt(captureId, body) },
   }
   const queue = createCollectionCoordinator({ load: () => disk, save: value => { if (savingFails) throw Error('disk'); disk = value },
     identity: () => actor, api, wait: async () => {} })
@@ -84,7 +85,8 @@ describe('fixed collection window and durable FIFO', () => {
     expect(restored.session.active).toBe(null)
     await restored.queue.drain()
     expect(restored.requests[1][2].events[0].event_id).toBe(oldId)
-    expect(restored.requests[2][2]).toEqual({ mobile_stopped_at: '2026-10-19T00:00:00.020Z' })
+    expect(restored.requests[2][2]).toEqual({ mobile_stopped_at: '2026-10-19T00:00:00.020Z', schema_version: 2,
+      final_counts: { insole: 0, gps: 1, radar: 0 } })
   })
   it('halts capture at last sample on clock rollback and prevents new events', () => {
     const f = fixture()
@@ -125,6 +127,7 @@ describe('fixed collection window and durable FIFO', () => {
     document.sessions[0].mobile_stopped_at = start
     const sample = document.sessions[0].outboxes.primary[0]
     document.sessions[0].outboxes.primary = Array.from({ length: 4999 }, (_, stream_sequence) => ({ ...sample, event_id: uuid(), stream_sequence }))
+    document.sessions[0].totals.gps = 4999
     const f = fixture({ restored: JSON.stringify(document) })
     f.session.start({ patientId: 7, registration: savedRegistration(7), deviceCode: 'IN-3', connected: true })
     f.session.receive('IN-3', 1, gps, Date.parse(start))

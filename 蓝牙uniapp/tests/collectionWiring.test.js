@@ -1,4 +1,5 @@
 import { savedRegistration } from './helpers/savedRegistration'
+import { collectionStopReceipt } from './helpers/collectionStopReceipt'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { createBleLines, parseTelemetry } from '../utils/bleTelemetry'
@@ -51,13 +52,16 @@ describe('actual BLE collection wiring', () => {
     const defineStore = (_, options) => () => {
       const value = options.state()
       for (const [k, action] of Object.entries(options.actions)) value[k] = action.bind(value)
+      for (const [k, getter] of Object.entries(options.getters)) Object.defineProperty(value, k, { get: () => getter(value) })
       return value
     }
     const apiSource = readFileSync(new URL('../api/device.js', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace(/export /g, '')
     const instance = { request: async config => {
       requests.push(config)
-      const captureId = config.url === '/collection-sessions' ? config.data.capture_id : config.url.split('/')[2]
+      const pieces = config.url.split('/')
+      const captureId = config.url.endsWith('/collection-sessions') ? config.data.capture_id : pieces[pieces.length - 2]
       if (config.url.endsWith('/batches')) return { capture_id: captureId, results: config.data.events.map(e => ({ event_id: e.event_id, stream: e.stream, status: 'accepted', server_received_at: '2026-10-19T00:00:03.000Z' })) }
+      if (config.url.endsWith('/stop')) return collectionStopReceipt(captureId, config.data)
       return { capture_id: captureId }
     } }
     const api = new Function('instance', apiSource + '\nreturn { createCollectionApi, uploadCollectionBatchApi, stopCollectionApi };')(instance)
@@ -90,13 +94,13 @@ describe('actual BLE collection wiring', () => {
     return { getPatientProfileApi, savePatientProfileApi }
   }
 
-  function loadHome() {
+  function loadHome(watch = () => {}) {
     const source = readFileSync(new URL('../pages/home/home.vue', import.meta.url), 'utf8')
       .match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
     uni.showModal = vi.fn()
     return new Function('useBlueToothStore', 'usePatientStoreWithOut', 'useOperatorStoreWithOut', 'ref', 'computed', 'reactive', 'watch',
       source + '\nreturn openStartConfirmation;')(
-      () => store, () => patient, () => operator, value => ({ value }), get => ({ get value() { return get() } }), value => value, () => {})
+      () => store, () => patient, () => operator, value => ({ value }), get => ({ get value() { return get() } }), value => value, watch)
   }
 
   it('keeps selected profile measurements across the legacy list and updates the displayed patient after PUT', async () => {
@@ -208,13 +212,40 @@ describe('actual BLE collection wiring', () => {
     native.notification({ data: bytes('GPS1,1,0,,,,2.7,0,,0,,0,0\n' + line + '\n') })
     store.stopCollection()
     await store.retryCollectionUpload()
-    expect(requests.map(r => r.url.split('/').at(-1))).toEqual(['collection-sessions', 'batches', 'batches', 'stop'])
+    const id = requests[0].data.capture_id
+    expect(requests.map(r => r.url)).toEqual(['/v2/collection-sessions', `/collection-sessions/${id}/batches`,
+      `/collection-sessions/${id}/batches`, `/v2/collection-sessions/${id}/stop`])
     expect(requests[0].data.patient_id).toBe(7)
     expect(requests[0].custom.collectionIdentity).toMatchObject({ clinicianId: 11, authEpoch: 1 })
     expect(requests[1].data.events[0]).toMatchObject({ stream: 'gps', stream_sequence: 0, connection_epoch: 1 })
     expect(requests[2].data.events[0].payload).toMatchObject({ left_speed: 17, right_speed: 36 })
+    const counts = { insole: 1, gps: 1, radar: 0 }
+    expect(store.collectionUpload).toMatchObject({ capture_id: id, upload_state: 'verified', received_counts: counts })
+    patient.currentId = 8
+    expect(store.collectionUpload).toBeNull()
+    patient.currentId = 7
+    operator.operator.clinicianId = 12
+    expect(store.collectionUpload).toBeNull()
+    operator.operator.clinicianId = 11
+    operator.unlocked = false
+    expect(store.collectionUpload).toBeNull()
     expect(store.gpsRealtime.speed).toBe(2.7)
     expect(store.realtime.left.speed).toBe(17)
+  })
+  it('shows a durable completion after cold start unlock without making another upload request', () => {
+    const counts = { insole: 1, gps: 0, radar: 0 }
+    const stamp = '2026-10-19T00:00:00.000Z'
+    const { verification } = collectionStopReceipt('finished', { schema_version: 2, mobile_stopped_at: stamp, final_counts: counts })
+    storage.set('collection_queue_v1', JSON.stringify({ version: 3, sessions: [], completed: [{ capture_id: 'finished',
+      clinicianId: 11, patient_id: 7, mobile_started_at: stamp, verification }] }))
+    operator.unlocked = false
+    store.ensureCollection()
+    expect(store.collectionUpload).toBeNull()
+    operator.unlocked = true
+    patient.prepareRegistration = vi.fn()
+    loadHome((_, callback, options) => { if (options.immediate) callback() })
+    expect(store.collectionUpload).toMatchObject({ capture_id: 'finished', upload_state: 'verified', received_counts: counts })
+    expect(requests).toEqual([])
   })
   it('uploads the exact GPS sample with time-only UTC unchanged alongside insole data', async () => {
     const raw = 'GPS1,42,1,31.2304000,121.4737000,12.5,1.20,8,0.95,180,083015.00,14632,0'

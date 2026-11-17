@@ -41,6 +41,25 @@ describe('actual request interceptor collection owner fence', () => {
     expect(sends[0].data).toEqual(request.data)
     expect(sends[0].custom.collectionIdentity).toEqual({ clinicianId: 11, authEpoch: 1 })
   })
+  it('sends registered create and final-count stop to V2 without changing batch and legacy paths', async () => {
+    const source = readFileSync(new URL('../api/device.js', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace(/export /g, '')
+    const api = new Function('instance', source + '\nreturn { createCollectionApi, uploadCollectionBatchApi, stopCollectionApi };')({
+      request: value => instance.request({ ...value, header: {} }),
+    })
+    const owner = config().custom.collectionIdentity
+    const registration = { schema_version: 1, patient_id: 7, test_type: 'tug' }
+    const counts = { insole: 2, gps: 0, radar: 5 }
+    await api.createCollectionApi({ capture_id: 'capture' }, owner)
+    await api.createCollectionApi({ capture_id: 'capture', schema_version: 2, registration }, owner)
+    await api.uploadCollectionBatchApi('capture', { events: [] }, owner)
+    await api.stopCollectionApi('capture', { mobile_stopped_at: '2026-10-23T00:00:00.000Z' }, owner)
+    await api.stopCollectionApi('capture', { schema_version: 2, final_counts: counts }, owner)
+    expect(sends.map(r => r.url)).toEqual(['/collection-sessions', '/v2/collection-sessions', '/collection-sessions/capture/batches',
+      '/collection-sessions/capture/stop', '/v2/collection-sessions/capture/stop'])
+    expect(sends[1].data.registration).toEqual(registration)
+    expect(sends[4].data.final_counts).toEqual(counts)
+    expect(sends.every(r => r.custom.collectionIdentity === owner)).toBe(true)
+  })
   it('uses the actual V2 patient create, profile read and profile replacement URLs', async () => {
     const source = readFileSync(new URL('../api/patient.js', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace(/export /g, '')
     const api = new Function('instance', source + '\nreturn { createPatientApi, getPatientProfileApi, savePatientProfileApi };')({

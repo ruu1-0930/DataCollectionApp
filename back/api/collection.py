@@ -51,7 +51,13 @@ def _respond(operation):
 @collection_bp.post('/collection-sessions')
 @token_required('clinician.write')
 def create_collection():
-    return _respond(lambda:create_capture(g.clinician_id,_body()))
+    return _respond(lambda:create_capture(g.clinician_id,_body(),version=1))
+
+
+@collection_bp.post('/v2/collection-sessions')
+@token_required('clinician.write')
+def create_collection_v2():
+    return _respond(lambda:create_capture(g.clinician_id,_body(),version=2))
 
 
 @collection_bp.post('/collection-sessions/<string:capture_id>/batches')
@@ -63,7 +69,13 @@ def batch_collection(capture_id):
 @collection_bp.post('/collection-sessions/<string:capture_id>/stop')
 @token_required('clinician.write')
 def stop_collection(capture_id):
-    return _respond(lambda:stop_capture(g.clinician_id,capture_id,_body()))
+    return _respond(lambda:stop_capture(g.clinician_id,capture_id,_body(),version=1))
+
+
+@collection_bp.post('/v2/collection-sessions/<string:capture_id>/stop')
+@token_required('clinician.write')
+def stop_collection_v2(capture_id):
+    return _respond(lambda:stop_capture(g.clinician_id,capture_id,_body(),version=2))
 
 
 @collection_bp.get('/patients/<int:patient_id>/gait/sessions/<string:session_id>/gps')

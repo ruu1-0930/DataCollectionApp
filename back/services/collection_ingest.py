@@ -3,11 +3,15 @@
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from functools import lru_cache
 import math
 import json
+from pathlib import Path
 import re
+import unicodedata
 from uuid import UUID
 
+from jsonschema import Draft202012Validator, ValidationError
 from sqlalchemy import or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -19,6 +23,7 @@ from services.canonical_json import canonical_json_bytes, sha256_hex
 
 
 SAFE_INTEGER = 9007199254740991
+STREAM_MODELS = {'insole': CollectionInsoleFrame, 'gps': CollectionGpsRaw, 'radar': CollectionRadarRaw}
 TIME_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$')
 NUMBER_PATTERN = re.compile(r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?')
 LEFT_FIELDS = {**{f'p{i}':f'lp{i}' for i in range(1,10)},
@@ -178,13 +183,58 @@ def _capture_dto(capture):
     return {'capture_id':capture.capture_id}
 
 
-def create_capture(actor_id, payload):
-    exact(payload, {'capture_id','patient_id','device_code','mobile_started_at'})
+def _request_version(payload, version):
+    declared = payload.get('schema_version', 1) if isinstance(payload, dict) else None
+    if type(declared) is not int or declared not in (1, 2) or (version is not None and declared != version):
+        raise CollectionError()
+    return declared
+
+
+@lru_cache(maxsize=1)
+def _registration_validator():
+    path = Path(__file__).resolve().parents[1] / 'contracts' / 'collection_registration_v1.schema.json'
+    return Draft202012Validator(json.loads(path.read_text(encoding='utf-8')))
+
+
+def _registration_fields(value, patient_id):
+    try:
+        _registration_validator().validate(value)
+        snapshot = dict(value['patient_snapshot'])
+        if (type(value['schema_version']) is not int or integer(value['patient_id']) != patient_id
+                or type(snapshot['age']) is not int or not snapshot['name'].strip()):
+            raise CollectionError()
+        snapshot['name'] = unicodedata.normalize('NFC', snapshot['name'])
+        # JSON numbers stay numbers in the snapshot, with one encoding for integral values.
+        for field in ('height_cm', 'weight_kg', 'shoe_size_eu'):
+            number = snapshot[field]
+            if isinstance(number, float) and number.is_integer():
+                snapshot[field] = int(number)
+        normalized = dict(value, patient_snapshot=snapshot, remarks=unicodedata.normalize('NFC', value['remarks']))
+        _registration_validator().validate(normalized)
+        encoded = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+        digest = sha256_hex(encoded.encode('utf-8'))
+    except (ValidationError, ValueError, OverflowError):
+        raise CollectionError() from None
+    return {'metadata_schema_version': 1, 'test_type': value['test_type'],
+            'registration_json': encoded, 'registration_hash': digest}
+
+
+def create_capture(actor_id, payload, *, version=None):
+    fields = {'capture_id', 'patient_id', 'device_code', 'mobile_started_at'}
+    version = _request_version(payload, version)
+    exact(payload, fields | {'schema_version', 'registration'} if version == 2 else fields)
     capture_id = identifier(payload['capture_id'])
     patient_id = integer(payload['patient_id'])
     if patient_id < 1 or not isinstance(payload['device_code'], str) or not payload['device_code']:
         raise CollectionError()
     started = mobile_time(payload['mobile_started_at'])
+    registration = _registration_fields(payload['registration'], patient_id) if version == 2 else {}
+    def same_request(capture, device):
+        return (capture.clinician_id, capture.patient_id, capture.device_id, capture.mobile_started_at,
+                capture.metadata_schema_version, capture.registration_hash) == (
+                    actor_id, patient_id, device.id, started, registration.get('metadata_schema_version'),
+                    registration.get('registration_hash'))
+
     try:
         with write_transaction() as session:
             require_capability(load_account_context(actor_id, session=session), 'clinician.write')
@@ -194,11 +244,11 @@ def create_capture(actor_id, payload):
                 raise CollectionError(403)
             existing = session.get(CollectionSession, capture_id)
             if existing:
-                if (existing.clinician_id, existing.patient_id, existing.device_id, existing.mobile_started_at) != (actor_id,patient_id,device.id,started):
+                if not same_request(existing, device):
                     raise CollectionError(409)
                 return _capture_dto(existing)
             capture = CollectionSession(capture_id=capture_id, clinician_id=actor_id, patient_id=patient_id,
-                device_id=device.id, mobile_started_at=started, server_created_at=server_now())
+                device_id=device.id, mobile_started_at=started, server_created_at=server_now(), **registration)
             session.add(capture)
             session.flush()
             return _capture_dto(capture)
@@ -207,7 +257,7 @@ def create_capture(actor_id, payload):
         with write_transaction() as session:
             capture = _owned_capture(session, capture_id, actor_id)
             device = session.get(Device, capture.device_id)
-            if capture.patient_id != patient_id or device.device_code != payload['device_code'] or capture.mobile_started_at != started:
+            if device.device_code != payload['device_code'] or not same_request(capture, device):
                 raise CollectionError(409)
             return _capture_dto(capture)
 
@@ -220,7 +270,7 @@ def ingest_batch(actor_id, capture_id, payload):
     events = [normalized_event(value) for value in events]
     if len({value['stream'] for value in events}) != 1:
         raise CollectionError()
-    model = {'insole':CollectionInsoleFrame,'gps':CollectionGpsRaw,'radar':CollectionRadarRaw}[events[0]['stream']]
+    model = STREAM_MODELS[events[0]['stream']]
     try:
         with write_transaction() as session:
             capture = _owned_capture(session, capture_id, actor_id)
@@ -237,6 +287,8 @@ def ingest_batch(actor_id, capture_id, payload):
                         raise CollectionError(409)
                     row, status = candidates[0], 'duplicate'
                 else:
+                    if capture.final_counts_json is not None:
+                        raise CollectionError(409)
                     now = server_now()
                     common = {key:value[key] for key in ('event_id','stream','stream_sequence','connection_epoch')}
                     common.update(capture_id=capture_id, mobile_received_at=received, server_received_at=now, payload_hash=value['digest'])
@@ -269,19 +321,38 @@ def ingest_batch(actor_id, capture_id, payload):
         raise CollectionError(409) from None
 
 
-def stop_capture(actor_id, capture_id, payload):
-    exact(payload, {'mobile_stopped_at'})
+def stop_capture(actor_id, capture_id, payload, *, version=None):
+    from services.collection_verification import verification_for_capture
+
+    version = _request_version(payload, version)
+    fields = {'mobile_stopped_at'}
+    exact(payload, fields | {'schema_version', 'final_counts'} if version == 2 else fields)
     stopped = mobile_time(payload['mobile_stopped_at'])
+    declared_counts = None
+    if version == 2:
+        counts = payload['final_counts']
+        exact(counts, STREAM_MODELS)
+        declared_counts = canonical_json_bytes({stream: integer(counts[stream]) for stream in STREAM_MODELS}).decode('utf-8')
     with write_transaction() as session:
         capture = _owned_capture(session, capture_id, actor_id)
+        if (capture.metadata_schema_version == 1) != (version == 2):
+            raise CollectionError(409)
         if stopped < capture.mobile_started_at:
             raise CollectionError(409)
         if capture.mobile_stopped_at is not None and capture.mobile_stopped_at != stopped:
             raise CollectionError(409)
-        for model in (CollectionInsoleFrame, CollectionGpsRaw, CollectionRadarRaw):
+        if capture.final_counts_json is not None and capture.final_counts_json != declared_counts:
+            raise CollectionError(409)
+        for model in STREAM_MODELS.values():
             if session.query(model.id).filter(model.capture_id == capture_id, model.mobile_received_at > stopped).first():
                 raise CollectionError(409)
         if capture.mobile_stopped_at is None:
             capture.mobile_stopped_at = stopped
             capture.server_stopped_at = server_now()
-        return _capture_dto(capture)
+        if version == 1:
+            return _capture_dto(capture)
+        capture.final_counts_json = declared_counts
+        verification = verification_for_capture(session, capture, observed_at=capture.server_stopped_at)
+        if capture.finalization_state is None:
+            capture.finalization_state = verification['upload_state']
+        return dict(_capture_dto(capture), verification=verification)
