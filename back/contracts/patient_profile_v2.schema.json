@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Patient profiles v2",
+  "$ref": "#/$defs/PatientProfileInputV2",
+  "$defs": {
+    "PatientProfileInputV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "gender", "age", "height_cm", "weight_kg", "shoe_size_eu"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 50},
+        "phone": {"anyOf": [
+          {"type": "null"},
+          {"type": "string", "pattern": "^\\s*$"},
+          {"type": "string", "minLength": 11, "maxLength": 11, "pattern": "^1\\d{10}$"}
+        ]},
+        "gender": {"enum": ["男", "女"]},
+        "age": {"type": "integer", "minimum": 0, "maximum": 150},
+        "height_cm": {"type": "number", "exclusiveMinimum": 0, "maximum": 300},
+        "weight_kg": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
+        "shoe_size_eu": {"type": "number", "exclusiveMinimum": 0, "maximum": 100, "multipleOf": 0.5}
+      }
+    },
+    "PatientProfileV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "subject_id", "name", "phone", "gender", "age", "height_cm", "weight_kg", "shoe_size_eu", "last_collected_at", "existed"],
+      "properties": {
+        "id": {"type": "integer", "minimum": 1},
+        "subject_id": {"type": "string"},
+        "name": {"type": ["string", "null"]},
+        "phone": {"type": ["string", "null"]},
+        "gender": {"type": ["string", "null"]},
+        "age": {"type": ["integer", "null"]},
+        "height_cm": {"type": ["number", "null"]},
+        "weight_kg": {"type": ["number", "null"]},
+        "shoe_size_eu": {"type": ["number", "null"]},
+        "last_collected_at": {"type": ["string", "null"]},
+        "existed": {"type": "boolean"}
+      }
+    }
+  }
+}

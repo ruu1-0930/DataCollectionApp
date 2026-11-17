@@ -3,8 +3,36 @@ from config import db
 from models.models import Patient, PatientPII, DeviceRawData, DeviceTransformedData
 from utils import Response, token_required
 from access import AccessError, require_patient_scope
+from services.patient_profile import PatientProfileError, PatientProfileService
 
 patient_bp = Blueprint('patient', __name__)
+
+
+def _profile_v2_response(operation, *args):
+    try:
+        result = operation(g.account_context, *args)
+    except (AccessError, PatientProfileError) as exc:
+        messages = {400: '患者资料格式无效', 403: '无权访问该患者', 404: '患者不存在', 401: '医护不存在'}
+        return jsonify(Response.error(exc.status_code, messages[exc.status_code])), exc.status_code
+    return jsonify(Response.success(data=result))
+
+
+@patient_bp.route('/v2/patients', methods=['POST'])
+@token_required('clinician.write')
+def create_patient_v2():
+    return _profile_v2_response(PatientProfileService().create, request.get_json(silent=True))
+
+
+@patient_bp.route('/v2/patients/<int:patient_id>/profile', methods=['PUT'])
+@token_required('data.manage')
+def update_patient_profile_v2(patient_id):
+    return _profile_v2_response(PatientProfileService().update, patient_id, request.get_json(silent=True))
+
+
+@patient_bp.route('/v2/patients/<int:patient_id>/profile', methods=['GET'])
+@token_required('clinical.read')
+def get_patient_profile_v2(patient_id):
+    return _profile_v2_response(PatientProfileService().get, patient_id)
 
 
 def format_subject_id(n: int) -> str:

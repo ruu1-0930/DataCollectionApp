@@ -52,6 +52,9 @@ CREATE TABLE patients (
   subject_id VARCHAR(20) NOT NULL UNIQUE,
   gender VARCHAR(10),
   age INT,
+  height_cm DOUBLE NULL,
+  weight_kg DOUBLE NULL,
+  shoe_size_eu DOUBLE NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_collected_at DATETIME,
   KEY idx_patients_clinician (clinician_id),
@@ -61,7 +64,7 @@ CREATE TABLE patients (
 CREATE TABLE patient_pii (
   patient_id INT PRIMARY KEY,
   name VARCHAR(50) NOT NULL,
-  phone VARCHAR(20) NOT NULL,
+  phone VARCHAR(20) NULL,
   email VARCHAR(100),
   address VARCHAR(255),
   CONSTRAINT fk_pii_patient FOREIGN KEY (patient_id) REFERENCES patients(id)
@@ -393,7 +396,14 @@ CREATE TABLE collection_sessions (
   mobile_stopped_at DATETIME(3) NULL,
   server_created_at DATETIME(3) NOT NULL,
   server_stopped_at DATETIME(3) NULL,
+  metadata_schema_version INT NULL,
+  test_type VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  registration_json LONGTEXT COLLATE utf8mb4_bin NULL,
+  registration_hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  final_counts_json LONGTEXT COLLATE utf8mb4_bin NULL,
+  finalization_state VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
   KEY idx_collection_patient (patient_id),
+  KEY idx_collection_patient_type_started (patient_id, test_type, mobile_started_at),
   FOREIGN KEY (clinician_id) REFERENCES clinicians(id),
   FOREIGN KEY (patient_id) REFERENCES patients(id),
   FOREIGN KEY (device_id) REFERENCES devices(id)

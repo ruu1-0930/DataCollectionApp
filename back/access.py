@@ -33,7 +33,8 @@ def load_account_context(clinician_id: int, *, session=None) -> AccountContext:
 
 def require_capability(account: AccountContext, capability: str) -> None:
     roles = {'admin.read': {'admin'}, 'clinician.write': {'clinician'},
-             'clinical.read': {'clinician', 'admin'}, 'snapshot.execute': {'clinician', 'admin'}}
+             'clinical.read': {'clinician', 'admin'}, 'snapshot.execute': {'clinician', 'admin'},
+             'data.manage': {'clinician', 'admin'}}
     if capability not in roles or account.role not in roles[capability]:
         raise AccessError(403, 'forbidden')
 

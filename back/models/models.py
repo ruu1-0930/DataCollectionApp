@@ -41,6 +41,9 @@ class Patient(db.Model):
     subject_id = db.Column(db.String(20), unique=True, nullable=False)
     gender = db.Column(db.String(10))
     age = db.Column(db.Integer)
+    height_cm = db.Column(db.Float().with_variant(mysql.DOUBLE(asdecimal=False), 'mysql'))
+    weight_kg = db.Column(db.Float().with_variant(mysql.DOUBLE(asdecimal=False), 'mysql'))
+    shoe_size_eu = db.Column(db.Float().with_variant(mysql.DOUBLE(asdecimal=False), 'mysql'))
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     last_collected_at = db.Column(db.DateTime)
 
@@ -51,7 +54,7 @@ class PatientPII(db.Model):
     __tablename__ = 'patient_pii'
     patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), primary_key=True)
     name = db.Column(db.String(50), nullable=False)
-    phone = db.Column(db.String(20), nullable=False)
+    phone = db.Column(db.String(20), nullable=True)
     email = db.Column(db.String(100))
     address = db.Column(db.String(255))
 
@@ -144,7 +147,14 @@ class CollectionSession(db.Model):
     mobile_stopped_at = db.Column(_utc_time)
     server_created_at = db.Column(_utc_time, nullable=False)
     server_stopped_at = db.Column(_utc_time)
+    metadata_schema_version = db.Column(db.Integer)
+    test_type = db.Column(_identity(32))
+    registration_json = db.Column(_canonical)
+    registration_hash = db.Column(_identity(64))
+    final_counts_json = db.Column(_canonical)
+    finalization_state = db.Column(_identity(32))
     __table_args__ = (db.Index('idx_collection_patient', 'patient_id'),
+                      db.Index('idx_collection_patient_type_started', 'patient_id', 'test_type', 'mobile_started_at'),
                       {'mysql_engine': 'InnoDB', 'mysql_charset': 'utf8mb4'})
 
 
