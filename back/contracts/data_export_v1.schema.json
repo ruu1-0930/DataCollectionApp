@@ -350,6 +350,31 @@
                   "metadata_hash": {
                     "type": "string",
                     "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "transformed": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "sha256": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          }
+                        },
+                        "required": [
+                          "count",
+                          "sha256"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -358,7 +383,8 @@
                   "upload_state",
                   "test_type",
                   "received_counts",
-                  "metadata_hash"
+                  "metadata_hash",
+                  "transformed"
                 ],
                 "additionalProperties": false
               }
@@ -477,7 +503,8 @@
             "gps",
             "radar",
             "targets",
-            "snapshots"
+            "snapshots",
+            "transformed"
           ]
         },
         "record_id": {
@@ -758,6 +785,31 @@
                   "metadata_hash": {
                     "type": "string",
                     "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "transformed": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "sha256": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          }
+                        },
+                        "required": [
+                          "count",
+                          "sha256"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -766,7 +818,8 @@
                   "upload_state",
                   "test_type",
                   "received_counts",
-                  "metadata_hash"
+                  "metadata_hash",
+                  "transformed"
                 ],
                 "additionalProperties": false
               }

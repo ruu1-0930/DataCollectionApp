@@ -9,13 +9,13 @@ import re
 import secrets
 
 from jsonschema import Draft202012Validator
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.dialects import mysql
 from access import AccessError, load_account_context, require_patient_scope
 from config import db
 from models.models import (Patient, PatientPII, Clinician, CollectionSession, CollectionGpsRaw,
     CollectionRadarRaw, CollectionRadarTarget, AnalysisSnapshot, GaitSessionRevision,
-    SnapshotPublicationClaim)
+    SnapshotPublicationClaim, DeviceRawData, DeviceTransformedData, CollectionInsoleFrame)
 from services.collection_ingest import write_transaction, identifier
 from services.collection_records import (_source, _LegacySource, _legacy_sources, _record_metadata,
     _capture_cutoff, _capture_frame_rows, _legacy_frame_rows, _legacy_after, _id_after,
@@ -26,7 +26,7 @@ from services.data_management_scope import assert_clinical_scope
 
 PAGE = 4 * 1024 * 1024
 KINDS = {'profiles': {'patients','collections'}, 'raw': {'frames','gps','radar','targets'},
-         'analysis': {'snapshots'}, 'agent': set()}
+         'analysis': {'snapshots','transformed'}, 'agent': set()}
 
 
 class ExportInventory(db.Model):
@@ -104,6 +104,32 @@ def _collection(session, source, patient_id):
     return {**item, 'registration': _row(source), 'expected_counts': check['expected_counts']}
 
 
+def _transformed_rows(session, source, patient_id, owner, after=0):
+    # Select by the exact stored raw links; never recompute these historical results.
+    raw = session.query(DeviceRawData.id).filter(DeviceRawData.patient_id == patient_id)
+    if owner is not None:
+        raw = raw.filter(DeviceRawData.clinician_id == owner)
+    if isinstance(source, _LegacySource):
+        from services.collection_slices import raw_has_capture
+        raw = raw.filter(~raw_has_capture(), DeviceRawData.collected_at.between(source.start, source.end))
+    else:
+        raw = raw.filter(DeviceRawData.clinician_id == source.clinician_id,
+            DeviceRawData.device_id == source.device_id,
+            session.query(CollectionInsoleFrame.id).filter(CollectionInsoleFrame.capture_id == source.capture_id,
+                or_(CollectionInsoleFrame.left_raw_id == DeviceRawData.id,
+                    CollectionInsoleFrame.right_raw_id == DeviceRawData.id)).exists())
+    model = DeviceTransformedData
+    return session.query(model).filter(model.raw_data_id.in_(raw), model.id > after).order_by(model.id)
+
+
+def _transformed_fingerprint(session, source, patient_id, owner):
+    checksum, count = sha256(), 0
+    for row in _transformed_rows(session, source, patient_id, owner).yield_per(100):
+        checksum.update(encoded(_row(row)) + b'\n')
+        count += 1
+    return dict(count=count, sha256=checksum.hexdigest())
+
+
 def _inspect(session, patient, owner_id, req):
     raw_scope = req['record_ids']
     if req['scope'] == 'patient':
@@ -121,6 +147,8 @@ def _inspect(session, patient, owner_id, req):
             raise AccessError(409, 'collection_not_final')
         records[key] = {k:item[k] for k in ('record_version','recorded_through_at','upload_state','test_type','received_counts')}
         records[key]['metadata_hash'] = digest(item)
+        records[key]['transformed'] = (_transformed_fingerprint(session, source, patient.id, owner_id)
+            if 'analysis' in req['contents'] else None)
         if len(records) % 500 == 0 and len(encoded(records)) > PAGE:
             raise AccessError(413, 'inventory_too_large')
     sessions = [('C:' + k if not k.startswith('P') else k) for k in records]
@@ -263,6 +291,9 @@ def _rows(session, kind, patient, owner, inventory, record_id, after):
     if kind == 'collections':
         if not after:
             yield 1, _collection(session, source, patient.id)
+    elif kind == 'transformed':
+        for item in _transformed_rows(session, source, patient.id, owner, _id_after(after)).limit(1001).yield_per(100):
+            yield item.id, _row(item)
     elif kind == 'frames':
         if isinstance(source, _LegacySource):
             for key, left, right in _legacy_frame_rows(session, patient.id, owner, source, _legacy_after(after)):
