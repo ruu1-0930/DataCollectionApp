@@ -470,17 +470,43 @@ describe('actual BLE collection wiring', () => {
     expect(store.bles_objs['IN-3'].isConnected).toBe(false)
     expect(store.collectionState.queue.pending).toBe(1)
   })
-  it('refuses to send a pending capture with a new clinician credential', async () => {
+  it('hides and preserves a pending capture until its original clinician returns', async () => {
     store.connectDevice(3)
     await vi.advanceTimersByTimeAsync(2000)
     store.startCollection('IN-3', savedRegistration(patient.currentId))
+    const captureId = store.collectionState.active.capture_id
     native.notification({ data: bytes(line + '\n') })
     store.endCollectionContext()
+    expect(store.collectionState.queue.pending).toBe(1)
+    const savedQueue = storage.get('collection_queue_v1')
+    const [savedCapture] = JSON.parse(savedQueue).sessions
+    expect(savedCapture).toMatchObject({ capture_id: captureId, clinicianId: 11, patient_id: 7 })
+    expect(savedCapture.outboxes.primary).toHaveLength(1)
+
     operator.operator.clinicianId = 12
     operator.authRuntime.authEpoch = 2
     await store.retryCollectionUpload()
     expect(requests).toEqual([])
+    expect(store.collectionState.queue).toMatchObject({ pending: 0, sessions: 0, uploads: [] })
+    expect(store.collectionUpload).toBeNull()
+    expect(storage.get('collection_queue_v1')).toBe(savedQueue)
+
+    operator.operator.clinicianId = 11
+    operator.authRuntime.authEpoch = 3
+    store.refreshCollectionStatus()
     expect(store.collectionState.queue.pending).toBe(1)
+    expect(store.collectionUpload).toMatchObject({ capture_id: captureId, clinicianId: 11, patient_id: 7, upload_state: 'pending' })
+    await store.retryCollectionUpload()
+    expect(requests.map(request => request.url)).toEqual([
+      '/v2/collection-sessions', `/collection-sessions/${captureId}/batches`, `/v2/collection-sessions/${captureId}/stop`,
+    ])
+    expect(requests[0].data).toMatchObject({ capture_id: captureId, patient_id: 7 })
+    expect(requests[1].data.events).toEqual(savedCapture.outboxes.primary)
+    for (const request of requests) {
+      expect(request.custom.collectionIdentity).toMatchObject({ clinicianId: 11, authEpoch: 3 })
+    }
+    expect(store.collectionState.queue.pending).toBe(0)
+    expect(store.collectionUpload).toMatchObject({ capture_id: captureId, upload_state: 'verified' })
   })
   it('actual patient select action closes the old window before assigning another patient', async () => {
     const { getPatientProfileApi, savePatientProfileApi } = loadPatient()
