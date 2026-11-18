@@ -6,9 +6,9 @@ from typing import Literal, Optional, TypedDict
 from sqlalchemy import case, func
 
 from access import load_account_context, require_capability, require_patient_scope
-from models.models import CollectionGpsRaw, CollectionRadarRaw, CollectionSession, Patient
+from models.models import CollectionGpsRaw, CollectionRadarRaw
 from services.canonical_json import canonical_json_bytes, sha256_hex
-from services.collection_ingest import CollectionError, STREAM_MODELS, identifier, server_now, time_string, write_transaction
+from services.collection_ingest import STREAM_MODELS, identifier, lock_capture_scope, server_now, time_string, write_transaction
 
 
 class CollectionCounts(TypedDict):
@@ -74,12 +74,7 @@ def verify_capture(actor, capture_id) -> CollectionVerificationV1:
     with write_transaction() as session:
         account = load_account_context(actor.clinician_id, session=session)
         require_capability(account, 'clinical.read')
-        capture = session.query(CollectionSession).filter_by(capture_id=capture_id).with_for_update().first()
-        if capture is None:
-            raise CollectionError(404)
-        patient = session.get(Patient, capture.patient_id)
-        if patient is None:
-            raise CollectionError(404)
+        patient, capture = lock_capture_scope(session, capture_id)
         require_patient_scope(account, owner_id=capture.clinician_id, capability='clinical.read')
         require_patient_scope(account, owner_id=patient.clinician_id, capability='clinical.read')
         return verification_for_capture(session, capture)

@@ -56,6 +56,9 @@ _MESSAGE = {
 
 def _error(code, *, details=None, trace_id=None):
     # No domain exception text, identifiers, or source data enter this envelope.
+    capture_required = code == 'capture_source_required'
+    if capture_required:
+        code = 'scope_mismatch'
     if code not in _STATUS:
         code = "publication_failed"
         details, trace_id = None, None
@@ -68,7 +71,8 @@ def _error(code, *, details=None, trace_id=None):
             safe_details["retry_after_ms"] = retry_after_ms
     if not isinstance(trace_id, str) or not _UUID.fullmatch(trace_id):
         trace_id = None
-    payload = {"error": {"code": code, "message": _MESSAGE[code], "trace_id": trace_id,
+    payload = {"error": {"code": code, "message": ("Use the capture snapshot endpoint for registered collection data."
+                                                   if capture_required else _MESSAGE[code]), "trace_id": trace_id,
                          "retryable": code in {"snapshot_building", "snapshot_unavailable", "publication_failed"},
                          "details": safe_details}}
     _validator("ErrorEnvelopeV1").validate(payload)

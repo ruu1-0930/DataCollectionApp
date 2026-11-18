@@ -1,6 +1,7 @@
 """Freeze a registered capture's explicitly paired raw rows under its collection lock."""
 from dataclasses import asdict, dataclass
 import json
+from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import or_
@@ -35,8 +36,10 @@ class CaptureRevisionService:
 
     def resolve_closed_revision(self, actor, patient_id, capture_id):
         session = self.session
+        # The snapshot repository already holds the patient lock. Re-read the
+        # capture under its lock so stop/registration checks use current state.
         cap = session.query(CollectionSession).filter_by(
-            patient_id=patient_id, capture_id=capture_id).with_for_update().one_or_none()
+            patient_id=patient_id, capture_id=capture_id).populate_existing().with_for_update().one_or_none()
         if cap is None:
             raise SessionResolutionError('session_not_found')
         account = load_account_context(actor, session=session)
@@ -53,8 +56,9 @@ class CaptureRevisionService:
         if verification['upload_state'] != 'verified':
             raise SessionResolutionError('snapshot_unavailable')
 
-        links = session.query(CollectionInsoleFrame.left_raw_id, CollectionInsoleFrame.right_raw_id).filter_by(
-            capture_id=capture_id).order_by(CollectionInsoleFrame.id).all()
+        links = session.query(CollectionInsoleFrame.left_raw_id, CollectionInsoleFrame.right_raw_id,
+                              CollectionInsoleFrame.mobile_received_at).filter_by(capture_id=capture_id).order_by(
+                                  CollectionInsoleFrame.mobile_received_at, CollectionInsoleFrame.id).all()
         if not links:
             raise SessionResolutionError('snapshot_unavailable')
         rows = session.query(DeviceRawData).join(CollectionInsoleFrame, or_(
@@ -66,7 +70,7 @@ class CaptureRevisionService:
         if len(rows) != 2 * len(links) or any(
             left not in by_id or right not in by_id or by_id[left].foot != 'L' or by_id[right].foot != 'R'
             or by_id[left].collected_at is None or by_id[left].collected_at != by_id[right].collected_at
-            for left, right in links
+            for left, right, _at in links
         ):
             raise SessionResolutionError('scope_mismatch')
         key = 'C:' + capture_id
@@ -77,7 +81,7 @@ class CaptureRevisionService:
             'closure': asdict(evidence), 'raw_data_fingerprint': fingerprint,
             'source': {'kind': 'capture', 'capture_id': capture_id, 'test_type': cap.test_type,
                        'registration_hash': cap.registration_hash},
-            'frame_pairs': [[left, right] for left, right in links],
+            'frames': [[left, right, time_string(at)] for left, right, at in links],
         }).decode()
         latest = session.query(GaitSessionRevision).filter_by(patient_id=patient_id, session_key=key).order_by(
             GaitSessionRevision.revision.desc()).first()
@@ -89,7 +93,7 @@ class CaptureRevisionService:
             ordered_row_ids_canonical=canonical_json_bytes([r.id for r in rows]).decode(),
             first_row_id=rows[0].id, last_row_id=rows[-1].id, row_count=len(rows),
             last_accepted_row_id=max(rows, key=lambda r: (r.uploaded_at, r.id)).id,
-            event_start_at=rows[0].collected_at, event_end_at=rows[-1].collected_at,
+            event_start_at=links[0].mobile_received_at, event_end_at=links[-1].mobile_received_at,
             ingest_start_at=min(r.uploaded_at for r in rows), ingest_end_at=max(r.uploaded_at for r in rows),
             closure_policy_version=evidence.policy_version, closure_evidence_canonical=manifest,
             closed_at=cap.server_stopped_at)
@@ -100,13 +104,13 @@ class CaptureRevisionService:
         return CaptureRevisionResult(revision, fingerprint, evidence)
 
 
-def capture_frames(rows, pairs):
+def capture_frames(rows, frames_manifest):
     """Retain firmware frame membership even after per-side numeric exclusions."""
     by_id = {row['id']: row for row in rows}
     frames = []
-    for left, right in pairs:
+    for left, right, at in frames_manifest:
         sides = {'L': by_id.get(left), 'R': by_id.get(right)}
         side = sides['L'] or sides['R']
         if side is not None:
-            frames.append({'collected_at': side['collected_at'], **sides})
-    return sorted(frames, key=lambda frame: frame['collected_at'])
+            frames.append({'collected_at': datetime.strptime(at, '%Y-%m-%dT%H:%M:%S.%fZ'), **sides})
+    return frames

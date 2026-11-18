@@ -163,16 +163,26 @@ def write_transaction():
                 raise
 
 
+def lock_capture_scope(session, capture_id):
+    """Discover the immutable parent, then consistently lock patient before capture."""
+    patient_id = session.query(CollectionSession.patient_id).filter_by(capture_id=capture_id).scalar()
+    if patient_id is None:
+        raise CollectionError(404)
+    patient = session.query(Patient).filter_by(id=patient_id).populate_existing().with_for_update().one_or_none()
+    capture = session.query(CollectionSession).filter_by(
+        capture_id=capture_id, patient_id=patient_id).populate_existing().with_for_update().one_or_none()
+    if patient is None or capture is None:
+        raise CollectionError(404)
+    return patient, capture
+
+
 def _owned_capture(session, capture_id, actor_id):
     identifier(capture_id)
     account = load_account_context(actor_id, session=session)
     require_capability(account, 'clinician.write')
-    capture = session.query(CollectionSession).filter_by(capture_id=capture_id).with_for_update().first()
-    if capture is None:
-        raise CollectionError(404)
+    patient, capture = lock_capture_scope(session, capture_id)
     if capture.clinician_id != actor_id:
         raise CollectionError(403)
-    patient = session.get(Patient, capture.patient_id)
     device = session.get(Device, capture.device_id)
     if patient is None or device is None or patient.clinician_id != actor_id or device.clinician_id != actor_id:
         raise CollectionError(403)

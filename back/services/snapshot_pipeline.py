@@ -25,6 +25,7 @@ from services.gait_session_revision import raw_rows_fingerprint
 from services.pressure_analysis import summarize_snapshot_pressure_rows
 from services.gait_derivation_quality import analyze_derivation_quality
 from services.capture_revision import capture_frames
+from services.collection_ingest import time_string
 from services.snapshot_contracts import (
     SNAPSHOT_ANALYZER_SET_VERSION,
     DERIVATION_ANALYZER_SET_VERSION,
@@ -299,7 +300,7 @@ class SnapshotPipeline:
         if not rows:
             raise SnapshotUnavailableError("no_analyzable_rows")
         manifest = json.loads(revision.closure_evidence_canonical) if self.schema_version == '3' else None
-        frames = capture_frames(rows, manifest['frame_pairs']) if manifest else build_snapshot_frames(rows)
+        frames = capture_frames(rows, manifest['frames']) if manifest else build_snapshot_frames(rows)
         if not frames:
             raise SnapshotUnavailableError("no_analyzable_frames")
         results, statuses = self._run_independent(rows, frames)
@@ -444,10 +445,15 @@ class SnapshotPipeline:
             or actual_ids != expected_ids
         ):
             raise SnapshotUnavailableError("revision_row_manifest_mismatch")
+        if revision.closure_policy_version == 'capture-v1':
+            events = json.loads(revision.closure_evidence_canonical)['frames']
+            if events[0][2] != time_string(revision.event_start_at) or events[-1][2] != time_string(revision.event_end_at):
+                raise SnapshotUnavailableError("revision_bounds_mismatch")
+        elif (normalized[0]["collected_at"] != revision.event_start_at
+              or normalized[-1]["collected_at"] != revision.event_end_at):
+            raise SnapshotUnavailableError("revision_bounds_mismatch")
         if (
-            normalized[0]["collected_at"] != revision.event_start_at
-            or normalized[-1]["collected_at"] != revision.event_end_at
-            or normalized != sorted(normalized, key=lambda row: (row["collected_at"], row["id"]))
+            normalized != sorted(normalized, key=lambda row: (row["collected_at"], row["id"]))
             or min(row["uploaded_at"] for row in normalized) != revision.ingest_start_at
             or max(row["uploaded_at"] for row in normalized) != revision.ingest_end_at
             or max(normalized, key=lambda row: (row["uploaded_at"], row["id"]))["id"]
@@ -525,9 +531,10 @@ class SnapshotPipeline:
     @staticmethod
     def _session_dto(revision, raw_fingerprint):
         closure = json.loads(revision.closure_evidence_canonical)
+        format_time = time_string if revision.closure_policy_version == "capture-v1" else _timestamp
         return {
-            "start_at": _timestamp(revision.event_start_at),
-            "end_at": _timestamp(revision.event_end_at),
+            "start_at": format_time(revision.event_start_at),
+            "end_at": format_time(revision.event_end_at),
             "first_row_id": revision.first_row_id,
             "last_row_id": revision.last_row_id,
             "row_count": revision.row_count,

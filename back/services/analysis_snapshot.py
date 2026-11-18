@@ -102,7 +102,7 @@ class AnalysisSnapshotService:
             self.versions.threshold_profile_version,
         )
 
-    def _refresh(self, repo, *, actor_id, patient_id, session_id, trace_id):
+    def _refresh(self, repo, *, actor_id, patient_id, session_id, trace_id, building=False):
         """Commit invalidation even when a changed session cannot yet close again."""
         now = self.clock()
         source_now = now.astimezone(timezone(timedelta(hours=8))).replace(tzinfo=None)
@@ -116,7 +116,7 @@ class AnalysisSnapshotService:
                 resolved = CaptureRevisionService(repo.session).resolve_closed_revision(actor_id, patient_id, session_id[2:])
             else:
                 resolved = GaitSessionRevisionService(session=repo.session).resolve_closed_revision(
-                    patient_id=patient_id, session_id=session_id, now=source_now)
+                    patient_id=patient_id, session_id=session_id, now=source_now, legacy_build=building)
         except SessionResolutionError as exc:
             code = str(exc)
             error = SnapshotError("invalid_request" if code == "invalid_session_id" else code, trace_id=trace_id)
@@ -163,7 +163,7 @@ class AnalysisSnapshotService:
         trace_id, error, result = str(uuid4()), None, None
         with self.repository.transaction(actor_id=actor_id, patient_id=patient_id) as repo:
             resolved, error = self._refresh(repo, actor_id=actor_id, patient_id=patient_id,
-                                            session_id=session_id, trace_id=trace_id)
+                                            session_id=session_id, trace_id=trace_id, building=True)
             if error is None:
                 identity = self._identity(resolved)
                 existing = repo.identity_snapshot(identity)
@@ -197,7 +197,7 @@ class AnalysisSnapshotService:
         try:
             with self.repository.transaction(actor_id=actor_id, patient_id=patient_id) as repo:
                 current, refresh_error = self._refresh(repo, actor_id=actor_id, patient_id=patient_id,
-                                                       session_id=session_id, trace_id=trace_id)
+                                                       session_id=session_id, trace_id=trace_id, building=True)
                 if refresh_error or self._identity(current) != identity:
                     error = SnapshotError("session_superseded", trace_id=trace_id)
                     self._finish_failed(repo, actor_id, patient_id, attempt_id, trace_id, "session_superseded")

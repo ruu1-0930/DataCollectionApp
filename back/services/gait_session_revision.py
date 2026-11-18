@@ -10,7 +10,8 @@ from collections.abc import Mapping, Sequence
 from uuid import uuid4
 
 from config import db
-from models.models import DeviceRawData, GaitSessionRevision
+from models.models import CollectionInsoleFrame, CollectionSession, DeviceRawData, GaitSessionRevision
+from sqlalchemy import or_
 from services.canonical_json import canonical_json_bytes, sha256_hex
 
 
@@ -144,12 +145,23 @@ class GaitSessionRevisionService:
         self.gap_seconds = gap_seconds
         self._gap = timedelta(seconds=gap_seconds)
 
-    def resolve_closed_revision(self, *, patient_id: int, session_id: str, now: datetime) -> GaitSessionRevisionResult:
+    def resolve_closed_revision(self, *, patient_id: int, session_id: str, now: datetime,
+                                legacy_build=False) -> GaitSessionRevisionResult:
         start = parse_session_start(patient_id, session_id)
         if start is None:
             raise SessionResolutionError("invalid_session_id")
 
         source_rows, device_id, end, next_row = self._resolve_source_scope(patient_id, start)
+        if legacy_build:
+            # This fence applies to both pre-build and publication refreshes.
+            # Historical reads keep resolving their original frozen revision.
+            captured = self.session.query(CollectionInsoleFrame.id).join(CollectionSession).join(DeviceRawData, or_(
+                DeviceRawData.id == CollectionInsoleFrame.left_raw_id,
+                DeviceRawData.id == CollectionInsoleFrame.right_raw_id)).filter(
+                    CollectionSession.metadata_schema_version == 1, DeviceRawData.patient_id == patient_id,
+                    DeviceRawData.device_id == device_id, DeviceRawData.collected_at.between(start, end)).first()
+            if captured is not None:
+                raise SessionResolutionError('capture_source_required')
         fingerprint = raw_rows_fingerprint(
             patient_id=patient_id,
             device_id=device_id,
