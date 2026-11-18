@@ -4,7 +4,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from access import AccessError
 from api.collection import _body
 from services.collection_ingest import CollectionError
-from services.data_management import preview_delete, get_delete_preview, begin_delete, get_operation, continue_delete
+from services.data_management import (preview_delete, get_delete_preview, begin_delete, get_operation,
+    continue_delete, operation_delete_preview, confirm_agent_inventory)
 from utils import token_required
 
 data_management_bp = Blueprint('data_management', __name__)
@@ -58,3 +59,20 @@ def advance(operation_id):
             raise AccessError(400, 'invalid_request')
         return continue_delete(g.account_context, operation_id, request.headers['Authorization'].split()[1])
     return _respond(run)
+
+
+@data_management_bp.post(BASE + '/operations/<string:operation_id>/delete-preview')
+@token_required('data.manage')
+def repreview(operation_id):
+    def run():
+        if _body() != {}:
+            raise AccessError(400, 'invalid_request')
+        return operation_delete_preview(g.account_context, operation_id, request.headers['Authorization'].split()[1])
+    return _respond(run)
+
+
+@data_management_bp.post(BASE + '/operations/<string:operation_id>/confirm-agent-inventory')
+@token_required('data.manage')
+def reconfirm(operation_id):
+    return _respond(lambda: confirm_agent_inventory(g.account_context, operation_id, _body(),
+                                                  request.headers['Authorization'].split()[1]))

@@ -137,7 +137,8 @@ def _preview_dto(preview):
         extra_affected_results=inventory['extra_affected_results'], pending_upload=inventory['pending_upload'],
         expires_at=preview.expires_at.isoformat(timespec='microseconds') + 'Z',
         snapshot_ids=inventory['snapshot_ids'], session_ids=inventory['session_ids'],
-        agent_state=inventory.get('agent_state', 'pending'), agent_inventory_hash=inventory.get('agent_inventory_hash')))
+        agent_state=inventory.get('agent_state', 'pending'), agent_inventory_hash=inventory.get('agent_inventory_hash'),
+        operation_id=inventory.get('operation_id')))
 
 
 def get_delete_preview(actor, preview_id):
@@ -188,7 +189,9 @@ def _dto(operation):
     return validate('ManagementOperationV1', dict(operation_id=operation.id, trace_id=operation.trace_id,
         scope=json.loads(operation.scope_json), scope_hash=operation.scope_hash, stage=operation.stage,
         state=operation.state, counts=json.loads(operation.counts_json), error_code=operation.error_code,
-        snapshot_ids=inventory.get('snapshot_ids', []), session_ids=inventory.get('session_ids', [])))
+        snapshot_ids=inventory.get('snapshot_ids', []), session_ids=inventory.get('session_ids', []),
+        expected_agent_inventory_hash=inventory['agent_inventory_hash'],
+        agent_confirmation_required=operation.error_code == 'agent_reconfirmation_required'))
 
 
 def begin_delete(actor, request, token=None, *, client=None):
@@ -228,7 +231,9 @@ def begin_delete(actor, request, token=None, *, client=None):
             raise ManagementError(409, 'pending_upload_confirmation_required')
         inventory['agent_inventory_hash'] = remote['inventory_hash']
         inventory['counts'].update({'agent_' + k: v for k, v in remote['counts'].items()})
-        operation = ManagementOperation(id=str(uuid4()), request_id=request['request_id'], preview_id=preview.id,
+        if session.get(ManagementOperation, request['request_id']) is not None:
+            raise ManagementError(409, 'request_conflict')
+        operation = ManagementOperation(id=request['request_id'], request_id=request['request_id'], preview_id=preview.id,
             actor_id=actor.clinician_id, owner_id=patient.clinician_id, patient_id=patient.id,
             kind=scope['kind'], record_id=scope['record_id'], scope_json=_json(scope), scope_hash=preview.scope_hash,
             inventory_json=_json(inventory), counts_json=_json(inventory['counts']), trace_id=str(uuid4()),
@@ -238,6 +243,62 @@ def begin_delete(actor, request, token=None, *, client=None):
         for table, values in inventory['items'].items():
             session.add_all(ManagementItem(operation_id=operation.id, table_name=table, row_id=v) for v in values)
         return _dto(operation)
+
+
+def operation_delete_preview(actor, operation_id, token, *, client=None):
+    with write_transaction() as session:
+        operation = _authorized_operation(session, actor, operation_id)
+        if operation.stage != 'fenced' or operation.error_code != 'agent_reconfirmation_required':
+            raise ManagementError(409, 'reconfirmation_not_required')
+        inventory = frozen_inventory(operation)
+        inventory['operation_id'] = operation.id
+        inventory.pop('agent_counts', None)
+        inventory['counts'] = {k: v for k, v in inventory['counts'].items() if not k.startswith('agent_')}
+        inventory.update(agent_state='pending', agent_inventory_hash=None)
+        preview = ManagementPreview(id=str(uuid4()), actor_id=actor.clinician_id, scope_json=operation.scope_json,
+            inventory_json=_json(inventory), scope_hash=operation.scope_hash, expires_at=datetime.utcnow() + timedelta(minutes=10))
+        session.add(preview)
+        public = _preview_dto(preview)
+    try:
+        remote = (client or AgentDataManagementClient()).request('preview-inventory', _preview_payload(public), token)
+        inventory.update(agent_counts=remote['counts'], agent_inventory_hash=remote['inventory_hash'],
+                         agent_state='busy' if remote['busy'] else 'ready')
+    except AgentManagementError:
+        inventory.update(agent_state='unavailable')
+    with write_transaction() as session:
+        row = session.get(ManagementPreview, public['preview_id'])
+        if row is None:
+            raise ManagementError(409, 'preview_expired')
+        row.inventory_json = _json(inventory)
+        return _preview_dto(row)
+
+
+def confirm_agent_inventory(actor, operation_id, request, token, *, client=None):
+    validate('AgentInventoryConfirmationV1', request)
+    public = get_delete_preview(actor, request['preview_id'])
+    if (public['operation_id'] != operation_id or public['agent_state'] != 'ready'
+            or public['agent_inventory_hash'] != request['expected_agent_inventory_hash']):
+        raise ManagementError(409, 'agent_preview_stale')
+    try:
+        remote = (client or AgentDataManagementClient()).request('preview-inventory', _preview_payload(public), token)
+    except AgentManagementError:
+        raise ManagementError(503, 'agent_unavailable') from None
+    if remote['busy'] or remote['inventory_hash'] != request['expected_agent_inventory_hash']:
+        raise ManagementError(409, 'agent_preview_stale')
+    with write_transaction() as session:
+        row = _authorized_operation(session, actor, operation_id)
+        preview = session.get(ManagementPreview, request['preview_id'])
+        if preview is None or preview.expires_at <= datetime.utcnow() or preview.scope_hash != row.scope_hash:
+            raise ManagementError(409, 'preview_expired')
+        if row.stage != 'fenced' or row.error_code != 'agent_reconfirmation_required':
+            raise ManagementError(409, 'reconfirmation_not_required')
+        inventory = frozen_inventory(row)
+        inventory['agent_inventory_hash'] = request['expected_agent_inventory_hash']
+        inventory['counts'] = {k: v for k, v in inventory['counts'].items() if not k.startswith('agent_')}
+        inventory['counts'].update({'agent_' + k: v for k, v in remote['counts'].items()})
+        row.inventory_json, row.counts_json = _json(inventory), _json(inventory['counts'])
+        row.state, row.error_code = 'running', None
+        return _dto(row)
 
 
 def get_operation(actor, operation_id):
@@ -278,15 +339,19 @@ def _purge_backend(session, operation):
 
 def continue_delete(actor, operation_id, token, *, client=None):
     operation = get_operation(actor, operation_id)
+    if operation['agent_confirmation_required']:
+        return operation
     if operation['stage'] == 'completed':
         return operation
     if operation['stage'] == 'fenced':
-        payload = {key: operation[key] for key in ('operation_id', 'scope_hash', 'scope', 'snapshot_ids', 'session_ids')}
+        payload = {key: operation[key] for key in ('operation_id', 'scope_hash', 'scope', 'snapshot_ids', 'session_ids', 'expected_agent_inventory_hash')}
         payload['schema_version'] = 1
         try:
             remote = (client or AgentDataManagementClient()).request('inventory', payload, token)
             if remote['busy']:
                 raise AgentManagementError('agent_busy')
+            if remote['confirmation_required']:
+                raise AgentManagementError('agent_reconfirmation_required')
             receipt = (client or AgentDataManagementClient()).request('purge', payload, token)
             if not receipt['completed']:
                 raise AgentManagementError('agent_purge_pending')
@@ -317,7 +382,7 @@ def continue_delete(actor, operation_id, token, *, client=None):
                 row.stage, row.state, row.completed_at = 'completed', 'completed', datetime.utcnow()
                 # Minimize receipts; frozen row lists are needed only until all phases succeed.
                 inventory = frozen_inventory(row)
-                row.inventory_json = _json({key: inventory[key] for key in ('snapshot_ids', 'session_ids')})
+                row.inventory_json = _json({key: inventory[key] for key in ('snapshot_ids', 'session_ids', 'agent_inventory_hash')})
                 session.query(ManagementItem).filter_by(operation_id=row.id).delete()
                 session.query(ManagementPreview).filter_by(scope_json=row.scope_json).delete(synchronize_session=False)
             return _dto(row)

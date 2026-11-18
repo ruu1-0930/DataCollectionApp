@@ -203,6 +203,17 @@
               "type": "null"
             }
           ]
+        },
+        "operation_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -217,7 +228,8 @@
         "snapshot_ids",
         "session_ids",
         "agent_state",
-        "agent_inventory_hash"
+        "agent_inventory_hash",
+        "operation_id"
       ]
     },
     "DeleteRequestV1": {
@@ -372,6 +384,13 @@
             "maxLength": 128
           },
           "uniqueItems": true
+        },
+        "expected_agent_inventory_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "agent_confirmation_required": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -384,7 +403,9 @@
         "counts",
         "error_code",
         "snapshot_ids",
-        "session_ids"
+        "session_ids",
+        "expected_agent_inventory_hash",
+        "agent_confirmation_required"
       ]
     },
     "AgentManagementRequestV1": {
@@ -480,6 +501,10 @@
             "maxLength": 128
           },
           "uniqueItems": true
+        },
+        "expected_agent_inventory_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         }
       },
       "required": [
@@ -488,7 +513,8 @@
         "scope_hash",
         "scope",
         "snapshot_ids",
-        "session_ids"
+        "session_ids",
+        "expected_agent_inventory_hash"
       ]
     },
     "AgentDataInventoryV1": {
@@ -519,6 +545,13 @@
           "propertyNames": {
             "pattern": "^[a-z][a-z0-9_]{0,63}$"
           }
+        },
+        "inventory_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "confirmation_required": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -526,7 +559,9 @@
         "operation_id",
         "scope_hash",
         "busy",
-        "counts"
+        "counts",
+        "inventory_hash",
+        "confirmation_required"
       ]
     },
     "PurgeReceiptV1": {
@@ -743,6 +778,24 @@
         "patient_id",
         "report_id",
         "status"
+      ]
+    },
+    "AgentInventoryConfirmationV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preview_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "expected_agent_inventory_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "preview_id",
+        "expected_agent_inventory_hash"
       ]
     }
   }
