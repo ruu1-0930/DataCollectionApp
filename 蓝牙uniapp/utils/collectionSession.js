@@ -61,14 +61,17 @@ export function createCollectionSession({ queue, identity, registrationFor = () 
       }
       sequences[parsed.stream] += 1
       lastTime = receivedAt
-      if (parsed.stream === 'radar' && queue.snapshot().radarPending >= 5000) { radarReason = 'capacity'; publish() }
-      if (parsed.stream !== 'radar' && queue.snapshot().originalPending >= 5000) stop('capacity', lastTime)
+      if (queue.laneFull(parsed.stream)) {
+        if (parsed.stream === 'radar') { radarReason = 'capacity'; publish() }
+        else stop('capacity', lastTime)
+      }
     },
     receiveRadar(captureToken, epoch, payload, receivedAt) {
       if (!active || captureToken !== active.capture_id) return
       this.receive(active.device_code, epoch, { stream: 'radar', payload }, receivedAt, captureToken)
     },
     stop(why = 'user') {
+      if (why === 'capture_deleted') { stop(why, lastTime); return }
       const stamp = now()
       stop(stamp < lastTime ? 'clock_rollback' : why, stamp < lastTime ? lastTime : stamp)
     },

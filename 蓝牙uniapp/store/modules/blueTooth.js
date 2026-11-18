@@ -77,7 +77,7 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       gpsRealtime: null,
       collectionState: { active: null, reason: '', radarReason: '', rejected: 0, waiting: false, lifecycle: 0,
         insoleReceived: 0, gpsReceived: 0, gpsRejected: 0, gpsLastError: '',
-        queue: { pending: 0, originalPending: 0, radarPending: 0, sessions: 0, sending: false, paused: false, error: '', uploads: [] } }
+        queue: { pending: 0, originalPending: 0, radarPending: 0, sessions: 0, sending: false, paused: false, error: '', deletionWritePending: false, uploads: [] } }
     }
   },
   getters: {
@@ -107,6 +107,13 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         identity,
         api: { create: createCollectionApi, batch: uploadCollectionBatchApi, stop: stopCollectionApi },
         onChange: value => { this.collectionState.queue = value },
+        onDeleted: deleted => {
+          if (runtime.session.active?.capture_id === deleted.capture_id) this.stopCollection('capture_deleted')
+          const actor = identity()
+          if (actor.unlocked && actor.clinicianId === deleted.clinicianId && usePatientStoreWithOut().currentId === deleted.patient_id) {
+            uni.showToast({ title: '一条采集已永久删除，已停止上传', icon: 'none', duration: 3000 })
+          }
+        },
       })
       this.collectionState.queue = runtime.queue.snapshot()
       runtime.session = createCollectionSession({ queue: runtime.queue, identity,

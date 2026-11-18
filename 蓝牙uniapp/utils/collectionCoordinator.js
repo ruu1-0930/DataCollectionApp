@@ -4,6 +4,7 @@ import { createTelemetryOutbox } from './telemetryQueue'
 const copy = value => JSON.parse(JSON.stringify(value))
 const lanes = ['primary', 'radar']
 const streams = ['insole', 'gps', 'radar']
+const uploadKinds = ['create', ...lanes, 'stop']
 const qualityObservations = new Set(['no_insole_frames', 'gps_contains_no_fix', 'radar_contains_stale'])
 const completionLimit = 20
 const emptyCounts = () => ({ insole: 0, gps: 0, radar: 0 })
@@ -31,25 +32,34 @@ function validVerification(value, id, expected) {
   return value.upload_state === (countsEqual(expected, value.received_counts) ? 'verified' : 'mismatch')
 }
 
-export function createCollectionCoordinator({ load, save, identity, api, clock = Date.now, wait = ms => new Promise(r => setTimeout(r, ms)), onChange = () => {} }) {
-  let state = { version: 3, last_capture_sequence: 0, sessions: [], completed: [] }, inFlight = null, halted = false, storageBroken = false, unreadable = false, error = ''
+export function createCollectionCoordinator({ load, save, identity, api, clock = Date.now, wait = ms => new Promise(r => setTimeout(r, ms)), onChange = () => {}, onDeleted = () => {} }) {
+  let state = { version: 3, last_capture_sequence: 0, sessions: [], completed: [], deleted: [] }
+  let inFlight = null, halted = false, storageBroken = false, unreadable = false, error = '', unsavedDeletion = null
   const paused = new Set(), retries = new Map()
   let wake = null
   const wakeRun = () => { if (wake) wake(); wake = null }
-  const pending = lane => state.sessions.reduce((n, s) => n + s.outboxes[lane].length, 0)
+  const pending = (lane, sessions = state.sessions) => sessions.reduce((n, s) => n + s.outboxes[lane].length, 0)
   function scopedUploads() {
     const actor = identity(), latest = new Map()
     if (!actor.unlocked || !actor.clinicianId) return []
     // The phone clock can change between recordings, and an older upload can finish later.
-    function consider(capture, completed) {
+    function consider(capture, source) {
       if (capture.clinicianId !== actor.clinicianId) return
       const previous = latest.get(capture.patient_id)
-      if (!previous || capture.capture_sequence > previous.capture.capture_sequence) latest.set(capture.patient_id, { capture, completed })
+      if (!previous || capture.capture_sequence > previous.capture.capture_sequence) latest.set(capture.patient_id, { capture, source })
     }
-    for (const capture of state.completed) consider(capture, true)
-    for (const capture of state.sessions) consider(capture, false)
-    return copy([...latest.values()].map(({ capture, completed }) => {
+    for (const capture of state.completed) consider(capture, 'completed')
+    for (const capture of state.sessions) consider(capture, 'pending')
+    for (const capture of state.deleted) consider(capture, 'deleted')
+    return copy([...latest.values()].map(({ capture, source }) => {
       const { capture_id, clinicianId, patient_id, mobile_started_at, mobile_stopped_at } = capture
+      if (source === 'deleted') {
+        const local_discard_pending = unsavedDeletion === capture_id
+        return { capture_id, clinicianId, patient_id, mobile_started_at, mobile_stopped_at, test_type: capture.test_type,
+          completed: false, upload_state: 'deleted', expected_counts: capture.expected_counts, received_counts: null,
+          discarded_counts: local_discard_pending ? null : capture.discarded_counts, local_discard_pending }
+      }
+      const completed = source === 'completed'
       const verification = completed ? capture.verification : null
       const test_type = completed ? capture.test_type : capture.totals === null ? null : capture.registration.test_type
       return { capture_id, clinicianId, patient_id, mobile_started_at, mobile_stopped_at, test_type, completed,
@@ -59,14 +69,18 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
     }))
   }
   function snapshot() {
-    const originalPending = pending('primary'), radarPending = pending('radar')
-    return { pending: originalPending + radarPending, originalPending, radarPending, sessions: state.sessions.length, sending: !!inFlight,
-      paused: halted || paused.size > 0, error, radarPaused: [...paused].some(k => k.endsWith(':radar')), primaryPaused: [...paused].some(k => k.endsWith(':primary')),
+    const actor = identity()
+    const sessions = actor.unlocked && actor.clinicianId ? state.sessions.filter(s => s.clinicianId === actor.clinicianId) : []
+    const originalPending = pending('primary', sessions), radarPending = pending('radar', sessions)
+    const pausedKeys = sessions.reduce((keys, s) => keys.concat(uploadKinds.map(kind => `${s.capture_id}:${kind}`).filter(key => paused.has(key))), [])
+    return { pending: originalPending + radarPending, originalPending, radarPending, sessions: sessions.length, sending: !!inFlight,
+      paused: halted || pausedKeys.length > 0, error, radarPaused: pausedKeys.some(k => k.endsWith(':radar')), primaryPaused: pausedKeys.some(k => k.endsWith(':primary')),
+      deletionWritePending: !!unsavedDeletion && actor.unlocked && state.deleted.some(s => s.capture_id === unsavedDeletion && s.clinicianId === actor.clinicianId),
       uploads: scopedUploads() }
   }
   const publish = () => onChange(snapshot())
   function persist(next) {
-    try { save(JSON.stringify(next)); state = next; storageBroken = false }
+    try { save(JSON.stringify(next)); state = next; storageBroken = false; unsavedDeletion = null }
     catch { storageBroken = true; halted = true; error = 'storage'; publish(); throw Error('storage') }
     publish()
   }
@@ -109,6 +123,15 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
         validateSequence(s.capture_sequence)
         captures.add(s.capture_id)
       }
+      if (restored.deleted !== undefined && !Array.isArray(restored.deleted)) throw Error('storage')
+      for (const s of restored.deleted ?? []) {
+        if (!s || typeof s.capture_id !== 'string' || !s.capture_id || captures.has(s.capture_id) || !s.clinicianId || !s.patient_id
+          || !timestamp(s.mobile_started_at) || !timestamp(s.mobile_stopped_at) || s.mobile_stopped_at < s.mobile_started_at
+          || !countsValid(s.discarded_counts) || (s.expected_counts === null ? s.test_type !== null : !knownType(s.test_type)
+            || !countsValid(s.expected_counts) || streams.some(stream => s.expected_counts[stream] < s.discarded_counts[stream]))) throw Error('storage')
+        validateSequence(s.capture_sequence)
+        captures.add(s.capture_id)
+      }
     }
   }
   try {
@@ -121,6 +144,7 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
           sessions: next.sessions.map(({ events, ...s }, index) => ({ ...s, totals: null, capture_sequence: index + 1,
           outboxes: restored.version === 1 ? { primary: events, radar: [] } : s.outboxes })) }
       }
+      if (!next.deleted) next.deleted = []
       for (const s of next.sessions) if (!s.mobile_stopped_at) {
         const stamps = [s.mobile_started_at, s.last_received_at]
         for (const lane of lanes) for (const event of s.outboxes[lane]) stamps.push(event.mobile_received_at)
@@ -149,6 +173,29 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
   }
   const find = id => state.sessions.find(s => s.capture_id === id)
   function update(id, mutation) { const next = copy(state), s = next.sessions.find(s => s.capture_id === id); if (s) mutation(s, next); persist(next) }
+  function markDeleted(id) {
+    // Include events enqueued during the request as well as the rejected batch.
+    const session = find(id)
+    const { capture_id, clinicianId, patient_id, mobile_started_at, capture_sequence } = session
+    const discarded_counts = emptyCounts()
+    for (const lane of lanes) for (const event of session.outboxes[lane]) discarded_counts[event.stream] += 1
+    const receipt = { capture_id, clinicianId, patient_id, mobile_started_at, capture_sequence, discarded_counts,
+      mobile_stopped_at: session.mobile_stopped_at ?? latestTimestamp([mobile_started_at, session.last_received_at, new Date(clock()).toISOString()]),
+      test_type: session.totals === null ? null : session.registration.test_type, expected_counts: session.totals }
+    const next = { ...state, sessions: state.sessions.filter(s => s.capture_id !== id), deleted: [...state.deleted, receipt] }
+    for (const kind of uploadKinds) {
+      retries.delete(`${id}:${kind}`)
+      paused.delete(`${id}:${kind}`)
+    }
+    if (error === 'upload' && !paused.size) error = ''
+    try { persist(next) }
+    catch (cause) {
+      // Keep the old bytes on disk until a successful retry writes the terminal receipt.
+      state = next
+      unsavedDeletion = id
+      throw cause
+    } finally { onDeleted({ capture_id, clinicianId, patient_id }) }
+  }
   async function step(id, lane, binding) {
     const session = find(id)
     if (!session) return false
@@ -196,6 +243,7 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
       }
       return false
     } catch (cause) {
+      if (statusOf(cause) === 410) { markDeleted(id); return true }
       if (cause.message === 'storage' || [401, 403].includes(statusOf(cause))) throw cause
       const attempt = retries.get(key)?.attempt || 0
       if (transient(cause) && attempt < 3) {
@@ -210,13 +258,16 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
   }
   async function run() {
     const binding = { ...identity() }
+    if (!binding.unlocked || !binding.clinicianId) return
     // A bounded batch per lane/capture/round: old streams first; radar cannot starve.
     while (!halted) {
-      let progress = false; const ids = state.sessions.map(s => s.capture_id)
+      assertCollectionIdentity({ collectionIdentity: binding }, identity())
+      let progress = false; const ids = state.sessions.filter(s => s.clinicianId === binding.clinicianId).map(s => s.capture_id)
       for (const lane of lanes) for (const id of ids) { if (halted) return; if (await step(id, lane, binding)) progress = true }
       if (progress) continue
-      const waiting = [...retries.values()].filter(r => !r.ready)
-      if ([...retries.values()].some(r => r.ready)) continue
+      const pendingRetries = ids.reduce((items, id) => items.concat(uploadKinds.map(kind => retries.get(`${id}:${kind}`)).filter(Boolean)), [])
+      const waiting = pendingRetries.filter(r => !r.ready)
+      if (pendingRetries.some(r => r.ready)) continue
       if (!waiting.length) break
       // A failed radar lane sleeps independently; enqueue wakes priority work now.
       const arrival = new Promise(resolve => { wake = resolve })
@@ -225,10 +276,12 @@ export function createCollectionCoordinator({ load, save, identity, api, clock =
   }
   return {
     snapshot,
+    laneFull(stream) { return pending(laneOf(stream)) >= 5000 },
     add(context) {
       if (storageBroken || unreadable) throw Error('storage')
       if (state.sessions.length >= 100 || pending('primary') >= 5000 || state.last_capture_sequence >= Number.MAX_SAFE_INTEGER) throw Error('capacity')
-      if (find(context.capture_id) || state.completed.some(s => s.capture_id === context.capture_id)) throw Error('capture_exists')
+      if (find(context.capture_id) || state.completed.some(s => s.capture_id === context.capture_id)
+        || state.deleted.some(s => s.capture_id === context.capture_id)) throw Error('capture_exists')
       const { capture_id, clinicianId, patient_id, device_code, mobile_started_at, registration } = context
       if (!registrationBound(registration, patient_id)) throw Error('registration_unsaved')
       const next = copy(state)

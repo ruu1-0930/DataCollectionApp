@@ -14,17 +14,24 @@
       <view class="capture-actions">
         <button v-if="!capture.active" class="capture-start" :disabled="!chosenDevice || !ps.registrationState.ready" @tap="openStartConfirmation">开始同步记录</button>
         <button v-else class="capture-stop" @tap="ble.stopCollection()">停止记录</button>
-        <button v-if="capture.queue.sessions" class="capture-retry" :disabled="capture.queue.sending" @tap="ble.retryCollectionUpload()">重试上传</button>
+        <button v-if="capture.queue.sessions || capture.queue.deletionWritePending" class="capture-retry" :disabled="capture.queue.sending" @tap="ble.retryCollectionUpload()">{{ capture.queue.deletionWritePending ? '重试保存本地状态' : '重试上传' }}</button>
       </view>
       <view class="capture-note">{{ queueText }}</view>
       <view v-if="upload" class="capture-upload">
-        <view :class="upload.upload_state === 'mismatch' ? 'capture-warning' : 'capture-note'">{{ uploadText[upload.upload_state] }}</view>
+        <view :class="['mismatch', 'deleted'].includes(upload.upload_state) ? 'capture-warning' : 'capture-note'">{{ uploadText[upload.upload_state] }}</view>
         <view class="capture-note">记录编号 · {{ uploadRecordDetails.captureId }}</view>
         <view class="capture-note">测试类型 · {{ uploadRecordDetails.typeLabel }}</view>
         <view class="capture-note">手机开始 · {{ uploadRecordDetails.startedAt }}</view>
         <view class="capture-note">手机停止 · {{ uploadRecordDetails.stoppedAt }}</view>
         <view class="capture-note">手机累计 · {{ countText(upload.expected_counts) }}</view>
-        <view class="capture-note">服务端实收 · {{ countText(upload.received_counts) }}</view>
+        <template v-if="upload.upload_state === 'deleted'">
+          <view v-if="upload.local_discard_pending" class="capture-warning">本地待发数据仍保留。请先重试保存本地状态。</view>
+          <template v-else>
+            <view class="capture-note">本地已放弃待发 · {{ countText(upload.discarded_counts) }}</view>
+            <view class="capture-note">请核对登记后重新采集。修改登记后请先保存。</view>
+          </template>
+        </template>
+        <view v-else class="capture-note">服务端实收 · {{ countText(upload.received_counts) }}</view>
       </view>
       <view v-if="reasonText" class="capture-warning">{{ reasonText }}</view>
       <view v-if="capture.rejected" class="capture-note">已忽略 {{ capture.rejected }} 条格式异常消息</view>
@@ -120,7 +127,8 @@ watch(() => [ps.currentId, operator.operator?.clinicianId, operator.authRuntime.
 const capture = computed(() => ble.collectionState)
 const upload = computed(() => ble.collectionUpload)
 const uploadText = { pending: '本次上传尚待服务端核对', verified: '本次上传已核对一致',
-  mismatch: '本次上传数量不符', unknown: '旧记录缺少手机累计数，无法核对上传数量' }
+  mismatch: '本次上传数量不符', unknown: '旧记录缺少手机累计数，无法核对上传数量',
+  deleted: '本次采集已永久删除，上传已停止' }
 const captureTime = value => value ? value.replace('T', ' ').replace('Z', ' UTC') : '—'
 const uploadRecordDetails = computed(() => {
   if (!upload.value) return null
@@ -140,7 +148,8 @@ const rawValue = value => value == null ? '—' : value
 const queueText = computed(() => capture.value.queue.sending ? '上传中' : capture.value.queue.error === 'identity'
   ? '请原操作员解锁后重试' : capture.value.queue.error === 'storage' ? '本地缓存读取或写入失败，请保留数据联系维护'
     : capture.value.queue.radarPaused && !capture.value.queue.primaryPaused ? '雷达待发保留，鞋垫/GPS 独立上传'
-      : capture.value.queue.paused ? '部分上传已暂停，数据保留，请检查网络后重试' : '本地记录保留，原流优先独立上传')
+      : capture.value.queue.paused ? '部分上传已暂停，数据保留，请检查网络后重试'
+        : capture.value.queue.sessions ? '本地待发已保留，按流上传' : '当前没有待上传任务')
 const reasonText = computed(() => ({ background: '已离开前台，记录已停止；待上传数据已保留。',
   clock_rollback: '手机时间回退，已在最后有效接收时刻停止，请校准时间。',
   capacity: '缓存达到上限，已停止记录；上传后可开始新记录。', storage: '缓存不可用，已停止记录，请保留数据联系维护。',

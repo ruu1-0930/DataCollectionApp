@@ -11,6 +11,10 @@ function checkCollectionOwner(config) {
   assertCollectionIdentity(config.custom, { clinicianId: op.operator?.clinicianId, authEpoch: op.authRuntime.authEpoch, unlocked: op.unlocked })
 }
 
+function isDeletedCollection(response, config = response?.config) {
+  return response?.statusCode === 410 && /^\/(?:v2\/)?collection-sessions(?:\/[^/]+\/(?:batches|stop))?$/.test(config?.url ?? '')
+}
+
 /**
  * @description 处理code异常
  * @param {*} code
@@ -109,6 +113,14 @@ async function retryWithRefresh(config) {
   return instance.request(config)
 }
 
+function refreshOrReject(response) {
+  return retryWithRefresh(response.config).catch(error => {
+    if (isDeletedCollection(error, error?.config ?? response.config)) throw error
+    uni.showToast({ icon: 'none', title: '鉴权失败，请重新解锁', duration: 2000 })
+    throw response
+  })
+}
+
 instance.interceptors.request.use(
   (config) => {
     checkCollectionOwner(config)
@@ -151,10 +163,7 @@ instance.interceptors.response.use(
 
     if (code === 401) {
       // 静默刷新换 token 重试一次（不弹登录页、不清本地数据）
-      return retryWithRefresh(response.config).catch(() => {
-        uni.showToast({ icon: 'none', title: '鉴权失败，请重新解锁', duration: 2000 })
-        return Promise.reject(response)
-      })
+      return refreshOrReject(response)
     }
     if (![200].includes(code)) {
       // 服务端返回的状态码不等于200，则reject()
@@ -171,6 +180,7 @@ instance.interceptors.response.use(
   },
   (error) => {
     logRequestError(error)
+    if (isDeletedCollection(error)) return Promise.reject(error)
     
     // 网络连接错误处理
     if (error.errMsg && error.errMsg.includes('request:fail')) {
@@ -192,10 +202,7 @@ instance.interceptors.response.use(
         duration: 3000
       })
     } else if ([401].includes(error?.data?.code) || error?.statusCode === 401) {
-      return retryWithRefresh(error.config).catch(() => {
-        uni.showToast({ icon: 'none', title: '鉴权失败，请重新解锁', duration: 2000 })
-        return Promise.reject(error)
-      })
+      return refreshOrReject(error)
     } else {
       // 其他错误
       uni.showToast({
