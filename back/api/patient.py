@@ -13,7 +13,8 @@ def _profile_v2_response(operation, *args):
         result = operation(g.account_context, *args)
     except (AccessError, PatientProfileError) as exc:
         messages = {400: '患者资料格式无效', 403: '无权访问该患者', 404: '患者不存在', 401: '医护不存在'}
-        return jsonify(Response.error(exc.status_code, messages.get(exc.status_code, exc.code))), exc.status_code
+        message = messages.get(exc.status_code) or str(exc)
+        return jsonify(Response.error(exc.status_code, message)), exc.status_code
     return jsonify(Response.success(data=result))
 
 
