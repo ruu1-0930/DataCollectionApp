@@ -176,6 +176,849 @@
         }
       }
     },
+    "ExportInventoryV1": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "export_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "request_id",
+            "patient_id",
+            "scope",
+            "record_ids",
+            "mode",
+            "contents"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "request_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "patient_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "scope": {
+              "enum": [
+                "records",
+                "patient"
+              ]
+            },
+            "record_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(P[1-9][0-9]*-[0-9]{8}T[0-9]{12}|[0-9a-f-]{36})$"
+              },
+              "uniqueItems": true
+            },
+            "mode": {
+              "enum": [
+                "backup",
+                "export"
+              ]
+            },
+            "contents": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "profiles",
+                  "raw",
+                  "analysis",
+                  "agent"
+                ]
+              },
+              "uniqueItems": true,
+              "minItems": 1
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "scope": {
+                    "const": "patient"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "record_ids": {
+                    "maxItems": 0
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "record_ids": {
+                    "minItems": 1
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "mode": {
+                    "const": "backup"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "contents": {
+                    "minItems": 4
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "inventory": {
+          "type": "object",
+          "properties": {
+            "records": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "record_version": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "recorded_through_at": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "upload_state": {
+                    "enum": [
+                      "pending",
+                      "verified",
+                      "mismatch",
+                      "unknown"
+                    ]
+                  },
+                  "test_type": {
+                    "type": "string"
+                  },
+                  "received_counts": {
+                    "type": "object",
+                    "properties": {
+                      "insole": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "gps": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "radar": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "insole",
+                      "gps",
+                      "radar"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "metadata_hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "record_version",
+                  "recorded_through_at",
+                  "upload_state",
+                  "test_type",
+                  "received_counts",
+                  "metadata_hash"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "snapshots": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "state_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "content_hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "session_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "state_version",
+                  "content_hash",
+                  "session_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "session_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "claimed_run_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "profile_hash": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "records",
+            "snapshots",
+            "session_ids",
+            "claimed_run_ids",
+            "profile_hash"
+          ],
+          "additionalProperties": false
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "enum": [
+            "building",
+            "ready",
+            "failed"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "export_id",
+        "scope_hash",
+        "request",
+        "inventory",
+        "created_at",
+        "expires_at",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "ExportPageV1": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "export_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "kind": {
+          "enum": [
+            "patients",
+            "collections",
+            "frames",
+            "gps",
+            "radar",
+            "targets",
+            "snapshots"
+          ]
+        },
+        "record_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "maxItems": 1000
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "export_id",
+        "scope_hash",
+        "kind",
+        "record_id",
+        "items",
+        "next_cursor"
+      ],
+      "additionalProperties": false
+    },
+    "AgentExportInventoryV1": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "export_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "inventory_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "gait_assessment_report": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "followup_answer": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "clinician_note_draft": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "memory_revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "memory_current": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "gait_assessment_report",
+            "followup_answer",
+            "clinician_note_draft",
+            "memory_revision",
+            "memory_current"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "export_id",
+        "scope_hash",
+        "inventory_hash",
+        "counts"
+      ],
+      "additionalProperties": false
+    },
+    "BundleManifestV1": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "bundle_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "request_id",
+            "patient_id",
+            "scope",
+            "record_ids",
+            "mode",
+            "contents"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "request_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "patient_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "scope": {
+              "enum": [
+                "records",
+                "patient"
+              ]
+            },
+            "record_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(P[1-9][0-9]*-[0-9]{8}T[0-9]{12}|[0-9a-f-]{36})$"
+              },
+              "uniqueItems": true
+            },
+            "mode": {
+              "enum": [
+                "backup",
+                "export"
+              ]
+            },
+            "contents": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "profiles",
+                  "raw",
+                  "analysis",
+                  "agent"
+                ]
+              },
+              "uniqueItems": true,
+              "minItems": 1
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "scope": {
+                    "const": "patient"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "record_ids": {
+                    "maxItems": 0
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "record_ids": {
+                    "minItems": 1
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "mode": {
+                    "const": "backup"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "contents": {
+                    "minItems": 4
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "scope_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "cutoff": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_inventory": {
+          "type": "object",
+          "properties": {
+            "records": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "record_version": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "recorded_through_at": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "upload_state": {
+                    "enum": [
+                      "pending",
+                      "verified",
+                      "mismatch",
+                      "unknown"
+                    ]
+                  },
+                  "test_type": {
+                    "type": "string"
+                  },
+                  "received_counts": {
+                    "type": "object",
+                    "properties": {
+                      "insole": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "gps": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "radar": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "insole",
+                      "gps",
+                      "radar"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "metadata_hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "record_version",
+                  "recorded_through_at",
+                  "upload_state",
+                  "test_type",
+                  "received_counts",
+                  "metadata_hash"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "snapshots": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "state_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "content_hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "session_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "state_version",
+                  "content_hash",
+                  "session_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "session_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "claimed_run_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "profile_hash": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "records",
+            "snapshots",
+            "session_ids",
+            "claimed_run_ids",
+            "profile_hash"
+          ],
+          "additionalProperties": false
+        },
+        "agent_inventory": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "schema_version": {
+                  "const": 1
+                },
+                "export_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "scope_hash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "inventory_hash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "counts": {
+                  "type": "object",
+                  "properties": {
+                    "gait_assessment_report": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "followup_answer": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "clinician_note_draft": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "memory_revision": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "memory_current": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "gait_assessment_report",
+                    "followup_answer",
+                    "clinician_note_draft",
+                    "memory_revision",
+                    "memory_current"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "schema_version",
+                "export_id",
+                "scope_hash",
+                "inventory_hash",
+                "counts"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "raw_counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "insole": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "raw_feet": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "gps": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "radar": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "targets": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "insole",
+              "raw_feet",
+              "gps",
+              "radar",
+              "targets"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "record_id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "test_type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "reason"
+            ]
+          }
+        },
+        "timezone": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "units": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "size_bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "size_bytes",
+              "count",
+              "sha256"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "bundle_id",
+        "request",
+        "scope_hash",
+        "cutoff",
+        "source_inventory",
+        "agent_inventory",
+        "raw_counts",
+        "missing",
+        "timezone",
+        "units",
+        "files"
+      ],
+      "additionalProperties": false
+    },
     "DownloadGrantV1": {
       "type": "object",
       "additionalProperties": false,
