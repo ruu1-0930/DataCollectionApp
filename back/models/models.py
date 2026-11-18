@@ -266,7 +266,7 @@ class GaitSessionRevision(db.Model):
     device_id = db.Column(db.Integer, db.ForeignKey('devices.id'), nullable=False)
     session_key = db.Column(_identity(128), nullable=False)
     revision = db.Column(db.Integer, nullable=False)
-    state = db.Column(_state('session_revision_state', 'collecting', 'closed_by_inactivity', 'superseded'), nullable=False)
+    state = db.Column(_state('session_revision_state', 'collecting', 'closed_by_inactivity', 'superseded', 'closed_by_capture_stop'), nullable=False)
     ordered_row_ids_canonical = db.Column(_canonical, nullable=False)
     first_row_id = db.Column(db.Integer, db.ForeignKey('device_raw_data.id'), nullable=False)
     last_row_id = db.Column(db.Integer, db.ForeignKey('device_raw_data.id'), nullable=False)

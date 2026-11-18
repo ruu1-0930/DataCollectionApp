@@ -22,6 +22,7 @@ _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 _HASH = re.compile(r"[0-9a-f]{64}")
 _MAX_BODY_BYTES = 2048
 _SNAPSHOT_PATHS = (
+    re.compile(r"/v3/patients/[^/]+/collections/[^/]+/snapshots:ensure"),
     re.compile(r"/patients/[^/]+/gait/sessions/[^/]+/snapshots:ensure"),
     re.compile(r"/patients/[^/]+/gait/snapshots/[^/]+(?:/status|/agent-projection|/publication-claims)?"),
 )
@@ -197,6 +198,17 @@ def ensure_snapshot(patient_id, session_id):
         raise SnapshotError("invalid_request")
     result = _service().ensure_snapshot(actor_id=g.clinician_id, patient_id=_patient_id(patient_id),
                                          session_id=session_id)
+    return jsonify(result.snapshot), 201 if result.created else 200
+
+
+@snapshot_bp.post("/v3/patients/<patient_id>/collections/<capture_id>/snapshots:ensure")
+@_route
+def ensure_capture(patient_id, capture_id):
+    _query()
+    if _body(optional=True):
+        raise SnapshotError("invalid_request")
+    result = _service().ensure_capture(actor_id=g.clinician_id, patient_id=_patient_id(patient_id),
+                                       capture_id=_snapshot_id(capture_id))
     return jsonify(result.snapshot), 201 if result.created else 200
 
 

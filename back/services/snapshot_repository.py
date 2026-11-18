@@ -135,7 +135,8 @@ class AnalysisSnapshotRepository:
             if payload[field] != sha256_hex(canonical_json_bytes({k: v for k, v in payload.items() if k != field})):
                 raise SnapshotError("internal_invariant_failed")
         revision = self.session.get(GaitSessionRevision, identity.session_revision_id)
-        if revision.state != "closed_by_inactivity" or full["session_id"] != revision.session_key:
+        expected_state = 'closed_by_capture_stop' if identity.snapshot_schema_version == '3' else 'closed_by_inactivity'
+        if revision.state != expected_state or full["session_id"] != revision.session_key:
             raise SnapshotError("session_superseded")
         attempt = self.session.get(SnapshotBuildAttempt, attempt_id)
         if attempt.state != "running" or attempt.identity_fingerprint != identity.fingerprint or attempt.trace_id != trace_id:
@@ -195,7 +196,7 @@ class AnalysisSnapshotRepository:
         payload.update(snapshot_id=row.id, state=row.state, snapshot_state_version=row.state_version,
                        created_at=utc_text(row.created_at))
         version = row.snapshot_schema_version
-        if version not in {'1', '2'} or payload['schema_version'] != version:
+        if version not in {'1', '2', '3'} or payload['schema_version'] != version:
             raise SnapshotError('snapshot_unavailable')
         _validator(f"AnalysisSnapshotV{version}").validate(payload)
         return payload
@@ -206,7 +207,7 @@ class AnalysisSnapshotRepository:
             raise SnapshotError("snapshot_unavailable")
         payload = json.loads(child.canonical_payload)
         payload.update(snapshot_id=row.id, snapshot_state_version=row.state_version)
-        if version not in {'1', '2'} or payload['projection_schema_version'] != version:
+        if version not in {'1', '2', '3'} or payload['projection_schema_version'] != version:
             raise SnapshotError('snapshot_unavailable')
         _validator(f"AgentSnapshotProjectionV{version}").validate(payload)
         return payload

@@ -7,6 +7,7 @@ import re
 from uuid import UUID, uuid4
 
 from models.models import AnalysisSnapshot, GaitSessionRevision, SnapshotBuildAttempt, SnapshotPublicationClaim
+from services.capture_revision import CaptureRevisionService
 from services.clinical_audit import utc_naive, utc_text, write_audit
 from services.gait_session_revision import GaitSessionRevisionService, SessionResolutionError
 from services.snapshot_contracts import _validator, DERIVATION_ANALYZER_SET_VERSION
@@ -81,13 +82,13 @@ class AnalysisSnapshotService:
     def __init__(self, *, repository=None, pipeline=None, versions=None, clock=None):
         self.repository = repository if repository is not None else AnalysisSnapshotRepository()
         self.versions = versions or SnapshotVersions()
-        if self.versions.projection_schema_version not in {"1", "2"}:
+        if self.versions.projection_schema_version not in {"1", "2", "3"}:
             raise ValueError("unsupported_projection_version")
-        if self.versions.snapshot_schema_version not in {"1", "2"}:
+        if self.versions.snapshot_schema_version not in {"1", "2", "3"}:
             raise ValueError("unsupported_snapshot_version")
         if self.versions.snapshot_schema_version != self.versions.projection_schema_version:
             raise ValueError('unsupported_projection_version')
-        if (pipeline is None and self.versions.snapshot_schema_version == '2'
+        if (pipeline is None and self.versions.snapshot_schema_version in {'2', '3'}
                 and self.versions.analyzer_set_version != DERIVATION_ANALYZER_SET_VERSION):
             raise ValueError('unsupported_analyzer_version')
         self.pipeline = pipeline if pipeline is not None else SnapshotPipeline(
@@ -105,18 +106,25 @@ class AnalysisSnapshotService:
         """Commit invalidation even when a changed session cannot yet close again."""
         now = self.clock()
         source_now = now.astimezone(timezone(timedelta(hours=8))).replace(tzinfo=None)
-        resolver = GaitSessionRevisionService(session=repo.session)
+        capture = session_id.startswith('C:')
+        closed_state = 'closed_by_capture_stop' if capture else 'closed_by_inactivity'
         previously_closed = repo.session.query(GaitSessionRevision).filter_by(
-            patient_id=patient_id, session_key=session_id, state="closed_by_inactivity").all()
+            patient_id=patient_id, session_key=session_id, state=closed_state).all()
         error, resolved = None, None
         try:
-            resolved = resolver.resolve_closed_revision(patient_id=patient_id, session_id=session_id, now=source_now)
+            if capture:
+                resolved = CaptureRevisionService(repo.session).resolve_closed_revision(actor_id, patient_id, session_id[2:])
+            else:
+                resolved = GaitSessionRevisionService(session=repo.session).resolve_closed_revision(
+                    patient_id=patient_id, session_id=session_id, now=source_now)
         except SessionResolutionError as exc:
             code = str(exc)
             error = SnapshotError("invalid_request" if code == "invalid_session_id" else code, trace_id=trace_id)
-            if code in {"collection_in_progress", "session_not_found", "scope_mismatch"}:
+            if code == 'forbidden':
+                raise error
+            if code in {"collection_in_progress", "session_not_found", "scope_mismatch", "snapshot_unavailable"}:
                 revisions = repo.session.query(GaitSessionRevision).filter_by(
-                    patient_id=patient_id, session_key=session_id, state="closed_by_inactivity").all()
+                    patient_id=patient_id, session_key=session_id, state=closed_state).all()
                 for revision in revisions:
                     revision.state = "superseded"
         repo.session.flush()
@@ -137,6 +145,18 @@ class AnalysisSnapshotService:
 
     @_safe_boundary
     def ensure_snapshot(self, *, actor_id: int, patient_id: int, session_id: str) -> EnsureSnapshotResult:
+        if not isinstance(session_id, str) or session_id.startswith('C:') or self.versions.snapshot_schema_version == '3':
+            raise SnapshotError("invalid_request")
+        return self._ensure(actor_id, patient_id, session_id)
+
+    @_safe_boundary
+    def ensure_capture(self, *, actor_id, patient_id, capture_id) -> EnsureSnapshotResult:
+        versions = SnapshotVersions(snapshot_schema_version='3', projection_schema_version='3',
+                                    analyzer_set_version=DERIVATION_ANALYZER_SET_VERSION)
+        producer = AnalysisSnapshotService(repository=self.repository, versions=versions, clock=self.clock)
+        return producer._ensure(actor_id, patient_id, 'C:' + _uuid(capture_id))
+
+    def _ensure(self, actor_id, patient_id, session_id):
         _scope(actor_id, patient_id)
         if not isinstance(session_id, str):
             raise SnapshotError("invalid_request")

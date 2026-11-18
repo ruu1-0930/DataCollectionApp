@@ -24,6 +24,7 @@ from services.gait_analysis import (
 from services.gait_session_revision import raw_rows_fingerprint
 from services.pressure_analysis import summarize_snapshot_pressure_rows
 from services.gait_derivation_quality import analyze_derivation_quality
+from services.capture_revision import capture_frames
 from services.snapshot_contracts import (
     SNAPSHOT_ANALYZER_SET_VERSION,
     DERIVATION_ANALYZER_SET_VERSION,
@@ -271,10 +272,10 @@ class SnapshotPipeline:
 
     def __init__(self, *, row_loader: Callable[[object], Sequence[Mapping[str, object] | object]] | None = None,
                  analyzers: AnalyzerFunctions | None = None, schema_version: str = '1'):
-        if schema_version not in {'1', '2'}:
+        if schema_version not in {'1', '2', '3'}:
             raise ValueError('unsupported_snapshot_version')
         self.schema_version = schema_version
-        self.analyzer_set_version = DERIVATION_ANALYZER_SET_VERSION if schema_version == '2' else SNAPSHOT_ANALYZER_SET_VERSION
+        self.analyzer_set_version = DERIVATION_ANALYZER_SET_VERSION if schema_version in {'2', '3'} else SNAPSHOT_ANALYZER_SET_VERSION
         self._row_loader = row_loader or self._load_revision_rows
         self._analyzers = analyzers or AnalyzerFunctions.defaults()
 
@@ -297,7 +298,8 @@ class SnapshotPipeline:
         rows, exclusions = self._filter_rows(revision, raw_rows)
         if not rows:
             raise SnapshotUnavailableError("no_analyzable_rows")
-        frames = build_snapshot_frames(rows)
+        manifest = json.loads(revision.closure_evidence_canonical) if self.schema_version == '3' else None
+        frames = capture_frames(rows, manifest['frame_pairs']) if manifest else build_snapshot_frames(rows)
         if not frames:
             raise SnapshotUnavailableError("no_analyzable_frames")
         results, statuses = self._run_independent(rows, frames)
@@ -307,7 +309,7 @@ class SnapshotPipeline:
 
         metrics = _metric_dto(results["metrics"]["metrics"])
         derivation = None
-        if self.schema_version == '2':
+        if self.schema_version in {'2', '3'}:
             try:
                 derivation = analyze_derivation_quality(frames)
             except Exception:
@@ -316,6 +318,8 @@ class SnapshotPipeline:
         flags = _flag_dto(
             results["metrics"]["metrics"], withheld=quality["gate"] == "withheld"
         )
+        if manifest and manifest['source']['test_type'] != 'walk_10m_usual':
+            flags = []
         pressure = _pressure_dto(results["pressure"]) if results.get("pressure") is not None else None
         if pressure is not None and quality["gate"] == "withheld":
             pressure["attention"] = {
@@ -378,6 +382,8 @@ class SnapshotPipeline:
         }
         if derivation is not None:
             full['derivation_quality'] = derivation
+        if manifest:
+            full['source'] = manifest['source']
         full["content_hash"] = self._hash_without(full, "content_hash")
         projection = {
             key: full[key]
@@ -389,6 +395,8 @@ class SnapshotPipeline:
         }
         if derivation is not None:
             projection['derivation_quality'] = derivation
+        if manifest:
+            projection['source'] = manifest['source']
         projection["projection_schema_version"] = self.schema_version
         projection["snapshot_content_hash"] = full["content_hash"]
         projection["projection_content_hash"] = self._hash_without(
@@ -405,9 +413,9 @@ class SnapshotPipeline:
     def _hash_without(payload: Mapping[str, object], field: str) -> str:
         return sha256_hex(canonical_json_bytes({key: value for key, value in payload.items() if key != field}))
 
-    @staticmethod
-    def _require_closed_revision(revision) -> None:
-        if revision.state != "closed_by_inactivity":
+    def _require_closed_revision(self, revision) -> None:
+        expected = 'closed_by_capture_stop' if self.schema_version == '3' else 'closed_by_inactivity'
+        if revision.state != expected:
             raise SnapshotUnavailableError("revision_not_closed")
 
     @staticmethod
@@ -517,9 +525,6 @@ class SnapshotPipeline:
     @staticmethod
     def _session_dto(revision, raw_fingerprint):
         closure = json.loads(revision.closure_evidence_canonical)
-        reason = closure["reason"]
-        if reason == "later_accepted_row_gap":
-            reason = "later_accepted_row"
         return {
             "start_at": _timestamp(revision.event_start_at),
             "end_at": _timestamp(revision.event_end_at),
@@ -528,12 +533,12 @@ class SnapshotPipeline:
             "row_count": revision.row_count,
             "last_accepted_row_id": revision.last_accepted_row_id,
             "raw_data_fingerprint": raw_fingerprint,
-            "closure": {
+            "closure": closure["closure"] if revision.closure_policy_version == 'capture-v1' else {
                 "state": "closed_by_inactivity",
                 "closed_at": _timestamp(revision.closed_at),
                 "policy_version": closure["policy_version"],
                 "gap_ms": int(Decimal(closure["idle_seconds"]) * 1000),
-                "reason": reason,
+                "reason": "later_accepted_row" if closure["reason"] == "later_accepted_row_gap" else closure["reason"],
                 "evidence_at": _timestamp(datetime.fromisoformat(closure["observed_at"])),
                 "next_row_id": closure["next_accepted_row_id"],
             },

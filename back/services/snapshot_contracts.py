@@ -34,7 +34,7 @@ class SnapshotBuildProduct:
 
 
 def _validator(definition_name: str) -> Draft202012Validator:
-    version = '2' if definition_name.endswith('V2') else '1'
+    version = definition_name[-1]
     schema_path = Path(__file__).parents[1] / "contracts" / f"gait_snapshot_v{version}.schema.json"
     document = json.loads(schema_path.read_text(encoding="utf-8"))
     return Draft202012Validator({**document, "$ref": "#/$defs/" + definition_name})
@@ -44,11 +44,16 @@ def validate_build_product(*, full_snapshot: Mapping[str, object],
                            agent_projection: Mapping[str, object]) -> None:
     """Reject an incomplete internal build before it reaches T04 persistence."""
     version = full_snapshot.get('schema_version')
-    if version not in {'1', '2'} or agent_projection.get('projection_schema_version') != version:
+    if version not in {'1', '2', '3'} or agent_projection.get('projection_schema_version') != version:
         raise ValueError('unsupported_snapshot_version_pair')
     _validator(f"SnapshotBuildFullV{version}").validate(full_snapshot)
     _validator(f"SnapshotBuildAgentProjectionV{version}").validate(agent_projection)
-    if version == '2':
+    if version == '3':
+        source = full_snapshot['source']
+        if (source != agent_projection['source'] or full_snapshot['session_id'] != 'C:' + source['capture_id']
+                or full_snapshot['session']['closure']['registration_hash'] != source['registration_hash']):
+            raise ValueError('capture_source_mismatch')
+    if version in {'2', '3'}:
         for payload in (full_snapshot, agent_projection):
             _validate_derivation_counts(payload)
 
