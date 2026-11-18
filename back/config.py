@@ -79,6 +79,8 @@ def create_app(test_config=None):
 
     from api.data_management import data_management_bp
     app.register_blueprint(data_management_bp)
+    from api.data_export import data_export_bp
+    app.register_blueprint(data_export_bp)
     app.config.setdefault('AGENT_DATA_MANAGEMENT_URL', os.environ.get('SARCOGAIT_AGENT_URL', ''))
 
     from api.snapshot import snapshot_bp

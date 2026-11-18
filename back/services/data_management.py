@@ -225,6 +225,8 @@ def begin_delete(actor, request, token=None, *, client=None):
             raise ManagementError(409, 'preview_expired')
         scope = json.loads(preview.scope_json)
         inventory, patient = _inventory(session, actor, scope)
+        from services.data_export import assert_no_export
+        assert_no_export(session, patient.id)
         if _hash(scope, inventory) != preview.scope_hash:
             raise ManagementError(409, 'preview_stale')
         if inventory['pending_upload'] and not request['discard_pending']:
