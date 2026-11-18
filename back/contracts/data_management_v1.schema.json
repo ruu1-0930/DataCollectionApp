@@ -391,6 +391,33 @@
         },
         "agent_confirmation_required": {
           "type": "boolean"
+        },
+        "export_files": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "bundle_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "patient_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "scope_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "bundle_id",
+              "patient_id",
+              "scope_hash"
+            ]
+          }
         }
       },
       "required": [
@@ -405,7 +432,8 @@
         "snapshot_ids",
         "session_ids",
         "expected_agent_inventory_hash",
-        "agent_confirmation_required"
+        "agent_confirmation_required",
+        "export_files"
       ]
     },
     "AgentManagementRequestV1": {

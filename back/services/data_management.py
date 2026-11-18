@@ -17,6 +17,7 @@ from services.collection_verification import verification_for_capture
 from services.data_management_scope import (ManagementPreview, ManagementOperation, ManagementItem,
     ManagementAuditBridge, frozen_inventory, assert_clinical_scope)
 from services.agent_data_management_client import AgentDataManagementClient, AgentManagementError
+from services.workbench_bundle_client import WorkbenchBundleClient, WorkbenchBundleError
 
 
 class ManagementError(AccessError):
@@ -31,6 +32,11 @@ def _schemas():
 def validate(name, value):
     try:
         Draft202012Validator(_schemas()[name]).validate(value)
+        if name == 'ManagementOperationV1':
+            refs = value['export_files']
+            if (len({ref['bundle_id'] for ref in refs}) != len(refs)
+                    or any(ref['patient_id'] != value['scope']['patient_id'] for ref in refs)):
+                raise ValueError('invalid_export_scope')
     except Exception:
         raise ManagementError(400, 'invalid_request') from None
     return value
@@ -116,11 +122,22 @@ def _inventory(session, actor, scope):
     sessions = sorted({r.session_key for r in revisions if r.id in affected} | ({'C:' + scope['record_id']} if scope['kind'] == 'capture' else {scope['record_id']}))
     extra = sorted(s.id for s in snapshots if s.id in snapshot_ids and s.session_revision_id in
                    {r.id for r in revisions if r.id in affected and set(json.loads(r.ordered_row_ids_canonical)) - raw_ids})
+    # Freeze server-owned bundle bindings across all owners and states, including expired
+    # packages whose files can still exist. The patient lock also serializes export creation.
+    from services.data_export import ExportInventory
+    export_files = []
+    for bundle in session.query(ExportInventory).filter_by(patient_id=patient.id).order_by(ExportInventory.id):
+        request, frozen = json.loads(bundle.request_json), json.loads(bundle.inventory_json)
+        if (request['scope'] == 'patient' or scope['record_id'] in frozen['records']
+                or snapshot_ids.intersection(s['id'] for s in frozen['snapshots'])
+                or set(sessions).intersection(frozen['session_ids'])):
+            export_files.append(dict(bundle_id=bundle.id, patient_id=patient.id, scope_hash=bundle.scope_hash))
     counts = {name: len(values) for name, values in ids.items()}
+    counts['export_files'] = len(export_files)
     counts['agent_snapshot_projection'] = session.query(AgentSnapshotProjection).filter(AgentSnapshotProjection.snapshot_id.in_(snapshot_ids)).count()
     versions = dict(source_versions)
     versions.update({s.id: str(s.state_version) + ':' + s.content_hash for s in snapshots if s.id in snapshot_ids})
-    return dict(items=ids, snapshot_ids=sorted(snapshot_ids), session_ids=sessions,
+    return dict(items=ids, export_files=export_files, snapshot_ids=sorted(snapshot_ids), session_ids=sessions,
                 source_versions=versions, counts=counts, extra_affected_results=extra, pending_upload=pending), patient
 
 
@@ -190,7 +207,7 @@ def _dto(operation):
         scope=json.loads(operation.scope_json), scope_hash=operation.scope_hash, stage=operation.stage,
         state=operation.state, counts=json.loads(operation.counts_json), error_code=operation.error_code,
         snapshot_ids=inventory.get('snapshot_ids', []), session_ids=inventory.get('session_ids', []),
-        expected_agent_inventory_hash=inventory['agent_inventory_hash'],
+        export_files=inventory['export_files'], expected_agent_inventory_hash=inventory['agent_inventory_hash'],
         agent_confirmation_required=operation.error_code == 'agent_reconfirmation_required'))
 
 
@@ -242,6 +259,8 @@ def begin_delete(actor, request, token=None, *, client=None):
             stage='fenced', state='running', discard_pending=request['discard_pending'], created_at=datetime.utcnow())
         session.add(operation)
         session.flush()
+        from services.data_export import ExportGrant
+        session.query(ExportGrant).filter(ExportGrant.export_id.in_([ref['bundle_id'] for ref in inventory['export_files']])).delete(synchronize_session=False)
         for table, values in inventory['items'].items():
             session.add_all(ManagementItem(operation_id=operation.id, table_name=table, row_id=v) for v in values)
         return _dto(operation)
@@ -315,6 +334,10 @@ DELETE_MODELS = (ClinicalAuditEvent, IntegrationOutbox, SnapshotPublicationClaim
 
 def _purge_backend(session, operation):
     inventory = frozen_inventory(operation)
+    from services.data_export import ExportGrant, ExportInventory
+    export_ids = [ref['bundle_id'] for ref in inventory['export_files']]
+    session.query(ExportGrant).filter(ExportGrant.export_id.in_(export_ids)).delete(synchronize_session=False)
+    session.query(ExportInventory).filter(ExportInventory.id.in_(export_ids)).delete(synchronize_session=False)
     for event in session.query(ClinicalAuditEvent).filter(ClinicalAuditEvent.id.in_(inventory['items']['clinical_audit_event'])):
         session.add(ManagementAuditBridge(event_hash=event.event_hash, previous_event_hash=event.previous_event_hash,
                                          operation_id=operation.id))
@@ -370,6 +393,23 @@ def continue_delete(actor, operation_id, token, *, client=None):
                 counts.update({'agent_' + k: v for k, v in receipt['counts'].items()})
                 row.counts_json = _json(counts)
                 row.stage, row.state, row.error_code = 'agent_purged', 'running', None
+    # No B transaction is held: WB re-reads this authorized operation before touching files.
+    operation = get_operation(actor, operation_id)
+    if operation['stage'] == 'agent_purged':
+        try:
+            receipt = WorkbenchBundleClient().purge(operation, token)
+            if (set(receipt) != {'schema_version', 'operation_id', 'scope_hash', 'completed', 'count'}
+                    or type(receipt['schema_version']) is not int or receipt['schema_version'] != 1
+                    or receipt['operation_id'] != operation_id or receipt['scope_hash'] != operation['scope_hash']
+                    or receipt['completed'] is not True or type(receipt['count']) is not int
+                    or receipt['count'] != len(operation['export_files'])):
+                raise WorkbenchBundleError('bundle_purge_receipt_mismatch')
+        except Exception as error:
+            with write_transaction() as session:
+                row = _authorized_operation(session, actor, operation_id)
+                if row.stage == 'agent_purged':
+                    row.state, row.error_code = 'retryable_failed', (error.code if isinstance(error, WorkbenchBundleError) else 'bundle_purge_unavailable')
+                return _dto(row)
     try:
         with write_transaction() as session:
             row = _authorized_operation(session, actor, operation_id)
@@ -384,7 +424,7 @@ def continue_delete(actor, operation_id, token, *, client=None):
                 row.stage, row.state, row.completed_at = 'completed', 'completed', datetime.utcnow()
                 # Minimize receipts; frozen row lists are needed only until all phases succeed.
                 inventory = frozen_inventory(row)
-                row.inventory_json = _json({key: inventory[key] for key in ('snapshot_ids', 'session_ids', 'agent_inventory_hash')})
+                row.inventory_json = _json({key: inventory[key] for key in ('snapshot_ids', 'session_ids', 'agent_inventory_hash', 'export_files')})
                 session.query(ManagementItem).filter_by(operation_id=row.id).delete()
                 session.query(ManagementPreview).filter_by(scope_json=row.scope_json).delete(synchronize_session=False)
             return _dto(row)

@@ -85,6 +85,15 @@ def create_app(test_config=None):
         app.register_blueprint(data_management_bp)
         app.register_blueprint(data_export_bp)
         app.config.setdefault('AGENT_DATA_MANAGEMENT_URL', os.environ.get('SARCOGAIT_AGENT_URL', ''))
+        app.config.setdefault('WORKBENCH_DATA_MANAGEMENT_URL', os.environ.get('SARCOGAIT_WORKBENCH_URL', ''))
+        from services.workbench_bundle_client import workbench_url
+        from services.data_management_prerequisites import require_management_schema
+        try:
+            workbench_url(app.config['WORKBENCH_DATA_MANAGEMENT_URL'])
+        except ValueError:
+            raise RuntimeError('data_management_requires_SARCOGAIT_WORKBENCH_URL') from None
+        with app.app_context():
+            require_management_schema()
 
     from api.snapshot import snapshot_bp
     app.register_blueprint(snapshot_bp)
