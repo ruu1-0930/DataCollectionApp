@@ -7,8 +7,9 @@ from uuid import uuid4
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 import pytest
 from referencing import Registry, Resource
+from sqlalchemy import null
 
-from models.models import AnalysisSnapshot, DeviceRawData
+from models.models import AnalysisSnapshot, CollectionSession, DeviceRawData
 from services.collection_ingest import LEFT_FIELDS
 from services.gait_session_revision import _session_id
 from tests.test_collection_ingest import batch, capture, create, event, stamp
@@ -266,3 +267,21 @@ def test_patient_and_record_ownership_are_rechecked_for_all_raw_routes(client, c
         assert client.get(collection_path(wrong_patient, path), headers=capture['headers']).status_code == 404
         assert client.get(collection_path(capture, path), headers=admin_scope['admin']['headers']).status_code == 200
     assert client.get(collection_path(capture), headers=outsider).status_code == 403
+
+
+@pytest.mark.parametrize('dated_legacy', [True, False], ids=['mixed-legacy', 'only-undated-legacy'])
+def test_undated_legacy_rows_do_not_break_collection_directory(client, capture, db, dated_legacy):
+    assert create_v2(client, capture).status_code == 200
+    source = CollectionSession.query.one()
+    undated_id = _legacy_left(db, source, null())
+    at = datetime(2026, 10, 21, 0, 0, 0)
+    expected = {capture['capture_id']: 0}
+    if dated_legacy:
+        _legacy_left(db, source, at)
+        expected[_session_id(capture['patient_id'], at)] = 1
+    db.session.commit()
+    assert db.session.get(DeviceRawData, undated_id).collected_at is None
+
+    records = read(client, capture)['items']
+    assert {record['record_id']: record['received_counts']['insole'] for record in records} == expected
+    assert db.session.get(DeviceRawData, undated_id).collected_at is None

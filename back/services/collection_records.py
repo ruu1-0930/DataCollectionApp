@@ -228,7 +228,9 @@ def _capture_records(session, patient_id, owner_id, filters, after):
 
 
 def _raw_base(session, patient_id, columns):
-    return session.query(*columns).filter(DeviceRawData.patient_id == patient_id)
+    # A row with no legacy timestamp cannot establish or belong to a gap-v1 session.
+    return session.query(*columns).filter(DeviceRawData.patient_id == patient_id,
+                                          DeviceRawData.collected_at.is_not(None))
 
 
 def _read_raw_chunks(query, *, reverse=False):
