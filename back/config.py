@@ -77,11 +77,14 @@ def create_app(test_config=None):
     from api.collection_records import collection_records_bp
     app.register_blueprint(collection_records_bp)
 
-    from api.data_management import data_management_bp
-    app.register_blueprint(data_management_bp)
-    from api.data_export import data_export_bp
-    app.register_blueprint(data_export_bp)
-    app.config.setdefault('AGENT_DATA_MANAGEMENT_URL', os.environ.get('SARCOGAIT_AGENT_URL', ''))
+    management_enabled = os.getenv('SARCOGAIT_DATA_MANAGEMENT_ENABLED', '').strip().lower() == 'true'
+    if management_enabled:
+        from api.data_management import data_management_bp
+        from api.data_export import data_export_bp
+
+        app.register_blueprint(data_management_bp)
+        app.register_blueprint(data_export_bp)
+        app.config.setdefault('AGENT_DATA_MANAGEMENT_URL', os.environ.get('SARCOGAIT_AGENT_URL', ''))
 
     from api.snapshot import snapshot_bp
     app.register_blueprint(snapshot_bp)
