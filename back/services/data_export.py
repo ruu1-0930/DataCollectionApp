@@ -21,6 +21,7 @@ from services.collection_records import (_source, _LegacySource, _legacy_sources
     _capture_cutoff, _capture_frame_rows, _legacy_frame_rows, _legacy_after, _id_after,
     _encode_cursor, _decode_cursor, _when)
 from services.collection_verification import verification_for_capture
+from services.canonical_json import canonical_json_bytes
 from services.data_management_scope import assert_clinical_scope
 
 PAGE = 4 * 1024 * 1024
@@ -250,7 +251,9 @@ def _rows(session, kind, patient, owner, inventory, record_id, after):
             if idx > (after or 0):
                 snap = session.get(AnalysisSnapshot, meta['id'])
                 data = _row(snap)
-                if sha256(data['canonical_payload'].encode()).hexdigest() != meta['content_hash']:
+                payload = json.loads(data['canonical_payload'])
+                recorded_hash = payload.pop('content_hash', None)
+                if recorded_hash != meta['content_hash'] or sha256(canonical_json_bytes(payload)).hexdigest() != recorded_hash:
                     raise AccessError(409, 'snapshot_hash_mismatch')
                 yield idx, {**data, 'session_id': meta['session_id']}
         return
