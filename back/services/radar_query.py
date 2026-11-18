@@ -57,6 +57,16 @@ def _verified_payload(row):
         raise CollectionError(503) from None
 
 
+def capture_radar_item(row):
+    payload = _verified_payload(row)
+    label, reasons = _quality(row)
+    return dict(event_id=row.event_id, capture_id=row.capture_id, sample_id=row.id,
+                connection_epoch=row.connection_epoch, stream_sequence=row.stream_sequence,
+                mobile_received_at=time_string(row.mobile_received_at),
+                server_received_at=time_string(row.server_received_at),
+                payload=payload, quality=label, reason_codes=reasons)
+
+
 def session_radar(account, patient_id, session_id, page=1, page_size=500):
     patient = db.session.get(Patient,patient_id)
     if patient is None:

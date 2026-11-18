@@ -5,6 +5,14 @@ from config import db
 from models.models import CollectionSession, CollectionInsoleFrame, DeviceRawData
 
 
+def raw_has_capture():
+    """Correlate each raw row to either of the two exact capture links."""
+    return or_(
+        select(CollectionInsoleFrame.id).where(CollectionInsoleFrame.left_raw_id == DeviceRawData.id).exists(),
+        select(CollectionInsoleFrame.id).where(CollectionInsoleFrame.right_raw_id == DeviceRawData.id).exists(),
+    )
+
+
 def build_collection_slices(patient_id, bounds):
     raw_ids = select(DeviceRawData.id).where(DeviceRawData.patient_id == patient_id,
         DeviceRawData.collected_at >= bounds[0], DeviceRawData.collected_at <= bounds[1])

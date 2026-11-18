@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Collection directory and raw record reads v1",
+  "$defs": {
+    "CaptureID": {"type": "string", "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$"},
+    "LegacyID": {"type": "string", "pattern": "^P[1-9][0-9]*-[0-9]{8}T[0-9]{12}$", "maxLength": 128},
+    "RecordID": {"oneOf": [{"$ref": "#/$defs/CaptureID"}, {"$ref": "#/$defs/LegacyID"}]},
+    "ID": {"type": "integer", "minimum": 1},
+    "Version": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "Time": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"},
+    "EventTime": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
+    "OptionalTime": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/Time"}]},
+    "Cursor": {"type": ["null", "string"], "pattern": "^[A-Za-z0-9_-]{1,512}$"},
+    "Count": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "NumberOrNull": {"type": ["number", "null"]},
+    "UploadState": {"enum": ["pending", "verified", "mismatch", "unknown"]},
+    "Counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["insole", "gps", "radar"],
+      "properties": {
+        "insole": {"$ref": "#/$defs/Count"},
+        "gps": {"$ref": "#/$defs/Count"},
+        "radar": {"$ref": "#/$defs/Count"}
+      }
+    },
+    "PatientSnapshotV1": {"$ref": "collection_registration_v1.schema.json#/$defs/PatientSnapshotV1"},
+    "CollectionVerificationV1": {"$ref": "collection_v2.schema.json#/$defs/CollectionVerificationV1"},
+    "TechnicalQuality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left_raw_rows", "right_raw_rows", "frames_missing_left", "frames_missing_right", "missing_required_values", "mobile_time_regressions", "insole_sequence_gaps"],
+      "properties": {
+        "left_raw_rows": {"$ref": "#/$defs/Count"},
+        "right_raw_rows": {"$ref": "#/$defs/Count"},
+        "frames_missing_left": {"$ref": "#/$defs/Count"},
+        "frames_missing_right": {"$ref": "#/$defs/Count"},
+        "missing_required_values": {"$ref": "#/$defs/Count", "description": "Missing or nonfinite values in each side's four required firmware fields. A missing side contributes four."},
+        "mobile_time_regressions": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/Count"}], "description": "Comparisons of adjacent present insole sequence numbers within a connection epoch. Null if no pair was comparable."},
+        "insole_sequence_gaps": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/Count"}], "description": "Number of observed insole sequence discontinuities within a connection epoch. Null if no pair was comparable."}
+      }
+    },
+    "CollectionRecordV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_kind", "record_id", "patient_id", "test_type", "patient_snapshot", "remarks", "age_at_capture", "started_at", "ended_at", "duration_s", "recorded_through_at", "received_counts", "capture_state", "upload_state", "record_version", "technical_quality"],
+      "properties": {
+        "record_kind": {"enum": ["capture", "legacy_session"]},
+        "record_id": {"$ref": "#/$defs/RecordID"},
+        "patient_id": {"$ref": "#/$defs/ID"},
+        "test_type": {"enum": ["legacy_unspecified", "static_standing", "walk_10m_usual", "five_times_sit_to_stand", "tug", "free_capture"]},
+        "patient_snapshot": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/PatientSnapshotV1"}]},
+        "remarks": {"type": ["null", "string"], "maxLength": 2000},
+        "age_at_capture": {"type": ["null", "integer"], "minimum": 0, "maximum": 150},
+        "started_at": {"$ref": "#/$defs/Time"},
+        "ended_at": {"$ref": "#/$defs/OptionalTime"},
+        "duration_s": {"type": ["null", "number"], "minimum": 0},
+        "recorded_through_at": {"$ref": "#/$defs/OptionalTime", "description": "Latest persisted raw server receipt, null when unavailable."},
+        "received_counts": {"$ref": "#/$defs/Counts"},
+        "capture_state": {"enum": ["active", "stopped", "unknown"]},
+        "upload_state": {"$ref": "#/$defs/UploadState"},
+        "record_version": {"$ref": "#/$defs/Version"},
+        "technical_quality": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/TechnicalQuality"}], "description": "Computed by the record detail endpoint."}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"record_kind": {"const": "legacy_session"}}},
+          "then": {"properties": {"record_id": {"$ref": "#/$defs/LegacyID"}, "test_type": {"const": "legacy_unspecified"}, "capture_state": {"const": "unknown"}, "upload_state": {"const": "unknown"}, "ended_at": {"$ref": "#/$defs/Time"}, "duration_s": {"type": "number"}}},
+          "else": {"properties": {"record_id": {"$ref": "#/$defs/CaptureID"}, "capture_state": {"enum": ["active", "stopped"]}}}
+        },
+        {
+          "if": {"properties": {"test_type": {"const": "legacy_unspecified"}}},
+          "then": {"properties": {"patient_snapshot": {"type": "null"}, "remarks": {"type": "null"}, "age_at_capture": {"type": "null"}}},
+          "else": {"properties": {"patient_snapshot": {"$ref": "#/$defs/PatientSnapshotV1"}, "remarks": {"type": "string"}, "age_at_capture": {"type": "integer"}}}
+        }
+      ]
+    },
+    "CollectionPageV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["patient_id", "items", "next_cursor"],
+      "properties": {
+        "patient_id": {"$ref": "#/$defs/ID"},
+        "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/CollectionRecordV1"}},
+        "next_cursor": {"$ref": "#/$defs/Cursor"}
+      }
+    },
+    "Pressure": {
+      "type": "object",
+      "propertyNames": {"pattern": "^p[1-9]$"},
+      "required": ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"],
+      "additionalProperties": {"$ref": "#/$defs/NumberOrNull"}
+    },
+    "IMU": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[ag][xyz]$"},
+      "required": ["ax", "ay", "az", "gx", "gy", "gz"],
+      "additionalProperties": {"$ref": "#/$defs/NumberOrNull"}
+    },
+    "RawFoot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_id", "device_id", "collected_at", "uploaded_at", "pressure", "pressure_unit", "imu", "imu_unit", "walking_speed_mps", "step_length_m", "single_support_time_s", "double_support_time_s"],
+      "properties": {
+        "raw_id": {"$ref": "#/$defs/ID"},
+        "device_id": {"$ref": "#/$defs/ID"},
+        "collected_at": {"$ref": "#/$defs/Time"},
+        "uploaded_at": {"$ref": "#/$defs/OptionalTime"},
+        "pressure": {"$ref": "#/$defs/Pressure"},
+        "pressure_unit": {"const": "ADC"},
+        "imu": {"$ref": "#/$defs/IMU"},
+        "imu_unit": {"const": "raw_unscaled"},
+        "walking_speed_mps": {"$ref": "#/$defs/NumberOrNull"},
+        "step_length_m": {"$ref": "#/$defs/NumberOrNull"},
+        "single_support_time_s": {"$ref": "#/$defs/NumberOrNull"},
+        "double_support_time_s": {"$ref": "#/$defs/NumberOrNull"}
+      }
+    },
+    "RawFrame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame_id", "event_id", "connection_epoch", "stream_sequence", "mobile_received_at", "server_received_at", "legacy_collected_at", "left", "right"],
+      "properties": {
+        "frame_id": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/ID"}]},
+        "event_id": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/CaptureID"}]},
+        "connection_epoch": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/Count"}]},
+        "stream_sequence": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/Count"}]},
+        "mobile_received_at": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/EventTime"}]},
+        "server_received_at": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/EventTime"}]},
+        "legacy_collected_at": {"$ref": "#/$defs/OptionalTime"},
+        "left": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/RawFoot"}]},
+        "right": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/RawFoot"}]}
+      }
+    },
+    "GpsSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sample_id", "event_id", "capture_id", "connection_epoch", "stream_sequence", "mobile_received_at", "server_received_at", "raw_line", "seq", "fix", "lat", "lon", "alt", "speed", "sats", "hdop", "age", "utc", "chars", "errors", "quality", "reason_codes"],
+      "properties": {
+        "sample_id": {"$ref": "#/$defs/ID"},
+        "event_id": {"$ref": "#/$defs/CaptureID"},
+        "capture_id": {"$ref": "#/$defs/CaptureID"},
+        "connection_epoch": {"$ref": "#/$defs/Count"},
+        "stream_sequence": {"$ref": "#/$defs/Count"},
+        "mobile_received_at": {"$ref": "#/$defs/EventTime"},
+        "server_received_at": {"$ref": "#/$defs/EventTime"},
+        "raw_line": {"type": "string", "maxLength": 1024},
+        "seq": {"$ref": "#/$defs/Count"},
+        "fix": {"type": "boolean"},
+        "lat": {"$ref": "#/$defs/NumberOrNull"},
+        "lon": {"$ref": "#/$defs/NumberOrNull"},
+        "alt": {"$ref": "#/$defs/NumberOrNull"},
+        "speed": {"$ref": "#/$defs/NumberOrNull"},
+        "sats": {"$ref": "#/$defs/Count"},
+        "hdop": {"$ref": "#/$defs/NumberOrNull"},
+        "age": {"$ref": "#/$defs/Count"},
+        "utc": {"type": "string", "maxLength": 1024},
+        "chars": {"$ref": "#/$defs/Count"},
+        "errors": {"$ref": "#/$defs/Count"},
+        "quality": {"enum": ["good", "fair", "weak", "invalid"]},
+        "reason_codes": {"type": "array", "uniqueItems": true, "items": {"enum": ["no_fix", "invalid_coordinates", "insufficient_satellites", "stale_fix", "invalid_hdop"]}}
+      }
+    },
+    "RadarSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sample_id", "event_id", "capture_id", "connection_epoch", "stream_sequence", "mobile_received_at", "server_received_at", "payload", "quality", "reason_codes"],
+      "properties": {
+        "sample_id": {"$ref": "#/$defs/ID"},
+        "event_id": {"$ref": "#/$defs/CaptureID"},
+        "capture_id": {"$ref": "#/$defs/CaptureID"},
+        "connection_epoch": {"$ref": "#/$defs/Count"},
+        "stream_sequence": {"$ref": "#/$defs/Count"},
+        "mobile_received_at": {"$ref": "#/$defs/EventTime"},
+        "server_received_at": {"$ref": "#/$defs/EventTime"},
+        "payload": {"$ref": "collection_radar_v1.schema.json"},
+        "quality": {"enum": ["fresh", "stale", "empty"]},
+        "reason_codes": {"type": "array", "uniqueItems": true, "items": {"enum": ["no_frames", "reported_stale", "age_missing", "age_exceeded"]}}
+      }
+    },
+    "RawPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_id", "record_version", "items", "next_cursor"],
+      "properties": {
+        "record_id": {"$ref": "#/$defs/RecordID"},
+        "record_version": {"$ref": "#/$defs/Version"},
+        "items": {"type": "array", "maxItems": 500},
+        "next_cursor": {"$ref": "#/$defs/Cursor"}
+      }
+    },
+    "FramePage": {
+      "$ref": "#/$defs/RawPage",
+      "properties": {"items": {"items": {"$ref": "#/$defs/RawFrame"}}}
+    },
+    "GpsPage": {
+      "$ref": "#/$defs/RawPage",
+      "properties": {"items": {"items": {"$ref": "#/$defs/GpsSample"}}}
+    },
+    "RadarPage": {
+      "$ref": "#/$defs/RawPage",
+      "properties": {"items": {"items": {"$ref": "#/$defs/RadarSample"}}}
+    }
+  }
+}

@@ -74,6 +74,9 @@ def create_app(test_config=None):
     from api.collection import collection_bp
     app.register_blueprint(collection_bp)
 
+    from api.collection_records import collection_records_bp
+    app.register_blueprint(collection_records_bp)
+
     from api.snapshot import snapshot_bp
     app.register_blueprint(snapshot_bp)
 

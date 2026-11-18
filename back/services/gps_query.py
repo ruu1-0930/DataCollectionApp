@@ -33,6 +33,14 @@ def quality(row):
     return ('good' if row.hdop <= 3 else 'fair' if row.hdop <= 5 else 'weak'), []
 
 
+def capture_gps_item(row):
+    label, reasons = quality(row)
+    return dict({key: getattr(row, key) for key in GPS_FIELDS},
+                sample_id=row.id, mobile_received_at=time_string(row.mobile_received_at),
+                server_received_at=time_string(row.server_received_at),
+                quality=label, reason_codes=reasons)
+
+
 def _distance(first, second):
     lat1, lat2 = math.radians(first.lat), math.radians(second.lat)
     dlat, dlon = lat2-lat1, math.radians(second.lon-first.lon)
