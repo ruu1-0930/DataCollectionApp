@@ -39,9 +39,12 @@ def require_capability(account: AccountContext, capability: str) -> None:
         raise AccessError(403, 'forbidden')
 
 
-def require_patient_scope(account: AccountContext, *, owner_id: int, capability: str) -> None:
+def require_patient_scope(account: AccountContext, *, owner_id: int, capability: str, patient_id=None, session=None) -> None:
     require_capability(account, capability)
     if type(owner_id) is not int or owner_id < 1:
         raise AccessError(403, 'forbidden')
     if account.role != 'admin' and owner_id != account.clinician_id:
         raise AccessError(403, 'forbidden')
+    if patient_id is not None and capability != 'data.manage':
+        from services.data_management_scope import assert_clinical_scope
+        assert_clinical_scope(db.session if session is None else session, patient_id)

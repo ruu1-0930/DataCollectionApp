@@ -117,6 +117,7 @@ def _read(action, patient_id=None, snapshot_id=None):
     except (SQLAlchemyError, ValidationError, ValueError, TypeError):
         code = 503
     return jsonify(Response.error(code, {400: '查询参数无效', 404: '业务记录不存在或关联不匹配',
+                                        409: '数据范围正在管理处理中', 410: '数据范围已删除',
                                         503: '业务记录暂不可读'}[code])), code
 
 

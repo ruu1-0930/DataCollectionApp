@@ -59,7 +59,7 @@ def _readable_patient_or_resp(patient_id):
     if not patient:
         return None, (jsonify(Response.error(404, "患者不存在")), 404)
     try:
-        require_patient_scope(g.account_context, owner_id=patient.clinician_id, capability='clinical.read')
+        require_patient_scope(g.account_context, owner_id=patient.clinician_id, capability='clinical.read', patient_id=patient.id)
     except AccessError:
         return None, (jsonify(Response.error(403, "无权访问该患者")), 403)
     return patient, None

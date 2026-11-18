@@ -80,6 +80,8 @@ class AnalysisSnapshotRepository:
                             require_patient_scope(account, owner_id=patient.clinician_id, capability='snapshot.execute')
                         except AccessError:
                             raise SnapshotError("forbidden") from None
+                    from services.data_management_scope import assert_clinical_scope
+                    assert_clinical_scope(session, patient_id)
                     yield AnalysisSnapshotRepository(self.engine, session=session)
                     session.commit()
                 except BaseException:
@@ -87,6 +89,8 @@ class AnalysisSnapshotRepository:
                     raise
 
     def snapshot(self, snapshot_id, patient_id):
+        from services.data_management_scope import assert_clinical_scope
+        assert_clinical_scope(self.session, patient_id)
         row = self.session.query(AnalysisSnapshot).filter_by(id=str(snapshot_id), patient_id=patient_id).one_or_none()
         if row is None:
             raise SnapshotError("snapshot_not_found")

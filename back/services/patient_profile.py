@@ -100,7 +100,9 @@ class PatientProfileService:
         patient = db.session.get(Patient, patient_id)
         if patient is None:
             raise PatientProfileError(404)
-        require_patient_scope(account, owner_id=patient.clinician_id, capability=capability)
+        require_patient_scope(account, owner_id=patient.clinician_id, capability=capability, patient_id=patient.id)
+        from services.data_management_scope import assert_clinical_scope
+        assert_clinical_scope(db.session, patient.id)
         return patient
 
     def create(self, actor, payload) -> PatientProfileV2:

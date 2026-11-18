@@ -53,6 +53,8 @@ def _read_scope(actor, patient_id):
             if patient is None:
                 raise CollectionError(404)
             require_patient_scope(account, owner_id=patient.clinician_id, capability='clinical.read')
+            from services.data_management_scope import assert_clinical_scope
+            assert_clinical_scope(session, patient_id)
             yield session, patient, account.clinician_id if account.role == 'clinician' else None
 
 
@@ -384,6 +386,8 @@ def _find_legacy(session, patient_id, owner_id, record_id):
 
 
 def _source(session, patient_id, owner_id, record_id):
+    from services.data_management_scope import assert_clinical_scope
+    assert_clinical_scope(session, patient_id, record_id=record_id)
     if isinstance(record_id, str) and record_id.startswith('P'):
         return _find_legacy(session, patient_id, owner_id, record_id)
     identifier(record_id)

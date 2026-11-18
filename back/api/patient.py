@@ -13,7 +13,7 @@ def _profile_v2_response(operation, *args):
         result = operation(g.account_context, *args)
     except (AccessError, PatientProfileError) as exc:
         messages = {400: '患者资料格式无效', 403: '无权访问该患者', 404: '患者不存在', 401: '医护不存在'}
-        return jsonify(Response.error(exc.status_code, messages[exc.status_code])), exc.status_code
+        return jsonify(Response.error(exc.status_code, messages.get(exc.status_code, exc.code))), exc.status_code
     return jsonify(Response.success(data=result))
 
 
@@ -56,7 +56,7 @@ def _readable_patient_or_response(patient_id):
     if patient is None:
         return None, (jsonify(Response.error(404, '患者不存在')), 404)
     try:
-        require_patient_scope(g.account_context, owner_id=patient.clinician_id, capability='clinical.read')
+        require_patient_scope(g.account_context, owner_id=patient.clinician_id, capability='clinical.read', patient_id=patient.id)
     except AccessError:
         return None, (jsonify(Response.error(403, '无权访问该患者')), 403)
     return patient, None

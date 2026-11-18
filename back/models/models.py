@@ -472,7 +472,24 @@ for _model, _fields in _POSITIVE_FIELDS.items():
             f"WHEN {_condition} BEGIN SELECT RAISE(ABORT, 'positive values required'); END",
             f"BEGIN IF {_condition} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'positive values required'; END IF; END")
 
-for _operation in ('UPDATE', 'DELETE'):
+for _operation in ('UPDATE',):
     _install_trigger(ClinicalAuditEvent, 'trg_clinical_audit_event_no_' + _operation.lower(), _operation,
         "BEGIN SELECT RAISE(ABORT, 'append-only clinical audit'); END",
         "BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'append-only clinical audit'; END")
+
+
+# A versioned maintenance migration installs the same precise frozen-list exception.
+from services.data_management_scope import ManagementOperation, ManagementItem
+_PURGE_KEYS = {ClinicalAuditEvent: 'id', DeviceRawData: 'id', DeviceTransformedData: 'id',
+    CollectionSession: 'capture_id', CollectionInsoleFrame: 'id', CollectionGpsRaw: 'id',
+    CollectionRadarRaw: 'id', CollectionRadarTarget: 'id', GaitSessionRevision: 'id',
+    AnalysisSnapshot: 'id', AgentSnapshotProjection: 'snapshot_id', SnapshotPublicationClaim: 'id',
+    IntegrationOutbox: 'id', SnapshotBuildAttempt: 'id'}
+for _model, _key in _PURGE_KEYS.items():
+    _allowed = ("EXISTS (SELECT 1 FROM data_management_item i JOIN data_management_operation o ON o.id=i.operation_id "
+        "WHERE i.table_name='" + _model.__tablename__ + "' AND i.row_id=CAST(OLD." + _key + " AS CHAR) "
+        "AND o.stage='agent_purged' AND o.state='running')")
+    _name = 'trg_' + _model.__tablename__ + '_no_delete'
+    _install_trigger(_model, _name, 'DELETE',
+        "WHEN NOT " + _allowed + " BEGIN SELECT RAISE(ABORT, 'scoped management required'); END",
+        "BEGIN IF NOT " + _allowed + " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='scoped management required'; END IF; END")

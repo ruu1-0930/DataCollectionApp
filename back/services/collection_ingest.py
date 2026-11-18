@@ -165,12 +165,17 @@ def write_transaction():
 
 def lock_capture_scope(session, capture_id):
     """Discover the immutable parent, then consistently lock patient before capture."""
+    from services.data_management_scope import assert_capture_id_available
+    assert_capture_id_available(session, capture_id)
     patient_id = session.query(CollectionSession.patient_id).filter_by(capture_id=capture_id).scalar()
     if patient_id is None:
         raise CollectionError(404)
     patient = session.query(Patient).filter_by(id=patient_id).populate_existing().with_for_update().one_or_none()
     capture = session.query(CollectionSession).filter_by(
         capture_id=capture_id, patient_id=patient_id).populate_existing().with_for_update().one_or_none()
+    from services.data_management_scope import assert_clinical_scope, assert_capture_id_available
+    assert_capture_id_available(session, capture_id)
+    assert_clinical_scope(session, patient_id, capture_id=capture_id)
     if patient is None or capture is None:
         raise CollectionError(404)
     return patient, capture
@@ -248,7 +253,10 @@ def create_capture(actor_id, payload, *, version=None):
     try:
         with write_transaction() as session:
             require_capability(load_account_context(actor_id, session=session), 'clinician.write')
-            patient = session.get(Patient, patient_id)
+            from services.data_management_scope import assert_clinical_scope, assert_capture_id_available
+            patient = session.query(Patient).filter_by(id=patient_id).with_for_update().one_or_none()
+            assert_capture_id_available(session, capture_id)
+            assert_clinical_scope(session, patient_id, capture_id=capture_id)
             device = session.query(Device).filter_by(device_code=payload['device_code']).first()
             if patient is None or device is None or patient.clinician_id != actor_id or device.clinician_id != actor_id:
                 raise CollectionError(403)

@@ -86,6 +86,8 @@ def _route(fn):
             return fn(*args, **kwargs)
         except SnapshotError as exc:
             return _error(exc.code, details=exc.details, trace_id=exc.trace_id)
+        except AccessError as exc:
+            return jsonify(error={'code': exc.code}), exc.status_code
         except Exception:
             return _error("publication_failed")
     return wrapped

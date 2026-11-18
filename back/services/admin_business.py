@@ -85,6 +85,12 @@ def _parent(session, patient_id):
     row = _patient_query(session).filter(Patient.id == patient_id).one_or_none()
     if row is None:
         raise AdminReadError(404)
+    from services.data_management_scope import assert_clinical_scope
+    from access import AccessError
+    try:
+        assert_clinical_scope(session, patient_id)
+    except AccessError as error:
+        raise AdminReadError(error.status_code) from None
     return row
 
 

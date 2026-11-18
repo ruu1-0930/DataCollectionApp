@@ -94,6 +94,14 @@ def upload_raw_data(device_code):
     if not patient or patient.clinician_id != g.clinician_id:
         return jsonify(Response.error(403, "患者不存在或不属于当前医护")), 403
 
+    from services.data_management_scope import assert_clinical_scope
+    from access import AccessError
+    try:
+        patient = db.session.query(Patient).filter_by(id=patient.id).with_for_update().one()
+        assert_clinical_scope(db.session, patient.id)
+    except AccessError as error:
+        db.session.rollback()
+        return jsonify(Response.error(error.status_code, error.code)), error.status_code
     try:
         feet = {'L': _parse_foot(data, _LEFT_SRC), 'R': _parse_foot(data, _RIGHT_SRC)}
     except (KeyError, TypeError, ValueError):

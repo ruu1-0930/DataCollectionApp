@@ -71,7 +71,7 @@ def session_radar(account, patient_id, session_id, page=1, page_size=500):
     patient = db.session.get(Patient,patient_id)
     if patient is None:
         raise CollectionError(404)
-    require_patient_scope(account,owner_id=patient.clinician_id,capability='clinical.read')
+    require_patient_scope(account,owner_id=patient.clinician_id,capability='clinical.read',patient_id=patient.id)
     start = parse_session_start(patient_id,session_id)
     if start is None:
         raise CollectionError(422)

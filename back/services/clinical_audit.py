@@ -7,6 +7,49 @@ from uuid import uuid4
 from models.models import ClinicalAuditEvent
 from services.canonical_json import canonical_json_bytes, sha256_hex
 
+
+def verify_patient_audit(session, patient_id):
+    """Validate surviving bytes and follow minimal deletion bridges across removed events."""
+    from services.data_management_scope import ManagementAuditBridge, ManagementOperation
+    events = session.query(ClinicalAuditEvent).filter_by(patient_id=patient_id).all()
+    known = {row.event_hash: row.previous_event_hash for row in events}
+    for row in events:
+        if sha256_hex(row.canonical_payload.encode()) != row.event_hash:
+            raise ValueError('clinical_audit_chain_invalid')
+    removed = dict(session.query(ManagementAuditBridge.event_hash, ManagementAuditBridge.previous_event_hash)
+        .join(ManagementOperation, ManagementOperation.id == ManagementAuditBridge.operation_id)
+        .filter(ManagementOperation.patient_id == patient_id))
+    links = dict(removed, **known)
+    for event in events:
+        visited = set()
+        current = event.event_hash
+        while current is not None:
+            if current in visited or current not in links:
+                raise ValueError('clinical_audit_chain_invalid')
+            visited.add(current)
+            current = links[current]
+
+
+def _verify_predecessor(session, patient_id, event):
+    from services.data_management_scope import ManagementAuditBridge, ManagementOperation
+    if event is None:
+        return
+    if sha256_hex(event.canonical_payload.encode()) != event.event_hash:
+        raise ValueError('clinical_audit_chain_invalid')
+    current, visited = event.previous_event_hash, set()
+    while current is not None:
+        if current in visited:
+            raise ValueError('clinical_audit_chain_invalid')
+        visited.add(current)
+        if session.query(ClinicalAuditEvent.id).filter_by(patient_id=patient_id, event_hash=current).first():
+            return
+        bridge = (session.query(ManagementAuditBridge.previous_event_hash)
+            .join(ManagementOperation, ManagementOperation.id == ManagementAuditBridge.operation_id)
+            .filter(ManagementOperation.patient_id == patient_id, ManagementAuditBridge.event_hash == current).first())
+        if bridge is None:
+            raise ValueError('clinical_audit_chain_invalid')
+        current = bridge[0]
+
 _ACTIONS = {
     "snapshot.build", "snapshot.publish", "snapshot.read", "snapshot.status_read", "snapshot.projection_read",
     "snapshot.claim", "snapshot.superseded", "session.superseded",
@@ -52,6 +95,7 @@ def write_audit(session, *, actor_id, patient_id, trace_id, action, result, now,
         raise ValueError("unsafe_audit")
     previous = (session.query(ClinicalAuditEvent).filter_by(patient_id=patient_id)
                 .order_by(ClinicalAuditEvent.created_at.desc()).first())
+    _verify_predecessor(session, patient_id, previous)
     created = utc_naive(now)
     # DATETIME(3) and canonical RFC3339 both persist milliseconds. The caller's
     # patient lock makes a whole-millisecond advance a durable chain total order.

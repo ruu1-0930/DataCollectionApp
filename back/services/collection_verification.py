@@ -76,5 +76,5 @@ def verify_capture(actor, capture_id) -> CollectionVerificationV1:
         require_capability(account, 'clinical.read')
         patient, capture = lock_capture_scope(session, capture_id)
         require_patient_scope(account, owner_id=capture.clinician_id, capability='clinical.read')
-        require_patient_scope(account, owner_id=patient.clinician_id, capability='clinical.read')
+        require_patient_scope(account, owner_id=patient.clinician_id, capability='clinical.read', patient_id=patient.id)
         return verification_for_capture(session, capture)
