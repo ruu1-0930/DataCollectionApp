@@ -3,7 +3,7 @@
 from uuid import UUID
 
 import pytest
-from models.models import PatientPII
+from models.models import Patient, PatientPII
 
 
 def test_shared_directory_keeps_doctor_scope_and_returns_admin_owners(client, admin_scope, admin_data):
@@ -43,15 +43,14 @@ def test_directory_filters_paginate_and_never_elevate_doctor(client, admin_scope
 def test_search_treats_wildcards_literally_and_preserves_missing_name(client, db, admin_scope, admin_data):
     pii = db.session.query(PatientPII).filter_by(patient_id=admin_data['patient_id']).one()
     pii.name = 'synthetic%_patient'
-    other = db.session.query(PatientPII).filter_by(patient_id=admin_data['other_patient_id']).one()
     # PII rows may be absent; name itself is NOT NULL when a row exists.
-    db.session.delete(other)
+    db.session.add(Patient(clinician_id=admin_scope['doctor_b']['id'], subject_id='#synthetic-no-pii'))
     db.session.commit()
     h = admin_scope['admin']['headers']
     response = client.get('/workbench/patients', headers=h, query_string={'q': ' %_ '})
     assert response.status_code == 200
     assert [row['id'] for row in response.get_json()['data']['items']] == [admin_data['patient_id']]
-    by_number = client.get('/workbench/patients', headers=h, query_string={'q': '#admin-1'})
+    by_number = client.get('/workbench/patients', headers=h, query_string={'q': '#synthetic-no-pii'})
     assert by_number.status_code == 200
     assert by_number.get_json()['data']['items'][0]['name'] is None
 

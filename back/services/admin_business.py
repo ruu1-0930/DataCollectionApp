@@ -17,6 +17,7 @@ from models.models import (AnalysisSnapshot, Clinician, Device, DeviceRawData,
                            GaitSessionRevision, Patient, PatientPII)
 from services.canonical_json import canonical_json_bytes, sha256_hex
 from services.clinical_audit import utc_text
+from services.data_management_scope import visible_patient
 from services.gait_session_revision import _session_id, _RAW_VALUE_COLUMNS
 from services.snapshot_repository import AnalysisSnapshotRepository
 
@@ -137,7 +138,7 @@ class AdminBusinessService:
         return _page(query.order_by(Clinician.created_at.desc(), Clinician.id.desc()), options, _clinician)
 
     def list_patients(self, session, options, *_):
-        query = _patient_query(session)
+        query = _patient_query(session).filter(visible_patient(Patient.id))
         for field, column in [('hospital', Clinician.hospital), ('clinician_id', Patient.clinician_id),
                               ('patient_id', Patient.id), ('subject_id', Patient.subject_id)]:
             if field in options:

@@ -1,18 +1,19 @@
-"""Resumable capture deletion. Each local transaction commits before any HTTP call."""
+"""Resumable record and whole-patient deletion with short local transactions."""
 from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 import json
 from uuid import uuid4
 from jsonschema import Draft202012Validator
+from sqlalchemy import func, or_, select
 from access import AccessError, load_account_context, require_patient_scope
-from models.models import (Patient, CollectionSession, CollectionInsoleFrame, CollectionGpsRaw,
+from models.models import (Patient, PatientPII, CollectionSession, CollectionInsoleFrame, CollectionGpsRaw,
     CollectionRadarRaw, CollectionRadarTarget, DeviceRawData, DeviceTransformedData,
     GaitSessionRevision, AnalysisSnapshot, AgentSnapshotProjection, SnapshotPublicationClaim,
     SnapshotBuildAttempt, ClinicalAuditEvent, IntegrationOutbox)
 from services.canonical_json import canonical_json_bytes, sha256_hex
 from services.collection_ingest import write_transaction
-from services.collection_records import _source, _LegacySource, _raw_base, raw_has_capture
+from services.collection_records import _source, _LegacySource, _raw_base, _legacy_sources, raw_has_capture
 from services.collection_verification import verification_for_capture
 from services.data_management_scope import (ManagementPreview, ManagementOperation, ManagementItem,
     ManagementAuditBridge, frozen_inventory, assert_clinical_scope)
@@ -48,8 +49,6 @@ def _json(value):
 
 def _scope(session, actor, scope, *, lock=True):
     validate('ManagementScopeV1', scope)
-    if scope['kind'] == 'patient':
-        raise ManagementError(501, 'patient_scope_not_supported')
     account = load_account_context(actor.clinician_id, session=session)
     query = session.query(Patient).filter_by(id=scope['patient_id'])
     patient = (query.with_for_update() if lock else query).one_or_none()
@@ -59,37 +58,82 @@ def _scope(session, actor, scope, *, lock=True):
     return account, patient
 
 
+def _check_patient_dependencies(session, patient_id, capture_ids, raw_ids, revision_ids, snapshot_ids):
+    # Validate outside references before purging any remote artifacts.
+    frames = session.query(CollectionInsoleFrame.id).filter(
+        CollectionInsoleFrame.capture_id.not_in(capture_ids),
+        or_(CollectionInsoleFrame.left_raw_id.in_(raw_ids), CollectionInsoleFrame.right_raw_id.in_(raw_ids)))
+    revisions = session.query(GaitSessionRevision.id).filter(GaitSessionRevision.patient_id != patient_id,
+        or_(GaitSessionRevision.first_row_id.in_(raw_ids), GaitSessionRevision.last_row_id.in_(raw_ids),
+            GaitSessionRevision.last_accepted_row_id.in_(raw_ids),
+            GaitSessionRevision.superseded_by_revision_id.in_(revision_ids)))
+    snapshots = session.query(AnalysisSnapshot.id).filter(
+        AnalysisSnapshot.patient_id != patient_id, AnalysisSnapshot.superseded_by_snapshot_id.in_(snapshot_ids))
+    audit = session.query(ClinicalAuditEvent.id).filter(ClinicalAuditEvent.patient_id != patient_id,
+        or_(ClinicalAuditEvent.session_revision_id.in_(revision_ids), ClinicalAuditEvent.snapshot_id.in_(snapshot_ids)))
+    outbox = session.query(IntegrationOutbox.id).filter(or_(
+        (IntegrationOutbox.patient_id != patient_id) & IntegrationOutbox.snapshot_id.in_(snapshot_ids),
+        (IntegrationOutbox.patient_id == patient_id) & IntegrationOutbox.snapshot_id.not_in(snapshot_ids)))
+    if any(query.first() is not None for query in (frames, revisions, snapshots, audit, outbox)):
+        raise ManagementError(409, 'cross_patient_dependency')
+
+
 def _inventory(session, actor, scope):
     account, patient = _scope(session, actor, scope)
+    from services.data_export import assert_no_export, digest, _row
+    assert_no_export(session, patient.id)
     assert_clinical_scope(session, patient.id, record_id=scope['record_id'])
-    source = _source(session, patient.id, patient.clinician_id if account.role != 'admin' else None, scope['record_id'])
-    if (scope['kind'] == 'legacy_session') != isinstance(source, _LegacySource):
+    whole = scope['kind'] == 'patient'
+    source = None if whole else _source(session, patient.id, patient.clinician_id if account.role != 'admin' else None, scope['record_id'])
+    if not whole and (scope['kind'] == 'legacy_session') != isinstance(source, _LegacySource):
         raise ManagementError(400, 'scope_mismatch')
     ids = {}
     def selected(model, query):
         ids[model.__tablename__] = sorted(str(row[0]) for row in query)
-    if isinstance(source, CollectionSession):
-        if source.mobile_stopped_at is None or source.server_stopped_at is None:
-            raise ManagementError(409, 'collection_in_progress')
-        frames = session.query(CollectionInsoleFrame).filter_by(capture_id=source.capture_id).all()
-        raw_ids = {v for frame in frames for v in (frame.left_raw_id, frame.right_raw_id)}
-        version = verification_for_capture(session, source)
-        source_versions = {source.capture_id: version['record_version']}
-        pending = version['upload_state'] != 'verified'
-        ids['collection_sessions'] = [source.capture_id]
+    pending, source_versions, source_sessions = False, {}, set()
+    if whole or isinstance(source, CollectionSession):
+        captures = session.query(CollectionSession).filter_by(patient_id=patient.id).all() if whole else [source]
+        capture_ids = sorted(c.capture_id for c in captures)
+        for capture in captures:
+            if capture.mobile_stopped_at is None or capture.server_stopped_at is None:
+                raise ManagementError(409, 'collection_in_progress')
+            version = verification_for_capture(session, capture)
+            source_versions[capture.capture_id] = version['record_version']
+            source_sessions.add('C:' + capture.capture_id)
+            pending |= version['upload_state'] != 'verified'
+        frames = session.query(CollectionInsoleFrame).filter(CollectionInsoleFrame.capture_id.in_(capture_ids)).all()
+        frame_raw = {v for frame in frames for v in (frame.left_raw_id, frame.right_raw_id)}
+        if whole:
+            # Include rows with missing timestamps or unpairable feet too.
+            raw_ids = {r[0] for r in session.query(DeviceRawData.id).filter_by(patient_id=patient.id)}
+            if not frame_raw <= raw_ids:
+                raise ManagementError(409, 'cross_patient_dependency')
+            for legacy in _legacy_sources(session, patient.id, None):
+                source_versions[legacy.record_id] = legacy.version
+                source_sessions.add(legacy.record_id)
+            pii = session.get(PatientPII, patient.id)
+            ids['patients'] = [str(patient.id)]
+            ids['patient_pii'] = [str(patient.id)] if pii else []
+            source_versions['patient_profile'] = digest([_row(patient), _row(pii)])
+        else:
+            raw_ids = frame_raw
+            if session.query(DeviceRawData.id).filter(DeviceRawData.id.in_(raw_ids), DeviceRawData.patient_id != patient.id).first():
+                raise ManagementError(409, 'cross_patient_dependency')
+        ids['collection_sessions'] = capture_ids
         ids['collection_insole_frames'] = sorted(str(f.id) for f in frames)
-        selected(CollectionGpsRaw, session.query(CollectionGpsRaw.id).filter_by(capture_id=source.capture_id))
-        selected(CollectionRadarRaw, session.query(CollectionRadarRaw.id).filter_by(capture_id=source.capture_id))
+        selected(CollectionGpsRaw, session.query(CollectionGpsRaw.id).filter(CollectionGpsRaw.capture_id.in_(capture_ids)))
+        selected(CollectionRadarRaw, session.query(CollectionRadarRaw.id).filter(CollectionRadarRaw.capture_id.in_(capture_ids)))
     else:
         raw_ids = {row[0] for row in _raw_base(session, patient.id, (DeviceRawData.id,)).filter(
             DeviceRawData.collected_at.between(source.start, source.end), ~raw_has_capture())}
         source_versions, pending = {source.record_id: source.version}, False
+        source_sessions.add(source.record_id)
     ids['device_raw_data'] = sorted(str(v) for v in raw_ids)
     selected(DeviceTransformedData, session.query(DeviceTransformedData.id).filter(DeviceTransformedData.raw_data_id.in_(raw_ids)))
     radar_ids = ids.get('collection_radar_raw', [])
     selected(CollectionRadarTarget, session.query(CollectionRadarTarget.id).filter(CollectionRadarTarget.parent_id.in_(radar_ids)))
     revisions = session.query(GaitSessionRevision).filter_by(patient_id=patient.id).all()
-    affected = {r.id for r in revisions if raw_ids.intersection(json.loads(r.ordered_row_ids_canonical)) or r.session_key == 'C:' + scope['record_id']}
+    affected = {r.id for r in revisions if whole or raw_ids.intersection(json.loads(r.ordered_row_ids_canonical)) or r.session_key in source_sessions}
     # A reverse supersession FK is a real dependency, even if its payload uses other rows.
     while True:
         more = {r.id for r in revisions if r.superseded_by_revision_id in affected}
@@ -98,18 +142,20 @@ def _inventory(session, actor, scope):
         affected |= more
     ids['gait_session_revision'] = sorted(affected)
     snapshots = session.query(AnalysisSnapshot).filter_by(patient_id=patient.id).all()
-    snapshot_ids = {s.id for s in snapshots if s.session_revision_id in affected}
+    snapshot_ids = {s.id for s in snapshots if whole or s.session_revision_id in affected}
     while True:
         more = {s.id for s in snapshots if s.superseded_by_snapshot_id in snapshot_ids}
         if more <= snapshot_ids:
             break
         snapshot_ids |= more
     ids['analysis_snapshot'] = sorted(snapshot_ids)
+    if whole:
+        _check_patient_dependencies(session, patient.id, capture_ids, raw_ids, affected, snapshot_ids)
     fingerprints = {s.identity_fingerprint for s in snapshots if s.id in snapshot_ids}
     attempts = session.query(SnapshotBuildAttempt).filter(SnapshotBuildAttempt.identity_fingerprint.in_(fingerprints)).all()
     # Builds can be reserved before a snapshot exists: inspect their audit-linked revision too.
     events = session.query(ClinicalAuditEvent).filter_by(patient_id=patient.id).all()
-    traces = {e.trace_id for e in events if e.snapshot_id in snapshot_ids or e.session_revision_id in affected}
+    traces = {e.trace_id for e in events if whole or e.snapshot_id in snapshot_ids or e.session_revision_id in affected}
     attempts += session.query(SnapshotBuildAttempt).filter(SnapshotBuildAttempt.trace_id.in_(traces)).all()
     if any(a.state in {'pending', 'running'} for a in attempts):
         raise ManagementError(409, 'snapshot_building')
@@ -119,7 +165,7 @@ def _inventory(session, actor, scope):
     selected(IntegrationOutbox, session.query(IntegrationOutbox.id).filter(IntegrationOutbox.snapshot_id.in_(snapshot_ids)))
     # Composite projection keys are represented by snapshot IDs and expanded server-side.
     ids['agent_snapshot_projection'] = sorted(snapshot_ids)
-    sessions = sorted({r.session_key for r in revisions if r.id in affected} | ({'C:' + scope['record_id']} if scope['kind'] == 'capture' else {scope['record_id']}))
+    sessions = sorted({r.session_key for r in revisions if r.id in affected} | source_sessions)
     extra = sorted(s.id for s in snapshots if s.id in snapshot_ids and s.session_revision_id in
                    {r.id for r in revisions if r.id in affected and set(json.loads(r.ordered_row_ids_canonical)) - raw_ids})
     # Freeze server-owned bundle bindings across all owners and states, including expired
@@ -127,6 +173,9 @@ def _inventory(session, actor, scope):
     from services.data_export import ExportInventory
     export_files = []
     for bundle in session.query(ExportInventory).filter_by(patient_id=patient.id).order_by(ExportInventory.id):
+        if whole:
+            export_files.append(dict(bundle_id=bundle.id, patient_id=patient.id, scope_hash=bundle.scope_hash))
+            continue
         request, frozen = json.loads(bundle.request_json), json.loads(bundle.inventory_json)
         if (request['scope'] == 'patient' or scope['record_id'] in frozen['records']
                 or snapshot_ids.intersection(s['id'] for s in frozen['snapshots'])
@@ -197,7 +246,11 @@ def _authorized_operation(session, actor, operation_id):
     operation = session.query(ManagementOperation).filter_by(id=operation_id).with_for_update().one_or_none()
     if operation is None:
         raise ManagementError(404, 'operation_not_found')
-    _scope(session, actor, json.loads(operation.scope_json))
+    patient = session.query(Patient).filter_by(id=operation.patient_id).with_for_update().one_or_none()
+    account = load_account_context(actor.clinician_id, session=session)
+    if patient is None and operation.stage not in {'backend_purged', 'completed'}:
+        raise ManagementError(404, 'patient_not_found')
+    require_patient_scope(account, owner_id=patient.clinician_id if patient else operation.owner_id, capability='data.manage')
     return operation
 
 
@@ -211,17 +264,36 @@ def _dto(operation):
         agent_confirmation_required=operation.error_code == 'agent_reconfirmation_required'))
 
 
+def _require_patient_confirmation(scope, request):
+    supplied = request.get('confirm_patient_id')
+    if scope['kind'] == 'patient':
+        if type(supplied) is not int or supplied != scope['patient_id']:
+            raise ManagementError(409, 'patient_confirmation_required')
+    elif supplied is not None:
+        raise ManagementError(400, 'invalid_request')
+
+
+def _check_existing_request(session, actor, request):
+    existing = session.query(ManagementOperation).filter_by(actor_id=actor.clinician_id,
+        request_id=request['request_id']).first()
+    if existing is None:
+        return None
+    existing = _authorized_operation(session, actor, existing.id)
+    _require_patient_confirmation(json.loads(existing.scope_json), request)
+    if (existing.preview_id, existing.discard_pending) != (request['preview_id'], request['discard_pending']):
+        raise ManagementError(409, 'request_conflict')
+    return _dto(existing)
+
+
 def begin_delete(actor, request, token=None, *, client=None):
     validate('DeleteRequestV1', request)
     # Return an existing request before touching an expired preview or making HTTP calls.
     with write_transaction() as session:
-        existing = session.query(ManagementOperation).filter_by(actor_id=actor.clinician_id, request_id=request['request_id']).first()
-        if existing:
-            _authorized_operation(session, actor, existing.id)
-            if (existing.preview_id, existing.discard_pending) != (request['preview_id'], request['discard_pending']):
-                raise ManagementError(409, 'request_conflict')
-            return _dto(existing)
+        existing = _check_existing_request(session, actor, request)
+        if existing is not None:
+            return existing
     public = get_delete_preview(actor, request['preview_id'])
+    _require_patient_confirmation(public['scope'], request)
     if public['agent_state'] != 'ready':
         raise ManagementError(409 if public['agent_state'] == 'busy' else 503, 'agent_preview_not_ready')
     try:
@@ -231,12 +303,9 @@ def begin_delete(actor, request, token=None, *, client=None):
     if remote['busy'] or remote['inventory_hash'] != public['agent_inventory_hash']:
         raise ManagementError(409, 'agent_preview_stale')
     with write_transaction() as session:
-        existing = session.query(ManagementOperation).filter_by(actor_id=actor.clinician_id, request_id=request['request_id']).first()
-        if existing:
-            _authorized_operation(session, actor, existing.id)
-            if (existing.preview_id, existing.discard_pending) != (request['preview_id'], request['discard_pending']):
-                raise ManagementError(409, 'request_conflict')
-            return _dto(existing)
+        existing = _check_existing_request(session, actor, request)
+        if existing is not None:
+            return existing
         preview = session.get(ManagementPreview, request['preview_id'])
         if preview is None or preview.actor_id != actor.clinician_id or preview.expires_at <= datetime.utcnow():
             raise ManagementError(409, 'preview_expired')
@@ -297,6 +366,7 @@ def operation_delete_preview(actor, operation_id, token, *, client=None):
 def confirm_agent_inventory(actor, operation_id, request, token, *, client=None):
     validate('AgentInventoryConfirmationV1', request)
     public = get_delete_preview(actor, request['preview_id'])
+    _require_patient_confirmation(public['scope'], request)
     if (public['operation_id'] != operation_id or public['agent_state'] != 'ready'
             or public['agent_inventory_hash'] != request['expected_agent_inventory_hash']):
         raise ManagementError(409, 'agent_preview_stale')
@@ -329,7 +399,7 @@ def get_operation(actor, operation_id):
 
 DELETE_MODELS = (ClinicalAuditEvent, IntegrationOutbox, SnapshotPublicationClaim, AgentSnapshotProjection,
     AnalysisSnapshot, SnapshotBuildAttempt, GaitSessionRevision, CollectionRadarTarget, CollectionRadarRaw,
-    CollectionGpsRaw, CollectionInsoleFrame, DeviceTransformedData, DeviceRawData, CollectionSession)
+    CollectionGpsRaw, CollectionInsoleFrame, DeviceTransformedData, DeviceRawData, CollectionSession, PatientPII, Patient)
 
 
 def _purge_backend(session, operation):
@@ -338,13 +408,20 @@ def _purge_backend(session, operation):
     export_ids = [ref['bundle_id'] for ref in inventory['export_files']]
     session.query(ExportGrant).filter(ExportGrant.export_id.in_(export_ids)).delete(synchronize_session=False)
     session.query(ExportInventory).filter(ExportInventory.id.in_(export_ids)).delete(synchronize_session=False)
-    for event in session.query(ClinicalAuditEvent).filter(ClinicalAuditEvent.id.in_(inventory['items']['clinical_audit_event'])):
-        session.add(ManagementAuditBridge(event_hash=event.event_hash, previous_event_hash=event.previous_event_hash,
-                                         operation_id=operation.id))
+    if operation.kind != 'patient':
+        for event in session.query(ClinicalAuditEvent).filter(ClinicalAuditEvent.id.in_(inventory['items']['clinical_audit_event'])):
+            session.add(ManagementAuditBridge(event_hash=event.event_hash, previous_event_hash=event.previous_event_hash,
+                                             operation_id=operation.id))
     session.flush()
     for model in DELETE_MODELS:
         values = inventory['items'].get(model.__tablename__, [])
-        key = model.snapshot_id if model is AgentSnapshotProjection else model.capture_id if model is CollectionSession else model.id
+        key = {
+            AgentSnapshotProjection: AgentSnapshotProjection.snapshot_id,
+            CollectionSession: CollectionSession.capture_id,
+            PatientPII: PatientPII.patient_id,
+        }.get(model)
+        if key is None:
+            key = model.id
         # Reverse self-FKs are deleted in topological order; frozen payloads are never rewritten.
         if model in (AnalysisSnapshot, GaitSessionRevision):
             parent = model.superseded_by_snapshot_id if model is AnalysisSnapshot else model.superseded_by_revision_id
@@ -425,8 +502,23 @@ def continue_delete(actor, operation_id, token, *, client=None):
                 # Minimize receipts; frozen row lists are needed only until all phases succeed.
                 inventory = frozen_inventory(row)
                 row.inventory_json = _json({key: inventory[key] for key in ('snapshot_ids', 'session_ids', 'agent_inventory_hash', 'export_files')})
-                session.query(ManagementItem).filter_by(operation_id=row.id).delete()
-                session.query(ManagementPreview).filter_by(scope_json=row.scope_json).delete(synchronize_session=False)
+                items = session.query(ManagementItem).filter_by(operation_id=row.id)
+                if row.kind == 'patient':
+                    # Keep only capture UUID tombstones and minimal operation metadata.
+                    items.filter(ManagementItem.table_name != 'collection_sessions').delete(synchronize_session=False)
+                    session.query(ManagementPreview).filter(
+                        func.json_extract(ManagementPreview.scope_json, '$.patient_id') == row.patient_id
+                    ).delete(synchronize_session=False)
+                    operation_ids = select(ManagementOperation.id).where(ManagementOperation.patient_id == row.patient_id)
+                    session.query(ManagementAuditBridge).filter(
+                        ManagementAuditBridge.operation_id.in_(operation_ids)
+                    ).delete(synchronize_session=False)
+                    for prior in session.query(ManagementOperation).filter_by(patient_id=row.patient_id).all():
+                        prior.inventory_json = _json(dict(snapshot_ids=[], session_ids=[], export_files=[],
+                            agent_inventory_hash=frozen_inventory(prior)['agent_inventory_hash']))
+                else:
+                    items.delete(synchronize_session=False)
+                    session.query(ManagementPreview).filter_by(scope_json=row.scope_json).delete(synchronize_session=False)
             return _dto(row)
     except Exception:
         with write_transaction() as session:

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from access import AccessError, load_account_context, require_capability
 from config import db
 from models.models import Clinician, Patient, PatientPII
+from services.data_management_scope import visible_patient
 
 
 class DirectoryQueryError(ValueError):
@@ -67,7 +68,7 @@ class WorkbenchDirectoryService:
                 raise AccessError(403, 'forbidden')
             query = session.query(Patient, Clinician, PatientPII).select_from(Patient).join(
                 Clinician, Clinician.id == Patient.clinician_id).outerjoin(
-                PatientPII, PatientPII.patient_id == Patient.id)
+                PatientPII, PatientPII.patient_id == Patient.id).filter(visible_patient(Patient.id))
             if account.role == 'clinician':
                 query = query.filter(Patient.clinician_id == account.clinician_id)
             if clinician_id is not None:

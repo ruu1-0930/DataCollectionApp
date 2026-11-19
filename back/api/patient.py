@@ -3,6 +3,7 @@ from config import db
 from models.models import Patient, PatientPII, DeviceRawData, DeviceTransformedData
 from utils import Response, token_required
 from access import AccessError, require_patient_scope
+from services.data_management_scope import assert_clinical_scope, visible_patient
 from services.patient_profile import PatientProfileError, PatientProfileService
 
 patient_bp = Blueprint('patient', __name__)
@@ -58,8 +59,9 @@ def _readable_patient_or_response(patient_id):
         return None, (jsonify(Response.error(404, '患者不存在')), 404)
     try:
         require_patient_scope(g.account_context, owner_id=patient.clinician_id, capability='clinical.read', patient_id=patient.id)
-    except AccessError:
-        return None, (jsonify(Response.error(403, '无权访问该患者')), 403)
+    except AccessError as error:
+        message = '无权访问该患者' if error.status_code == 403 else error.code
+        return None, (jsonify(Response.error(error.status_code, message)), error.status_code)
     return patient, None
 
 
@@ -75,6 +77,10 @@ def create_patient():
     dup = (db.session.query(Patient).join(PatientPII, PatientPII.patient_id == Patient.id)
            .filter(Patient.clinician_id == g.clinician_id, PatientPII.phone == phone).first())
     if dup:
+        try:
+            assert_clinical_scope(db.session, dup.id)
+        except AccessError as error:
+            return jsonify(Response.error(error.status_code, error.code)), error.status_code
         return jsonify(Response.success(data=_patient_public(dup, existed=True), msg="患者已存在"))
 
     p = Patient(clinician_id=g.clinician_id, subject_id='pending',
@@ -92,6 +98,7 @@ def create_patient():
 @token_required()
 def list_patients():
     patients = (Patient.query.filter_by(clinician_id=g.clinician_id)
+                .filter(visible_patient(Patient.id))
                 .order_by(Patient.created_at.desc()).all())
     return jsonify(Response.success(data=[_patient_public(p) for p in patients]))
 

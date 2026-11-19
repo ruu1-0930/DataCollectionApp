@@ -90,40 +90,39 @@ def upload_raw_data(device_code):
     if not patient_id:
         return jsonify(Response.error(400, "patient_id 为必填")), 400
 
-    patient = Patient.query.get(patient_id)
-    if not patient or patient.clinician_id != g.clinician_id:
-        return jsonify(Response.error(403, "患者不存在或不属于当前医护")), 403
-
+    from services.collection_ingest import write_transaction
     from services.data_management_scope import assert_clinical_scope
     from access import AccessError
     try:
-        patient = db.session.query(Patient).filter_by(id=patient.id).with_for_update().one()
-        assert_clinical_scope(db.session, patient.id)
-    except AccessError as error:
-        db.session.rollback()
-        return jsonify(Response.error(error.status_code, error.code)), error.status_code
-    try:
-        feet = {'L': _parse_foot(data, _LEFT_SRC), 'R': _parse_foot(data, _RIGHT_SRC)}
-    except (KeyError, TypeError, ValueError):
-        return jsonify(Response.error(400, "缺少或非法的 38 字段（每脚 9 压力 + 6 IMU + 4 步态）")), 400
+        with write_transaction() as session:
+            patient = session.query(Patient).filter_by(id=patient_id).with_for_update().one_or_none()
+            if patient is not None and patient.clinician_id != g.clinician_id:
+                return jsonify(Response.error(403, "患者不存在或不属于当前医护")), 403
+            assert_clinical_scope(session, patient_id)
+            if patient is None:
+                return jsonify(Response.error(403, "患者不存在或不属于当前医护")), 403
+            try:
+                feet = {'L': _parse_foot(data, _LEFT_SRC), 'R': _parse_foot(data, _RIGHT_SRC)}
+            except (KeyError, TypeError, ValueError):
+                return jsonify(Response.error(400, "缺少或非法的 38 字段（每脚 9 压力 + 6 IMU + 4 步态）")), 400
 
-    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).replace(tzinfo=None)
-    result = {}
-    for foot, vals in feet.items():
-        raw = DeviceRawData(device_id=device.id, patient_id=patient.id,
-                            clinician_id=g.clinician_id, foot=foot,
-                            collected_at=now, uploaded_at=now, **vals)
-        db.session.add(raw)
-        db.session.flush()
-        T1, T2, T3, T4, T5 = analyze(vals['ax'], vals['ay'], vals['az'],
-                                     vals['gx'], vals['gy'], vals['gz'])
-        db.session.add(DeviceTransformedData(raw_data_id=raw.id,
-                                             T1=T1, T2=T2, T3=T3, T4=T4, T5=T5))
-        result['left' if foot == 'L' else 'right'] = {
-            'raw_data_id': raw.id,
-            'transformed': {'T1': T1, 'T2': T2, 'T3': T3, 'T4': T4, 'T5': T5},
-        }
-    patient.last_collected_at = now
-    db.session.commit()
+            now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).replace(tzinfo=None)
+            result = {}
+            for foot, vals in feet.items():
+                raw = DeviceRawData(device_id=device.id, patient_id=patient.id,
+                                    clinician_id=g.clinician_id, foot=foot,
+                                    collected_at=now, uploaded_at=now, **vals)
+                session.add(raw)
+                session.flush()
+                T1, T2, T3, T4, T5 = analyze(vals['ax'], vals['ay'], vals['az'],
+                                             vals['gx'], vals['gy'], vals['gz'])
+                session.add(DeviceTransformedData(raw_data_id=raw.id, T1=T1, T2=T2, T3=T3, T4=T4, T5=T5))
+                result['left' if foot == 'L' else 'right'] = {
+                    'raw_data_id': raw.id,
+                    'transformed': {'T1': T1, 'T2': T2, 'T3': T3, 'T4': T4, 'T5': T5},
+                }
+            patient.last_collected_at = now
+    except AccessError as error:
+        return jsonify(Response.error(error.status_code, error.code)), error.status_code
 
     return jsonify(Response.success(data=result, msg="数据上传成功"))

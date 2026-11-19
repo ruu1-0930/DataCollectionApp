@@ -36,6 +36,7 @@ class Device(db.Model):
 
 class Patient(db.Model):
     __tablename__ = 'patients'
+    __table_args__ = {'sqlite_autoincrement': True}
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     clinician_id = db.Column(db.Integer, db.ForeignKey('clinicians.id'), nullable=False, index=True)
     subject_id = db.Column(db.String(20), unique=True, nullable=False)
@@ -413,11 +414,11 @@ _IMMUTABLE_FIELDS = {
 }
 
 
-def _install_trigger(model, name, operation, sqlite_body, mysql_body):
+def _install_trigger(model, name, operation, sqlite_body, mysql_body, *, timing='BEFORE'):
     table = model.__table__
     for dialect, body in [('sqlite', sqlite_body), ('mysql', mysql_body)]:
         event.listen(table, 'after_create', DDL(
-            f'CREATE TRIGGER {name} BEFORE {operation} ON {table.name} '
+            f'CREATE TRIGGER {name} {timing} {operation} ON {table.name} '
             f'FOR EACH ROW {body}').execute_if(dialect=dialect))
 
 
@@ -480,16 +481,25 @@ for _operation in ('UPDATE',):
 
 # A versioned maintenance migration installs the same precise frozen-list exception.
 from services.data_management_scope import ManagementOperation, ManagementItem
-_PURGE_KEYS = {ClinicalAuditEvent: 'id', DeviceRawData: 'id', DeviceTransformedData: 'id',
+_PURGE_KEYS = {Patient: 'id', PatientPII: 'patient_id', ClinicalAuditEvent: 'id', DeviceRawData: 'id', DeviceTransformedData: 'id',
     CollectionSession: 'capture_id', CollectionInsoleFrame: 'id', CollectionGpsRaw: 'id',
     CollectionRadarRaw: 'id', CollectionRadarTarget: 'id', GaitSessionRevision: 'id',
     AnalysisSnapshot: 'id', AgentSnapshotProjection: 'snapshot_id', SnapshotPublicationClaim: 'id',
     IntegrationOutbox: 'id', SnapshotBuildAttempt: 'id'}
 for _model, _key in _PURGE_KEYS.items():
+    _patient_guard = (" AND o.kind='patient' AND o.patient_id=OLD." + _key
+        if _model in (Patient, PatientPII) else "")
     _allowed = ("EXISTS (SELECT 1 FROM data_management_item i JOIN data_management_operation o ON o.id=i.operation_id "
         "WHERE i.table_name='" + _model.__tablename__ + "' AND i.row_id=CAST(OLD." + _key + " AS CHAR) "
-        "AND o.stage='agent_purged' AND o.state='running')")
+        "AND o.stage='agent_purged' AND o.state='running'" + _patient_guard + ")")
     _name = 'trg_' + _model.__tablename__ + '_no_delete'
     _install_trigger(_model, _name, 'DELETE',
         "WHEN NOT " + _allowed + " BEGIN SELECT RAISE(ABORT, 'scoped management required'); END",
         "BEGIN IF NOT " + _allowed + " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='scoped management required'; END IF; END")
+
+_retired_patient = ("EXISTS (SELECT 1 FROM data_management_operation WHERE patient_id=NEW.id "
+                    "AND kind='patient' AND stage IN ('backend_purged', 'completed'))")
+_install_trigger(Patient, 'trg_patients_no_reuse', 'INSERT',
+    "WHEN " + _retired_patient + " BEGIN SELECT RAISE(ABORT, 'patient identity retired'); END",
+    "BEGIN IF " + _retired_patient + " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='patient identity retired'; END IF; END",
+    timing='AFTER')

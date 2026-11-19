@@ -246,6 +246,10 @@
         },
         "discard_pending": {
           "type": "boolean"
+        },
+        "confirm_patient_id": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "required": [
@@ -819,6 +823,10 @@
         "expected_agent_inventory_hash": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "confirm_patient_id": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "required": [

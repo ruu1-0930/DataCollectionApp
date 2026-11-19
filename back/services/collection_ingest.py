@@ -169,11 +169,12 @@ def lock_capture_scope(session, capture_id):
     assert_capture_id_available(session, capture_id)
     patient_id = session.query(CollectionSession.patient_id).filter_by(capture_id=capture_id).scalar()
     if patient_id is None:
+        assert_capture_id_available(session, capture_id)
         raise CollectionError(404)
     patient = session.query(Patient).filter_by(id=patient_id).populate_existing().with_for_update().one_or_none()
     capture = session.query(CollectionSession).filter_by(
         capture_id=capture_id, patient_id=patient_id).populate_existing().with_for_update().one_or_none()
-    from services.data_management_scope import assert_clinical_scope, assert_capture_id_available
+    from services.data_management_scope import assert_clinical_scope
     assert_capture_id_available(session, capture_id)
     assert_clinical_scope(session, patient_id, capture_id=capture_id)
     if patient is None or capture is None:
@@ -260,7 +261,10 @@ def create_capture(actor_id, payload, *, version=None):
             device = session.query(Device).filter_by(device_code=payload['device_code']).first()
             if patient is None or device is None or patient.clinician_id != actor_id or device.clinician_id != actor_id:
                 raise CollectionError(403)
-            existing = session.get(CollectionSession, capture_id)
+            # Lock the old identity before checking retirement again. A create for
+            # another patient must not race the old patient's delete transaction.
+            existing = session.query(CollectionSession).filter_by(capture_id=capture_id).with_for_update().one_or_none()
+            assert_capture_id_available(session, capture_id)
             if existing:
                 if not same_request(existing, device):
                     raise CollectionError(409)

@@ -501,7 +501,7 @@ CREATE TABLE data_management_preview (
 CREATE TABLE data_management_operation (
  id VARCHAR(36) PRIMARY KEY, request_id VARCHAR(36) NOT NULL, preview_id VARCHAR(36) NOT NULL,
  actor_id INT NOT NULL, owner_id INT NOT NULL, patient_id INT NOT NULL, kind VARCHAR(32) NOT NULL,
- record_id VARCHAR(128) NOT NULL, scope_json LONGTEXT NOT NULL, scope_hash VARCHAR(64) NOT NULL,
+ record_id VARCHAR(128) NULL, scope_json LONGTEXT NOT NULL, scope_hash VARCHAR(64) NOT NULL,
  inventory_json LONGTEXT NOT NULL, counts_json LONGTEXT NOT NULL, trace_id VARCHAR(36) NOT NULL,
  stage VARCHAR(32) NOT NULL, state VARCHAR(32) NOT NULL, error_code VARCHAR(64), discard_pending BOOLEAN NOT NULL,
  created_at DATETIME(6) NOT NULL, completed_at DATETIME(6),
@@ -509,7 +509,8 @@ CREATE TABLE data_management_operation (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE data_management_item (
  operation_id VARCHAR(36) NOT NULL, table_name VARCHAR(64) NOT NULL, row_id VARCHAR(128) NOT NULL,
- PRIMARY KEY(operation_id,table_name,row_id), FOREIGN KEY(operation_id) REFERENCES data_management_operation(id)
+ PRIMARY KEY(operation_id,table_name,row_id), KEY ix_management_item_identity(table_name,row_id),
+ FOREIGN KEY(operation_id) REFERENCES data_management_operation(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE data_management_audit_bridge (
  event_hash VARCHAR(64) PRIMARY KEY, previous_event_hash VARCHAR(64), operation_id VARCHAR(36) NOT NULL
@@ -598,6 +599,35 @@ CREATE TRIGGER trg_snapshot_build_attempt_no_delete BEFORE DELETE ON snapshot_bu
 BEGIN
  IF NOT EXISTS (SELECT 1 FROM data_management_item i JOIN data_management_operation o ON o.id=i.operation_id WHERE i.table_name='snapshot_build_attempt' AND i.row_id=CAST(OLD.id AS CHAR) AND o.stage='agent_purged' AND o.state='running') THEN
   SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='scoped management required';
+ END IF;
+END$$
+CREATE TRIGGER trg_patients_no_delete BEFORE DELETE ON patients FOR EACH ROW
+BEGIN
+ IF NOT EXISTS (
+   SELECT 1 FROM data_management_item i JOIN data_management_operation o ON o.id=i.operation_id
+   WHERE i.table_name='patients' AND i.row_id=CAST(OLD.id AS CHAR)
+     AND o.kind='patient' AND o.patient_id=OLD.id AND o.stage='agent_purged' AND o.state='running'
+ ) THEN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='scoped management required';
+ END IF;
+END$$
+CREATE TRIGGER trg_patient_pii_no_delete BEFORE DELETE ON patient_pii FOR EACH ROW
+BEGIN
+ IF NOT EXISTS (
+   SELECT 1 FROM data_management_item i JOIN data_management_operation o ON o.id=i.operation_id
+   WHERE i.table_name='patient_pii' AND i.row_id=CAST(OLD.patient_id AS CHAR)
+     AND o.kind='patient' AND o.patient_id=OLD.patient_id AND o.stage='agent_purged' AND o.state='running'
+ ) THEN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='scoped management required';
+ END IF;
+END$$
+CREATE TRIGGER trg_patients_no_reuse AFTER INSERT ON patients FOR EACH ROW
+BEGIN
+ IF EXISTS (
+   SELECT 1 FROM data_management_operation WHERE patient_id=NEW.id
+     AND kind='patient' AND stage IN ('backend_purged', 'completed')
+ ) THEN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='patient identity retired';
  END IF;
 END$$
 DELIMITER ;
