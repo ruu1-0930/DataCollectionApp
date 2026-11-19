@@ -159,7 +159,7 @@ def event(cursor, table, capture, stream, **payload):
         payload_hash=digest(stream), **payload))
 
 
-def storage_cases(cursor, owned):
+def storage_cases(cursor, owned, *, verify_patient_purge=False):
     capture = owned['capture']
     raw = []
     for foot in ('L', 'R'):
@@ -192,7 +192,8 @@ def storage_cases(cursor, owned):
     require(one(cursor, 'SELECT final_counts_json,finalization_state FROM collection_sessions '
                 'WHERE capture_id=%s', (capture,)) == (declared, 'verified'))
     # An existing child blocks its parent, and an absent parent blocks its child.
-    rejected(cursor, 1451, 'DELETE FROM patients WHERE id=%s', (owned['patient'],))
+    rejected(cursor, 1644 if verify_patient_purge else 1451,
+             'DELETE FROM patients WHERE id=%s', (owned['patient'],))
     rejected(cursor, 1452, 'UPDATE collection_gps_raw SET capture_id=%s WHERE id=%s', (str(uuid4()), gps))
     rejected(cursor, 1062, 'INSERT INTO collection_gps_raw SELECT * FROM collection_gps_raw WHERE id=%s', (gps,))
     audit_id = str(uuid4())
@@ -254,7 +255,35 @@ def export_storage_cases(cursor, owned):
     require(one(cursor, 'SELECT COUNT(*) FROM data_export_grant WHERE token_hash=%s', (token_hash,))[0] == 0)
 
 
-def verify(env_file, enabled, *, verify_export=False):
+def patient_purge_cases(cursor, owned):
+    patient = dict(clinician_id=owned['owner'], subject_id='p' + uuid4().hex[:19], gender='男')
+    patient_id = insert(cursor, 'patients', patient)
+    insert(cursor, 'patient_pii', dict(patient_id=patient_id, name='synthetic'))
+    targets = (('patient_pii', 'patient_id'), ('patients', 'id'))
+    for table, key in targets:
+        rejected(cursor, 1644, f'DELETE FROM {table} WHERE {key}=%s', (patient_id,))
+    operation = str(uuid4())
+    insert(cursor, 'data_management_operation', dict(
+        id=operation, request_id=operation, preview_id=operation, actor_id=owned['owner'],
+        owner_id=owned['owner'], patient_id=patient_id, kind='patient', record_id=None,
+        scope_json='{}', scope_hash=digest(operation), inventory_json='{}', counts_json='{}',
+        trace_id=operation, stage='agent_purged', state='running', discard_pending=0, created_at=WHEN,
+    ))
+    for table, key in targets:
+        insert(cursor, 'data_management_item', dict(operation_id=operation, table_name=table, row_id=str(patient_id)))
+        cursor.execute(f'DELETE FROM {table} WHERE {key}=%s', (patient_id,))
+        require(cursor.rowcount == 1)
+    cursor.execute("UPDATE data_management_operation SET stage='completed', state='completed' WHERE id=%s", (operation,))
+    rejected(cursor, 1644, 'INSERT INTO patients (id,clinician_id,subject_id,gender) VALUES (%s,%s,%s,%s)',
+             (patient_id, patient['clinician_id'], patient['subject_id'], patient['gender']))
+    cursor.execute(
+        "SELECT column_name FROM information_schema.statistics WHERE table_schema=DATABASE() "
+        "AND table_name='data_management_item' AND index_name='ix_management_item_identity' ORDER BY seq_in_index"
+    )
+    require(tuple(row[0] for row in cursor.fetchall()) == ('table_name', 'row_id'))
+
+
+def verify(env_file, enabled, *, verify_export=False, verify_patient_purge=False):
     require(enabled)
     phase('configuration')
     import pymysql
@@ -276,12 +305,15 @@ def verify(env_file, enabled, *, verify_export=False):
             phase('registration_null_legacy')
             owned = fixtures(cursor)
             phase('counts_and_constraints')
-            storage_cases(cursor, owned)
+            storage_cases(cursor, owned, verify_patient_purge=verify_patient_purge)
             phase('scoped_delete_and_protection')
             scoped_delete_cases(cursor, owned)
             if verify_export:
                 phase('export_storage')
                 export_storage_cases(cursor, owned)
+            if verify_patient_purge:
+                phase('patient_purge')
+                patient_purge_cases(cursor, owned)
     finally:
         # Including every error path: no persistent fixtures and no explicit delete cleanup.
         # MySQL may consume AUTO_INCREMENT ids despite rollback; gaps are expected.
@@ -292,6 +324,8 @@ def verify(env_file, enabled, *, verify_export=False):
     print('MYSQL_COLLECTION_REGISTRATION_VERIFY_OK transaction=rolled_back storage_only=true')
     if verify_export:
         print('MYSQL_EXPORT_STORAGE_VERIFY_OK transaction=rolled_back')
+    if verify_patient_purge:
+        print('MYSQL_PATIENT_PURGE_VERIFY_OK transaction=rolled_back')
 
 
 class SafeParser(argparse.ArgumentParser):
@@ -308,8 +342,11 @@ def main(argv=None):
                             help='Explicitly enable synthetic writes to the fixed verify schema only')
         parser.add_argument('--verify-export-storage', action='store_true',
                             help='Also verify migration 010 tables and the grant foreign key')
+        parser.add_argument('--verify-patient-purge', action='store_true',
+                            help='Verify migration 011 scoped deletes and retired identity protections')
         args = parser.parse_args(argv)
-        verify(args.env_file, args.allow_isolated_write_rollback, verify_export=args.verify_export_storage)
+        verify(args.env_file, args.allow_isolated_write_rollback, verify_export=args.verify_export_storage,
+               verify_patient_purge=args.verify_patient_purge)
         return 0
     except SystemExit as error:
         return 0 if error.code == 0 else 1
