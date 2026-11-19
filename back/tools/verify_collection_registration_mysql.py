@@ -22,6 +22,7 @@ PROTECTED = ('clinical_audit_event', 'device_raw_data', 'device_transformed_data
 TABLES = (*PROTECTED, 'clinicians', 'patients', 'patient_pii', 'devices',
           'data_management_preview', 'data_management_operation', 'data_management_item',
           'data_management_audit_bridge')
+EXPORT_TABLES = ('data_export_inventory', 'data_export_grant')
 TEST_TYPES = ('static_standing', 'walk_10m_usual', 'five_times_sit_to_stand', 'tug', 'free_capture')
 WHEN = datetime(2026, 11, 18, 0, 0, 0)
 _phase = 'arguments'
@@ -58,7 +59,7 @@ def one(cursor, sql, values=()):
 
 def insert(cursor, table, values):
     # Every identifier is authored in this file; no operator-supplied SQL identifiers.
-    require(table in TABLES)
+    require(table in (*TABLES, *EXPORT_TABLES))
     columns = ','.join('`' + name + '`' for name in values)
     cursor.execute('INSERT INTO `' + table + '` (' + columns + ') VALUES (' +
                    ','.join(['%s'] * len(values)) + ')', tuple(values.values()))
@@ -81,7 +82,7 @@ def rejected(cursor, expected, sql, values=()):
         cursor.execute('RELEASE SAVEPOINT expected_failure')
 
 
-def preflight(cursor):
+def preflight(cursor, *, verify_export=False):
     require(one(cursor, 'SELECT DATABASE()')[0] == DATABASE)
     version = one(cursor, 'SELECT VERSION()')[0]
     require(version.startswith('8.') and 'mariadb' not in version.lower())
@@ -91,6 +92,8 @@ def preflight(cursor):
     cursor.execute('SELECT table_name,engine FROM information_schema.tables WHERE table_schema=DATABASE()')
     engines = dict(cursor.fetchall())
     require(all(engines.get(name) == 'InnoDB' for name in TABLES))
+    if verify_export:
+        require(all(engines.get(name) == 'InnoDB' for name in EXPORT_TABLES))
     cursor.execute('SELECT table_name,column_name,is_nullable FROM information_schema.columns '
                    'WHERE table_schema=DATABASE()')
     columns = {(table, column): nullable for table, column, nullable in cursor.fetchall()}
@@ -234,7 +237,24 @@ def scoped_delete_cases(cursor, owned):
     rejected(cursor, 1644, 'DELETE FROM collection_sessions WHERE capture_id=%s', (owned['sibling'],))
 
 
-def verify(env_file, enabled):
+def export_storage_cases(cursor, owned):
+    bundle_id = str(uuid4())
+    token_hash = digest(str(uuid4()))
+    insert(cursor, 'data_export_inventory', dict(
+        id=bundle_id, actor_id=owned['owner'], patient_id=owned['patient'],
+        request_json='{}', inventory_json='{}', scope_hash=digest(bundle_id),
+        state='ready', created_at=WHEN, lease_until=WHEN, expires_at=WHEN,
+    ))
+    rejected(cursor, 1452, 'INSERT INTO data_export_grant (token_hash,export_id,expires_at) VALUES (%s,%s,%s)',
+             (token_hash, str(uuid4()), WHEN))
+    insert(cursor, 'data_export_grant', dict(token_hash=token_hash, export_id=bundle_id, expires_at=WHEN))
+    require(one(cursor, 'SELECT export_id FROM data_export_grant WHERE token_hash=%s', (token_hash,))[0] == bundle_id)
+    cursor.execute('DELETE FROM data_export_inventory WHERE id=%s AND patient_id=%s', (bundle_id, owned['patient']))
+    require(cursor.rowcount == 1)
+    require(one(cursor, 'SELECT COUNT(*) FROM data_export_grant WHERE token_hash=%s', (token_hash,))[0] == 0)
+
+
+def verify(env_file, enabled, *, verify_export=False):
     require(enabled)
     phase('configuration')
     import pymysql
@@ -252,13 +272,16 @@ def verify(env_file, enabled):
         connection.begin()
         with connection.cursor() as cursor:
             phase('preflight')
-            preflight(cursor)
+            preflight(cursor, verify_export=verify_export)
             phase('registration_null_legacy')
             owned = fixtures(cursor)
             phase('counts_and_constraints')
             storage_cases(cursor, owned)
             phase('scoped_delete_and_protection')
             scoped_delete_cases(cursor, owned)
+            if verify_export:
+                phase('export_storage')
+                export_storage_cases(cursor, owned)
     finally:
         # Including every error path: no persistent fixtures and no explicit delete cleanup.
         # MySQL may consume AUTO_INCREMENT ids despite rollback; gaps are expected.
@@ -267,6 +290,8 @@ def verify(env_file, enabled):
         finally:
             connection.close()
     print('MYSQL_COLLECTION_REGISTRATION_VERIFY_OK transaction=rolled_back storage_only=true')
+    if verify_export:
+        print('MYSQL_EXPORT_STORAGE_VERIFY_OK transaction=rolled_back')
 
 
 class SafeParser(argparse.ArgumentParser):
@@ -281,8 +306,10 @@ def main(argv=None):
                             help='Explicit existing credential file; only DB_HOST/PORT/USER/PASS read')
         parser.add_argument('--allow-isolated-write-rollback', action='store_true', required=True,
                             help='Explicitly enable synthetic writes to the fixed verify schema only')
+        parser.add_argument('--verify-export-storage', action='store_true',
+                            help='Also verify migration 010 tables and the grant foreign key')
         args = parser.parse_args(argv)
-        verify(args.env_file, args.allow_isolated_write_rollback)
+        verify(args.env_file, args.allow_isolated_write_rollback, verify_export=args.verify_export_storage)
         return 0
     except SystemExit as error:
         return 0 if error.code == 0 else 1
