@@ -272,6 +272,57 @@ def test_capture_preserves_other_capture_and_shared_device(stopped, client, db, 
     assert Device.query.count()==1
 
 
+def test_capture_purge_removes_three_streams_and_preserves_neighbor(client, capture, db, monkeypatch):
+    from models.models import CollectionGpsRaw, CollectionInsoleFrame, CollectionRadarRaw, CollectionRadarTarget
+    from tests.test_collection_records import other_capture
+    from tests.test_radar_ingest import radar_event
+
+    neighbor = other_capture(capture, 0)
+    for record in (capture, neighbor):
+        assert create_v2(client, record).status_code == 200
+        for sample in (event(), event(stream='gps'), radar_event()):
+            assert batch(client, record, [sample]).status_code == 200
+        assert stop_v2(client, record, {'insole': 1, 'gps': 1, 'radar': 1}).status_code == 200
+
+    model_types = (CollectionSession, CollectionInsoleFrame, CollectionGpsRaw,
+                   CollectionRadarRaw, CollectionRadarTarget, DeviceRawData)
+
+    def rows():
+        return {
+            model: {tuple(getattr(row, column.name) for column in model.__table__.columns)
+                    for row in model.query.all()}
+            for model in model_types
+        }
+
+    selected = db.session.get(CollectionSession, capture['capture_id'])
+    scope = dict(kind='capture', patient_id=selected.patient_id, record_id=selected.capture_id)
+    actor = SimpleNamespace(clinician_id=selected.clinician_id)
+    before = rows()
+    preview = dm.preview_delete(actor, scope, 'synthetic', client=Agent())
+    assert {model.__tablename__: preview['counts'][model.__tablename__] for model in model_types} == {
+        model.__tablename__: 2 if model is DeviceRawData else 1 for model in model_types
+    }
+    operation = dm.begin_delete(actor, dict(request_id=str(uuid4()), preview_id=preview['preview_id'],
+                                          discard_pending=False), 'synthetic', client=Agent())
+
+    class Workbench:
+        def purge(self, dto, token):
+            return dict(schema_version=1, operation_id=dto['operation_id'],
+                        scope_hash=dto['scope_hash'], completed=True, count=0)
+
+    monkeypatch.setattr(dm, 'WorkbenchBundleClient', Workbench)
+    assert dm.continue_delete(actor, operation['operation_id'], 'synthetic', client=Agent())['state'] == 'completed'
+    db.session.expire_all()
+    after = rows()
+    assert CollectionSession.query.one().capture_id == neighbor['capture_id']
+    for model in model_types:
+        assert after[model] <= before[model]
+        assert len(after[model]) == len(before[model]) // 2
+    for model in (CollectionInsoleFrame, CollectionGpsRaw, CollectionRadarRaw):
+        assert model.query.one().capture_id == neighbor['capture_id']
+    assert batch(client, capture, [event(stream='gps', seq=1)]).status_code == 410
+
+
 def test_mixed_historical_snapshot_is_disclosed_and_its_package_selected(capture, db, client, monkeypatch):
     from tests.test_collection_records import _legacy_left
     from services.gait_session_revision import _session_id
