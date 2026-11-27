@@ -54,6 +54,43 @@ def test_create_is_idempotent_and_identity_is_frozen(client, capture):
     assert client.post('/collection-sessions', headers=capture['headers'], json=changed).status_code == 409
 
 
+def test_unbind_preserves_recorded_frames_and_rebinds_same_device(client, capture):
+    create(client, capture)
+    assert batch(client, capture, [event()]).status_code == 200
+    headers = capture['headers']
+    device = client.get('/devices', headers=headers).get_json()['data'][0]
+    assert client.delete(f"/devices/{device['id']}", headers=headers).status_code == 200
+    assert client.get('/devices', headers=headers).get_json()['data'] == []
+    assert DeviceRawData.query.filter_by(device_id=device['id']).count() == 2
+    another = dict(capture['body'], capture_id=str(uuid4()))
+    assert client.post('/collection-sessions', headers=headers, json=another).status_code == 403
+    rebound = client.post('/devices', headers=headers, json={'device_code': device['device_code']})
+    assert rebound.get_json()['data']['id'] == device['id']
+    assert client.post('/collection-sessions', headers=headers, json=another).status_code == 200
+
+
+def test_shared_insole_writes_to_each_clinicians_own_patient(client, capture):
+    create(client, capture)
+    second = client.post('/clinician/enable', json=dict(hospital='H', dept='D', name='Dr2',
+                         phone='13800000002', passcode='1234')).get_json()['data']
+    headers = {'Authorization': 'Bearer ' + second['token']}
+    code = capture['body']['device_code']
+    device = client.post('/devices', headers=headers, json={'device_code': code}).get_json()['data']
+    patient = client.post('/patients', headers=headers, json={'name': 'B', 'phone': '13700000002'}).get_json()['data']
+    capture_id = str(uuid4())
+    second_body = dict(capture['body'], capture_id=capture_id)
+    assert client.post('/collection-sessions', headers=headers, json=second_body).status_code == 403
+    second_body['patient_id'] = patient['id']
+    assert client.post('/collection-sessions', headers=headers, json=second_body).status_code == 200
+    assert batch(client, dict(capture, headers=headers), [event()]).status_code == 403
+    assert batch(client, capture, [event()]).status_code == 200
+    assert batch(client, dict(headers=headers, capture_id=capture_id), [event()]).status_code == 200
+    rows = DeviceRawData.query.filter_by(clinician_id=second['clinician']['id']).all()
+    assert len(rows) == 2
+    assert {(row.device_id, row.patient_id) for row in rows} == {(device['id'], patient['id'])}
+    assert DeviceRawData.query.filter_by(patient_id=capture['patient_id']).count() == 2
+
+
 def test_batch_duplicate_preserves_two_raw_rows_and_uses_no_svm(client, capture, db):
     from models.models import CollectionInsoleFrame
     create(client, capture)

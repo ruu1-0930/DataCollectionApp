@@ -3,17 +3,17 @@
     <view class="hero">
       <view class="logo">🦶</view>
       <view class="h1">步态采集系统</view>
-      <view class="h2">首次注册 · 请填写医生认证信息</view>
+      <view class="h2">{{ registering ? '注册新医生账号' : '已有账号登录' }}</view>
     </view>
     <CaInput label="医院" icon="🏥" placeholder="如：市第一人民医院" v-model="f.hospital" />
-    <CaInput label="科室" icon="🩺" placeholder="如：康复科" v-model="f.dept" />
+    <CaInput v-if="registering" label="科室" icon="🩺" placeholder="如：康复科" v-model="f.dept" />
     <CaInput label="医生姓名" icon="👤" placeholder="请输入您的姓名" v-model="f.name" />
     <CaInput label="联系方式" icon="📞" type="number" placeholder="手机号" v-model="f.phone" />
-    <CaInput label="设置登录口令" icon="🔒" :password="true" placeholder="设置医生登录口令" v-model="f.passcode" />
+    <CaInput :label="registering ? '设置登录口令' : '登录口令'" icon="🔒" :password="true" placeholder="请输入医生登录口令" v-model="f.passcode" />
     <view class="btn" :class="{ disabled: submitting }" @tap="onEnable">
-      {{ submitting ? '启用中…' : '注册并启用' }}
+      {{ submitting ? '提交中…' : (registering ? '注册并启用' : '登录') }}
     </view>
-    <view class="hint">注册后，重启应用或令牌失效时需重新输入登录口令。\n口令仅在当前运行期用于身份验证。</view>
+    <button class="switch-mode" :disabled="submitting" @tap="switchMode">{{ registering ? '已有账号？去登录' : '没有账号？注册医生账号' }}</button>
   </view>
 </template>
 
@@ -23,23 +23,31 @@ import { useOperatorStoreWithOut } from '@/store/modules/operator'
 import { isValidPhone } from '@/utils/patient'
 import { createSubmissionGate, runCommittedSubmission } from '@/utils/submissionGate'
 const op = useOperatorStoreWithOut()
+const registering = ref(false)
 const f = reactive({ hospital: '', dept: '', name: '', phone: '', passcode: '' })
 const submitting = ref(false)
 const submissionGate = createSubmissionGate((value) => {
   submitting.value = value
 })
+function switchMode() {
+  if (submitting.value) return
+  registering.value = !registering.value
+  f.passcode = ''
+}
 async function onEnable() {
-  if (!f.hospital || !f.dept || !f.name) return uni.showToast({ title: '请填写医院/科室/姓名', icon: 'none' })
+  if (!f.hospital.trim() || !f.name.trim()) return uni.showToast({ title: '请填写医院和医生姓名', icon: 'none' })
+  if (registering.value && !f.dept.trim()) return uni.showToast({ title: '请填写科室', icon: 'none' })
   if (!isValidPhone(f.phone)) return uni.showToast({ title: '请输入正确手机号', icon: 'none' })
   if (!f.passcode || f.passcode.length < 4) return uni.showToast({ title: '口令至少 4 位', icon: 'none' })
   return runCommittedSubmission({
     gate: submissionGate,
     submit: async () => {
-      uni.showLoading({ title: '启用中', mask: true })
+      uni.showLoading({ title: registering.value ? '注册中' : '登录中', mask: true })
       try {
-        return await op.enable({ ...f })
+        return registering.value ? await op.enable({ ...f }) : await op.login({ ...f })
       } catch (e) {
-        uni.showToast({ title: '启用失败：请检查网络后重试', icon: 'none', duration: 2500 })
+        const title = e?.data?.msg || (registering.value ? '注册未完成，请重试' : '登录未完成，请重试')
+        uni.showToast({ title, icon: 'none', duration: 2500 })
         return null
       } finally {
         uni.hideLoading()
@@ -58,5 +66,6 @@ async function onEnable() {
 .h2 { font-size: 25rpx; color: $ca-t2; margin-top: 10rpx; }
 .btn { margin-top: 40rpx; background: $ca-primary; color: #fff; font-size: 30rpx; font-weight: 700; text-align: center; padding: 28rpx; border-radius: 26rpx; }
 .btn.disabled { opacity: 0.6; pointer-events: none; }
-.hint { font-size: 22rpx; color: $ca-t3; text-align: center; margin-top: 24rpx; line-height: 1.6; white-space: pre-line; }
+.switch-mode { margin-top: 24rpx; font-size: 26rpx; color: $ca-primary; background: transparent; }
+.switch-mode::after { border: none; }
 </style>

@@ -278,21 +278,21 @@ def _setup_history_beyond_limited_sessions(client, *, trailing_target):
         1.4,
         *([9.0] * (len(limited_starts) + len(target_starts))),
     ]
-    auth, patient_id, session_ids = _setup_sessions(
+    paired_starts = old_starts + qualified_starts
+    auth, patient_id, _ = _setup_sessions(
         client,
-        starts,
-        walking_speeds=speeds,
+        paired_starts,
+        walking_speeds=speeds[:len(paired_starts)],
     )
     unpaired_starts = [*limited_starts, *target_starts]
-    (
-        DeviceRawData.query.filter(
-            DeviceRawData.patient_id == patient_id,
-            DeviceRawData.foot == "R",
-            DeviceRawData.collected_at.in_(unpaired_starts),
-        )
-        .delete(synchronize_session=False)
-    )
+    left = DeviceRawData.query.filter_by(patient_id=patient_id, foot="L").first()
+    values = {column.name: getattr(left, column.name)
+              for column in DeviceRawData.__table__.columns
+              if column.name not in {"id", "collected_at", "walking_speed"}}
+    db.session.add_all(DeviceRawData(**values, collected_at=start, walking_speed=9.)
+                       for start in unpaired_starts)
     db.session.commit()
+    session_ids = [_session_id(patient_id, start) for start in starts]
     return {
         "auth": auth,
         "patient_id": patient_id,

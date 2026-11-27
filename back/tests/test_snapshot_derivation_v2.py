@@ -16,17 +16,20 @@ from .test_analysis_snapshot_service import scope, service, ensure, read
 
 def versions2():
     return SnapshotVersions(snapshot_schema_version='2', projection_schema_version='2',
-        analyzer_set_version='snapshot-pipeline-v3')
+        analyzer_set_version='snapshot-pipeline-v4')
 
 
-def test_new_build_hashes_diagnostics_and_preserves_old_metric_values():
+def test_new_build_hashes_corrected_metrics_and_diagnostics():
     source = rows()
     before = deepcopy(source)
     old = SnapshotPipeline().build(revision=revision(), filtered_rows=source)
     new = SnapshotPipeline(schema_version='2').build(revision=revision(), filtered_rows=source)
     assert new.full_snapshot['schema_version'] == new.agent_projection['projection_schema_version'] == '2'
-    assert new.full_snapshot['provenance']['analyzer_set_version'] == 'snapshot-pipeline-v3'
-    assert new.full_snapshot['metrics'] == old.full_snapshot['metrics']
+    assert new.full_snapshot['provenance']['analyzer_set_version'] == 'snapshot-pipeline-v4'
+    metrics = {item['metric_id']: item for item in new.full_snapshot['metrics']}
+    assert all(metrics[key]['source'] == 'derived' for key in (
+        'step_length_m', 'single_support_time_s', 'double_support_time_s'))
+    assert metrics['walking_speed_mps'] == old.full_snapshot['metrics'][0]
     diagnostic = new.full_snapshot['derivation_quality']
     assert diagnostic == new.agent_projection['derivation_quality']
     assert diagnostic['metrics']['stride_time_cv_pct']['formula_input_count'] == 2
@@ -57,8 +60,8 @@ def test_required_diagnostic_failure_is_not_silently_omitted(monkeypatch):
 
 def test_legal_disjoint_step_length_windows_remain_readable():
     source = rows()
-    source[0]['step_length'] = None
-    source[3]['step_length'] = None
+    source[0]['double_support_time'] = None
+    source[3]['double_support_time'] = None
     built = SnapshotPipeline(schema_version='2').build(revision=revision(), filtered_rows=source)
     item = built.full_snapshot['derivation_quality']['metrics']['step_length_asymmetry_pct']
     assert (item['left_input_count'], item['right_input_count'], item['paired_input_count']) == (1, 1, 0)

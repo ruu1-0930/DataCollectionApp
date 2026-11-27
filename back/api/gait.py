@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 import re
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 from sqlalchemy import and_, case, func, or_, select
 
 from config import db
@@ -150,7 +150,7 @@ def _session_id(patient_id, start):
 def _session_summary(session, patient_id, history):
     """Attach stable API identity and metadata to Task 2's canonical aggregation."""
     frames = session["frames"]
-    aggregation = aggregate_session(frames)
+    aggregation = aggregate_session(frames, corrected=current_app.config['GAIT_SNAPSHOT_SCHEMA_VERSION'] == '2')
     data_quality = session_data_quality(frames)
     summary = {
         "patient_id": patient_id,

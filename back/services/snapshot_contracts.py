@@ -9,7 +9,7 @@ from jsonschema import Draft202012Validator
 
 
 SNAPSHOT_ANALYZER_SET_VERSION = "snapshot-pipeline-v2"
-DERIVATION_ANALYZER_SET_VERSION = "snapshot-pipeline-v3"
+DERIVATION_ANALYZER_SET_VERSION = "snapshot-pipeline-v4"
 
 
 class SnapshotUnavailableError(RuntimeError):
@@ -56,6 +56,11 @@ def validate_build_product(*, full_snapshot: Mapping[str, object],
     if version in {'2', '3'}:
         for payload in (full_snapshot, agent_projection):
             _validate_derivation_counts(payload)
+            if payload["provenance"]["analyzer_set_version"] == DERIVATION_ANALYZER_SET_VERSION:
+                for metric in payload["metrics"]:
+                    if metric["metric_id"] in {"step_length_m", "single_support_time_s", "double_support_time_s"}:
+                        if metric["source"] != "derived":
+                            raise ValueError("invalid_corrected_metric_source")
 
 
 def _validate_derivation_counts(payload):

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  applySelfProfile,
   authenticateOperator,
   buildPersistentOperator,
   createOperatorSessionRuntime,
@@ -19,6 +20,44 @@ const profile = {
 }
 
 describe('operator runtime authentication', () => {
+  it('keeps saved profile when an older token refresh finishes later', async () => {
+    const runtime = createOperatorSessionRuntime()
+    const state = { operator: profile, authRuntime: runtime, unlocked: true, runtimePasscode: 'test-secret' }
+    const oldLogin = deferred()
+    const persist = vi.fn()
+    const refresh = refreshOperatorSession({ state, runtime, loginApi: () => oldLogin.promise, setToken: vi.fn(), setOperator: persist })
+    applySelfProfile(state, { clinicianId: 27, authEpoch: 0 }, { ...profile, id: 27, name: '新医生' }, persist)
+    oldLogin.resolve({ token: 'refreshed', clinician: { ...profile, id: 27 } })
+    await refresh
+    expect(state.operator.name).toBe('新医生')
+    expect(persist).toHaveBeenCalledTimes(1)
+  })
+  it('refreshes using updated server identity and rejects a stale edit reply', async () => {
+    const runtime = createOperatorSessionRuntime()
+    const state = { operator: profile, authRuntime: runtime, unlocked: true, runtimePasscode: 'only-in-memory' }
+    const identity = { clinicianId: profile.clinicianId, authEpoch: 0 }
+    const clinician = { ...profile, id: profile.clinicianId, hospital: '新医院', name: '新姓名', phone: '13900000001' }
+    const persist = vi.fn()
+    applySelfProfile(state, identity, clinician, persist)
+    expect(persist.mock.calls[0][0]).not.toHaveProperty('passcode')
+    const loginApi = vi.fn().mockResolvedValue({ token: 'new-token', clinician })
+    await refreshOperatorSession({ state, runtime, loginApi, setToken: vi.fn(), setOperator: persist })
+    expect(loginApi).toHaveBeenCalledWith({ hospital: clinician.hospital, name: clinician.name, phone: clinician.phone, passcode: state.runtimePasscode })
+    runtime.authEpoch++
+    expect(() => applySelfProfile(state, identity, clinician, persist)).toThrow()
+  })
+  it('logs in after a reset using the entered profile and server department', async () => {
+    const state = { operator: null, runtimePasscode: null, unlocked: false }
+    const credentials = { hospital: profile.hospital, name: profile.name, phone: profile.phone, passcode: 'test-password' }
+    const loginApi = vi.fn().mockResolvedValue({ token: 'issued', clinician: { ...profile, id: 27 } })
+    const setOperator = vi.fn()
+    expect(await unlockOperatorSession({ state, runtime: createOperatorSessionRuntime(),
+      operator: { ...credentials, enabled: true }, passcode: credentials.passcode, loginApi,
+      setToken: vi.fn(), setOperator })).toBe(true)
+    expect(loginApi).toHaveBeenCalledWith(credentials)
+    expect(setOperator).toHaveBeenCalledWith(profile)
+    expect(state.unlocked).toBe(true)
+  })
   it('builds a persistent profile without a passcode', () => {
     expect(buildPersistentOperator({ ...profile, passcode: '1234' }, { id: 41 })).toEqual({
       ...profile,

@@ -258,8 +258,10 @@ def create_capture(actor_id, payload, *, version=None):
             patient = session.query(Patient).filter_by(id=patient_id).with_for_update().one_or_none()
             assert_capture_id_available(session, capture_id)
             assert_clinical_scope(session, patient_id, capture_id=capture_id)
-            device = session.query(Device).filter_by(device_code=payload['device_code']).first()
-            if patient is None or device is None or patient.clinician_id != actor_id or device.clinician_id != actor_id:
+            device = session.query(Device).filter_by(
+                clinician_id=actor_id, device_code=payload['device_code']
+            ).with_for_update().one_or_none()
+            if patient is None or device is None or patient.clinician_id != actor_id:
                 raise CollectionError(403)
             # Lock the old identity before checking retirement again. A create for
             # another patient must not race the old patient's delete transaction.
@@ -269,6 +271,8 @@ def create_capture(actor_id, payload, *, version=None):
                 if not same_request(existing, device):
                     raise CollectionError(409)
                 return _capture_dto(existing)
+            if not device.is_enabled:
+                raise CollectionError(403)
             capture = CollectionSession(capture_id=capture_id, clinician_id=actor_id, patient_id=patient_id,
                 device_id=device.id, mobile_started_at=started, server_created_at=server_now(), **registration)
             session.add(capture)

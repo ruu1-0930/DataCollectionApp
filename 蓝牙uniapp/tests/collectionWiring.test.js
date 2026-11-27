@@ -31,7 +31,7 @@ function lifecycleStore(file, name, dependencies) {
 }
 
 describe('actual BLE collection wiring', () => {
-  let store, native, patient, operator, requests, storage, deleteApi
+  let store, native, patient, operator, requests, storage, deleteApi, registerApi
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-10-19T00:00:00.000Z'))
@@ -40,6 +40,7 @@ describe('actual BLE collection wiring', () => {
     requests = []
     storage = new Map()
     deleteApi = async () => {}
+    registerApi = vi.fn()
     globalThis.uni = { showLoading: vi.fn(), hideLoading: vi.fn(), showToast: vi.fn(),
       getStorageSync: k => storage.get(k), setStorageSync: (k, v) => storage.set(k, v) }
     class Ble {
@@ -67,7 +68,7 @@ describe('actual BLE collection wiring', () => {
     const api = new Function('instance', apiSource + '\nreturn { createCollectionApi, uploadCollectionBatchApi, stopCollectionApi };')(instance)
     let nextId = 0
     store = loadStore({ defineStore, store: {}, BleLib: Ble,
-      listDevicesApi: async () => [], registerDeviceApi: async () => {}, deleteDeviceApiReq: (...args) => deleteApi(...args),
+      listDevicesApi: async () => [], registerDeviceApi: registerApi, deleteDeviceApiReq: (...args) => deleteApi(...args),
       usePatientStoreWithOut: () => patient, useOperatorStoreWithOut: () => operator,
       createBleLines, parseTelemetry, createCollectionCoordinator,
       useRadarStoreWithOut: () => ({ invalidateCapture() {}, suspendContext() {}, setForeground() {} }),
@@ -78,6 +79,14 @@ describe('actual BLE collection wiring', () => {
     store.deviceList = [{ id: 3, device_code: 'IN-3' }]
     store.bles_objs['IN-3'] = { ble: native, isConnected: false }
     store.isBluetoothOpen = true
+  })
+
+  it('explains an existing device binding when a new clinician adds the same insole', async () => {
+    registerApi.mockRejectedValue({ statusCode: 403, data: { code: 403, msg: '无权注册该设备' } })
+    expect(await store.addScannedDevice({ address: 'IN-3' })).toBe(false)
+    expect(uni.showToast).toHaveBeenLastCalledWith(expect.objectContaining({
+      title: '服务端尚未支持共用鞋垫，请联系维护人员更新',
+    }))
   })
 
   function loadPatient(profile = { id: 7, subject_id: '#00007', ...savedRegistration(7).patient_snapshot, phone: null }, overrides = {}) {
@@ -111,6 +120,24 @@ describe('actual BLE collection wiring', () => {
     patient.editRegistration({ name: '更新姓名', test_type: 'tug' })
     await patient.saveRegistration()
     expect(patient.patients[0]).toMatchObject({ name: '更新姓名', height_cm: 170, phone: null })
+  })
+
+  it('does not restore a previous clinician patient list after a login on the same phone', async () => {
+    let complete
+    const clearCurrentPatientId = vi.fn()
+    const setPatients = vi.fn()
+    loadPatient(undefined, { listPatientsApi: () => new Promise(resolve => { complete = resolve }),
+      getPatients: () => [{ id: 7, name: 'previous' }], clearCurrentPatientId, setPatients })
+    const loading = patient.loadList()
+    patient.clearAccountCache()
+    operator.operator.clinicianId = 12
+    operator.authRuntime.authEpoch++
+    complete([{ id: 7, name: 'previous' }])
+    expect(await loading).toEqual([])
+    expect(patient.currentId).toBeNull()
+    expect(patient.patients).toEqual([])
+    expect(clearCurrentPatientId).toHaveBeenCalledOnce()
+    expect(setPatients.mock.calls).toEqual([[[]]])
   })
 
   it('refreshes the selected profile before PUT and exposes conflicts for an explicit choice', async () => {
@@ -561,7 +588,8 @@ describe('actual BLE collection wiring', () => {
     operator.reset()
     await store.retryCollectionUpload()
     expect(store.collectionState.active).toBe(null)
-    expect(store.bles_objs['IN-3'].isConnected).toBe(false)
+    expect(store.deviceList).toEqual([])
+    expect(store.bles_objs['IN-3']).toBeUndefined()
     expect(operator.unlocked).toBe(false)
     expect(requests).toEqual([])
     expect(JSON.parse(storage.get('collection_queue_v1')).sessions[0].clinicianId).toBe(11)

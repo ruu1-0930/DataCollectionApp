@@ -27,7 +27,10 @@ export async function authenticateOperator({ operator, passcode, loginApi }) {
   const response = await loginApi(buildLoginCredentials({ ...operator, passcode }))
   return {
     token: `Bearer ${response.token}`,
-    operator: buildPersistentOperator(operator, response.clinician),
+    operator: buildPersistentOperator({
+      ...operator,
+      dept: response.clinician.dept ?? operator.dept,
+    }, response.clinician),
   }
 }
 
@@ -68,6 +71,7 @@ export function enableOperatorSession({
 export function unlockOperatorSession({
   state,
   runtime,
+  operator = state.operator,
   passcode,
   loginApi,
   setToken,
@@ -76,7 +80,7 @@ export function unlockOperatorSession({
   const authEpoch = beginExplicitAuthentication(runtime)
 
   return authenticateOperator({
-    operator: state.operator,
+    operator,
     passcode,
     loginApi,
   }).then((authenticated) => {
@@ -93,6 +97,7 @@ export function unlockOperatorSession({
 
 export function refreshOperatorSession({ state, runtime, loginApi, setToken, setOperator }) {
   const authEpoch = runtime.authEpoch
+  const startingProfile = state.operator
   if (runtime.refreshPromise?.authEpoch === authEpoch) {
     return runtime.refreshPromise.promise
   }
@@ -105,8 +110,10 @@ export function refreshOperatorSession({ state, runtime, loginApi, setToken, set
     if (runtime.authEpoch !== authEpoch) return null
 
     setToken(authenticated.token)
-    state.operator = authenticated.operator
-    setOperator(state.operator)
+    if (state.operator === startingProfile) {
+      state.operator = authenticated.operator
+      setOperator(state.operator)
+    }
     return authenticated
   })
 
@@ -118,6 +125,17 @@ export function refreshOperatorSession({ state, runtime, loginApi, setToken, set
   }
   promise.then(clearRefreshPromise, clearRefreshPromise)
   return promise
+}
+
+export function applySelfProfile(state, identity, clinician, setOperator) {
+  if (!state.unlocked || state.authRuntime.authEpoch !== identity.authEpoch ||
+      state.operator?.clinicianId !== identity.clinicianId || clinician.id !== identity.clinicianId) {
+    throw new Error('当前账号已切换，请重新打开个人资料')
+  }
+  const { hospital, dept, name, phone } = clinician
+  const next = buildPersistentOperator({ hospital, dept, name, phone, enabled: true }, clinician)
+  state.operator = next
+  setOperator(next)
 }
 
 export function resetOperatorSession({ state, runtime, clearOperator, clearToken }) {

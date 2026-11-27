@@ -9,11 +9,21 @@
 
     <!-- 操作员信息 -->
     <CaCard title="操作员信息">
-      <view class="op-row"><text class="op-k">医院</text><text class="op-v">{{ op.operator?.hospital || '—' }}</text></view>
-      <view class="op-row"><text class="op-k">科室</text><text class="op-v">{{ op.operator?.dept || '—' }}</text></view>
-      <view class="op-row"><text class="op-k">医生</text><text class="op-v">{{ op.operator?.name || '—' }}</text></view>
-      <view class="op-row"><text class="op-k">联系方式</text><text class="op-v">{{ op.operator?.phone || '—' }}</text></view>
-      <view class="op-btn danger" @tap="reEnable">重新启用本机</view>
+      <view v-for="field in profileFields" :key="field.key" class="op-row">
+        <text class="op-k">{{ field.label }}</text>
+        <input v-if="editing" v-model="draft[field.key]" class="profile-input" :maxlength="field.max"
+               :type="field.key === 'phone' ? 'number' : 'text'" :disabled="busy" />
+        <text v-else class="op-v">{{ op.operator?.[field.key] || '—' }}</text>
+      </view>
+      <template v-if="editing">
+        <view class="profile-hint">修改医院、姓名或手机号后，下次登录请填写新资料。</view>
+        <button class="op-btn primary" :disabled="busy" @tap="saveProfile">保存资料</button>
+        <button class="op-btn" :disabled="busy" @tap="editing = false">取消</button>
+      </template>
+      <template v-else>
+        <button class="op-btn primary" :disabled="busy" @tap="editProfile">编辑个人资料</button>
+        <view class="op-btn danger" @tap="reEnable">重新启用本机</view>
+      </template>
     </CaCard>
 
     <uni-notice-bar :speed="40" show-icon scrollable :text="getNoticeBarText" />
@@ -46,7 +56,7 @@
               断开连接
             </view>
             <view v-else class="dev-op primary" @tap="handleConnect('connect', item.id)">连接</view>
-            <view class="dev-op danger-o" @tap="deleteDevice(item)">删除</view>
+            <view class="dev-op danger-o" @tap="deleteDevice(item)">解绑</view>
           </view>
         </view>
       </view>
@@ -95,6 +105,53 @@ import { onLoad, onShow, onUnload } from '@dcloudio/uni-app'
 
 const blueToothStore = useBlueToothStoreWithOut()
 const op = useOperatorStoreWithOut()
+const profileFields = [
+  { key: 'hospital', label: '医院', max: 100 }, { key: 'dept', label: '科室', max: 100 },
+  { key: 'name', label: '医生姓名', max: 50 }, { key: 'phone', label: '手机号', max: 11 },
+]
+const editing = ref(false)
+const busy = ref(false)
+const draft = ref({})
+let original, editIdentity
+
+async function editProfile() {
+  if (busy.value) return
+  busy.value = true
+  try {
+    editIdentity = { clinicianId: op.operator?.clinicianId, authEpoch: op.authRuntime.authEpoch }
+    original = await op.loadProfile(editIdentity)
+    draft.value = { ...original }
+    editing.value = true
+  } catch (error) {
+    uni.showToast({ title: error?.data?.msg || '读取个人资料失败', icon: 'none' })
+  } finally {
+    busy.value = false
+  }
+}
+
+async function saveProfile() {
+  if (busy.value) return
+  const changes = {}
+  for (const { key, label } of profileFields) {
+    const value = draft.value[key].trim()
+    if (value === original[key]) continue
+    if (!value || (key === 'phone' && !/^1\d{10}$/.test(value))) {
+      uni.showToast({ title: key === 'phone' ? '请填写 11 位手机号' : '请填写' + label, icon: 'none' })
+      return
+    }
+    changes[key] = value
+  }
+  busy.value = true
+  try {
+    if (Object.keys(changes).length) await op.updateProfile(changes, editIdentity)
+    editing.value = false
+    uni.showToast({ title: '资料已保存', icon: 'success' })
+  } catch (error) {
+    uni.showToast({ title: error?.data?.msg || '保存失败，请重新核对资料', icon: 'none' })
+  } finally {
+    busy.value = false
+  }
+}
 
 const tooltip = ref(null)
 const timer = ref(null)
@@ -142,22 +199,12 @@ const getDeviceStatus = (device_code) => {
 
 const deleteDevice = (item) => {
   uni.vibrateShort()
-  // 已连接的设备需先断开再删除
-  if (blueToothStore.bles_objs?.[item.device_code]?.isConnected) {
-    tooltip.value.open({
-      msg: '提示',
-      content: '当前设备已连接，请先断开连接',
-      showCancel: false,
-      confirm: () => {
-        blueToothStore.deleteDevice(item.id)
-      }
-    })
-    return
-  }
-
+  const connected = blueToothStore.bles_objs?.[item.device_code]?.isConnected
   tooltip.value.open({
     msg: '提示',
-    content: '确定要删除设备吗？',
+    content: connected
+      ? '解绑会停止本次采集并断开鞋垫。已采集的数据会保留，确定解绑吗？'
+      : '确定解除当前医生的鞋垫绑定吗？已采集的数据会保留。',
     showCancel: true,
     confirm: () => {
       blueToothStore.deleteDevice(item.id)
@@ -296,6 +343,9 @@ page {
   color: $ca-danger;
   background: #fdeced;
 }
+.profile-input { flex: 1; margin-left: 20rpx; text-align: right; font-size: 28rpx; }
+.profile-hint { color: $ca-t2; margin-top: 20rpx; font-size: 24rpx; }
+.op-btn.primary { color: #fff; background: $ca-primary; }
 
 .dev-actions {
   display: flex;

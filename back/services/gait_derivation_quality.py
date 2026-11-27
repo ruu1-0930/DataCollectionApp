@@ -1,7 +1,7 @@
 """Diagnostic facts for existing formulas; does not filter, score or alter values."""
 from collections import Counter
 
-from services.gait_analysis import _finite_or_none, _frame_value, _safe_ratio, _side_mean
+from services.gait_analysis import corrected_frame, _finite_or_none, _frame_value, _safe_ratio, _side_mean
 
 
 def _observations(frames, fields):
@@ -22,7 +22,7 @@ def _ratio_diagnostic(frames, numerator_field, denominator_fields, multiplier, *
         if numerator is None or any(part is None for part in parts):
             exclusions['missing_operand'] += 1
             continue
-        denominator = sum(parts)
+        denominator = sum(parts) if denominator_fields else 1
         if denominator == 0:
             exclusions['zero_denominator'] += 1
             continue
@@ -63,7 +63,7 @@ def _asymmetry_diagnostic(frames):
         state='available' if reason is None else 'unavailable')
 
 
-def analyze_derivation_quality(frames):
+def analyze_derivation_quality(frames, *, corrected=False):
     """Count actual formula cohorts, separately from suspect source observations.
 
     For ratios, `available` means finite per-frame inputs exist (at least two
@@ -74,6 +74,14 @@ def analyze_derivation_quality(frames):
     aggregator; diagnostics do not claim to distinguish pre-filtered causes.
     """
     frames = tuple(frames)
+    if corrected:
+        frames = tuple(map(corrected_frame, frames))
+        return {'version': 1, 'metrics': {
+            'cadence_spm': _ratio_diagnostic(frames, 'walking_speed', ('step_length',), 60),
+            'stride_time_cv_pct': _ratio_diagnostic(frames, 'stride_time', (), 1, variation=True),
+            'double_support_ratio_pct': _ratio_diagnostic(frames, 'double_support_time', ('supported_stride_time',), 200),
+            'step_length_asymmetry_pct': _asymmetry_diagnostic(frames),
+        }}
     return {'version': 1, 'metrics': {
         'cadence_spm': _ratio_diagnostic(frames, 'walking_speed', ('step_length',), 60),
         'stride_time_cv_pct': _ratio_diagnostic(frames, 'step_length', ('walking_speed',), 2, variation=True),

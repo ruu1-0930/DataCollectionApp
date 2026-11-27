@@ -217,7 +217,7 @@ def _bilateral_acceleration_magnitude(frame: Mapping[str, object]) -> float | No
     return magnitudes[0] / 2 + magnitudes[1] / 2
 
 
-def _chart_dto(frames: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+def _chart_dto(frames: Sequence[Mapping[str, object]], *, corrected=False) -> list[dict[str, object]]:
     if not frames:
         return []
     start = frames[0]["collected_at"]
@@ -225,9 +225,9 @@ def _chart_dto(frames: Sequence[Mapping[str, object]]) -> list[dict[str, object]
         {
             "t_ms": int((frame["collected_at"] - start).total_seconds() * 1000),
             "walking_speed_mps_decimal": _decimal6(snapshot_frame_value(frame, "walking_speed")),
-            "step_length_m_decimal": _decimal6(snapshot_frame_value(frame, "step_length")),
-            "single_support_time_s_decimal": _decimal6(snapshot_frame_value(frame, "single_support_time")),
-            "double_support_time_s_decimal": _decimal6(snapshot_frame_value(frame, "double_support_time")),
+            "step_length_m_decimal": _decimal6(snapshot_frame_value(frame, "step_length", corrected=corrected)),
+            "single_support_time_s_decimal": _decimal6(snapshot_frame_value(frame, "single_support_time", corrected=corrected)),
+            "double_support_time_s_decimal": _decimal6(snapshot_frame_value(frame, "double_support_time", corrected=corrected)),
             "pressure_left_adc_decimal": _decimal6(_pressure_frame_mean(frame["L"])),
             "pressure_right_adc_decimal": _decimal6(_pressure_frame_mean(frame["R"])),
             "imu_magnitude_raw_unscaled_decimal": _decimal6(_bilateral_acceleration_magnitude(frame)),
@@ -258,12 +258,12 @@ class AnalyzerFunctions:
     evidence_index: Callable[..., list[dict[str, str]]] | None = None
 
     @classmethod
-    def defaults(cls):
+    def defaults(cls, *, corrected=False):
         return cls(
-            metrics=lambda _rows, frames: aggregate_session(frames),
+            metrics=lambda _rows, frames: aggregate_session(frames, corrected=corrected),
             quality=lambda _rows, frames: session_data_quality(frames),
             pressure=lambda rows, _frames: summarize_snapshot_pressure_rows(rows),
-            chart=lambda _rows, frames: _chart_dto(frames),
+            chart=lambda _rows, frames: _chart_dto(frames, corrected=corrected),
             evidence_index=_evidence_index,
         )
 
@@ -278,7 +278,8 @@ class SnapshotPipeline:
         self.schema_version = schema_version
         self.analyzer_set_version = DERIVATION_ANALYZER_SET_VERSION if schema_version in {'2', '3'} else SNAPSHOT_ANALYZER_SET_VERSION
         self._row_loader = row_loader or self._load_revision_rows
-        self._analyzers = analyzers or AnalyzerFunctions.defaults()
+        self._corrected_timing = schema_version in {'2', '3'}
+        self._analyzers = analyzers or AnalyzerFunctions.defaults(corrected=self._corrected_timing)
 
     def build_from_revision(self, revision) -> SnapshotBuildProduct:
         """Perform the one revision-bounded fetch, filter it once, then build."""
@@ -312,7 +313,7 @@ class SnapshotPipeline:
         derivation = None
         if self.schema_version in {'2', '3'}:
             try:
-                derivation = analyze_derivation_quality(frames)
+                derivation = analyze_derivation_quality(frames, corrected=self._corrected_timing)
             except Exception:
                 raise SnapshotUnavailableError('derivation_quality_failed') from None
         quality = _quality_dto(results["quality"])

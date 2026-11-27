@@ -169,6 +169,11 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       this.stopCollection(reason)
       useRadarStoreWithOut().suspendContext()
       Object.keys(this.bles_objs).forEach(code => this.invalidateConnection(code, true))
+      if (reason === 'identity') {
+        this.deviceList = []
+        this.discovered = []
+        this.bles_objs = {}
+      }
       this.realtime = emptyRealtime()
       this.gpsRealtime = null
     },
@@ -336,7 +341,14 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         return true
       } catch (e) {
         uni.hideLoading()
-        uni.showToast({ title: '添加失败：请检查网络', icon: 'none' })
+        if (e?.data?.code === 403 && e.data.msg === '无权注册该设备') {
+          uni.showToast({ title: '服务端尚未支持共用鞋垫，请联系维护人员更新', icon: 'none', duration: 3500 })
+        } else if (e?.url && !e.statusCode && !e.errMsg) {
+          uni.showToast({ title: '请先登录医生账号', icon: 'none' })
+        } else if (!e?.data && !e?.errMsg && !e?.statusCode) {
+          uni.showToast({ title: '设备列表更新失败，请刷新后重试', icon: 'none' })
+        }
+        // HTTP 和传输错误由请求层显示，保留其具体原因。
         return false
       }
     },
@@ -539,7 +551,11 @@ export const useBlueToothStore = defineStore('blueToothStore', {
      * 获取设备列表
      */
     async getDevicesList() {
-      this.deviceList = await listDevicesApi()
+      const operator = useOperatorStoreWithOut()
+      const epoch = operator.authRuntime.authEpoch
+      const devices = await listDevicesApi()
+      if (operator.authRuntime.authEpoch !== epoch) return
+      this.deviceList = devices
 
       const existDeviceList = Object.keys(this.bles_objs)
       // bles_objs 更新
@@ -606,12 +622,12 @@ export const useBlueToothStore = defineStore('blueToothStore', {
       }
     },
     /**
-     * 删除设备
+     * 解绑设备
      * @param {*} id
      */
     async deleteDevice(id) {
       uni.showLoading({
-        title: '删除中..'
+        title: '解绑中…'
       })
       const device = this.deviceList.find((item) => item.id == id)
       if (!device) { uni.hideLoading(); return }
@@ -622,14 +638,14 @@ export const useBlueToothStore = defineStore('blueToothStore', {
         delete this.bles_objs[device.device_code]
         await this.getDevicesList()
         uni.showToast({
-          title: '删除设备成功',
+          title: '解绑设备成功',
           icon: 'success'
         })
 
         uni.hideLoading()
       } catch (error) {
         uni.showToast({
-          title: '删除设备失败',
+          title: '解绑设备失败',
           icon: 'none'
         })
       }

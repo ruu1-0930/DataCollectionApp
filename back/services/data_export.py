@@ -26,7 +26,7 @@ from services.data_management_scope import assert_clinical_scope
 
 PAGE = 4 * 1024 * 1024
 KINDS = {'profiles': {'patients','collections'}, 'raw': {'frames','gps','radar','targets'},
-         'analysis': {'snapshots','transformed'}, 'agent': set()}
+         'analysis': {'snapshots','transformed','frames'}, 'agent': set()}
 
 
 class ExportInventory(db.Model):

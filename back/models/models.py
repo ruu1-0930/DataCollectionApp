@@ -24,8 +24,11 @@ class Clinician(db.Model):
 
 class Device(db.Model):
     __tablename__ = 'devices'
+    __table_args__ = (
+        db.UniqueConstraint('clinician_id', 'device_code', name='uq_devices_clinician_code'),
+    )
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    device_code = db.Column(db.String(50), unique=True, nullable=False)
+    device_code = db.Column(db.String(50), nullable=False)
     device_name = db.Column(db.String(100))
     is_enabled = db.Column(db.Boolean, default=True)
     clinician_id = db.Column(db.Integer, db.ForeignKey('clinicians.id'), nullable=False, index=True)

@@ -193,6 +193,8 @@ def update_me():
             value = _clean_string(data, field)
             if not value:
                 return jsonify(Response.error(400, '资料字段不能为空')), 400
+            if len(value) > Clinician.__table__.columns[field].type.length:
+                return jsonify(Response.error(400, '资料字段超出长度限制')), 400
             updates[field] = value
 
     if 'phone' in updates and not _PHONE_PATTERN.fullmatch(updates['phone']):

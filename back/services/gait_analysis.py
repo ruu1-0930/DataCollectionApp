@@ -87,9 +87,49 @@ def build_snapshot_frames(rows):
     return tuple(sessions[0]["frames"])
 
 
-def snapshot_frame_value(frame, field):
+CORRECTED_METRIC_FORMULAS = {
+    "step_length_m": "stride_time_s / 2 * mean_frame_speed_mps",
+    "single_support_time_s": "opposite_foot_swing_time_s",
+    "double_support_time_s": "(stride_time_s - left_swing_time_s - right_swing_time_s) / 2",
+    "stride_time_cv_pct": "std(stride_time_s) / mean(stride_time_s) * 100",
+    "double_support_ratio_pct": "2 * double_support_time_s / paired_stride_time_s * 100",
+}
+
+
+def _nonnegative(value):
+    value = _finite_or_none(value)
+    return value if value is not None and value >= 0 else None
+
+
+def corrected_frame(frame):
+    """Project firmware fields into displayed quantities without changing the source."""
+    feet = {side: frame.get(side) or {} for side in ('L', 'R')}
+    swings = {side: _nonnegative(foot.get('single_support_time')) for side, foot in feet.items()}
+    speeds = [_nonnegative(foot.get('walking_speed')) for foot in feet.values()]
+    speeds = [value for value in speeds if value is not None]
+    speed = _finite_statistic(statistics.mean, speeds) if speeds else None
+    result = dict(frame)
+    for side, opposite in (('L', 'R'), ('R', 'L')):
+        foot = feet[side]
+        stride = _nonnegative(foot.get('double_support_time')) or None
+        remaining = stride - sum(swings.values()) if stride and None not in swings.values() else None
+        double = remaining / 2 if remaining is not None and remaining >= -1e-12 else None
+        if double is not None:
+            double = max(0., double)
+        result[side] = {
+            **foot,
+            'step_length': _finite_or_none(stride / 2 * speed) if stride is not None and speed is not None else None,
+            'single_support_time': swings[opposite],
+            'double_support_time': double,
+            'stride_time': stride,
+            'supported_stride_time': stride if double is not None else None,
+        }
+    return result
+
+
+def snapshot_frame_value(frame, field, *, corrected=False):
     """Expose the existing finite per-frame aggregation for snapshot chart assembly."""
-    return _frame_value(frame, field)
+    return _frame_value(corrected_frame(frame) if corrected else frame, field)
 
 
 def _build_session(index, rows):
@@ -197,16 +237,19 @@ def _ratio_series(frames, numerator_field, denominator_field, multiplier=1):
     return values
 
 
-def aggregate_session(frames):
+def aggregate_session(frames, *, corrected=False):
     """Aggregate firmware values and transparent derived metrics without imputation."""
+    if corrected:
+        frames = tuple(map(corrected_frame, frames))
     metrics = {}
     for key, spec in FIRMWARE_METRICS.items():
         field = spec["field"]
+        formula = CORRECTED_METRIC_FORMULAS.get(key) if corrected else None
         metrics[key] = _metric(
             _frame_series(frames, field),
             spec["unit"],
-            "firmware",
-            None,
+            "derived" if formula else "firmware",
+            formula,
             _side_mean(frames, "L", field),
             _side_mean(frames, "R", field),
         )
@@ -246,7 +289,7 @@ def aggregate_session(frames):
         DERIVED_METRICS["step_length_asymmetry_pct"]["formula"],
     )
 
-    stride_time_values = _ratio_series(
+    stride_time_values = _frame_series(frames, "stride_time") if corrected else _ratio_series(
         frames,
         "step_length",
         "walking_speed",
@@ -258,14 +301,18 @@ def aggregate_session(frames):
         [] if stride_time_cv is None else [stride_time_cv],
         DERIVED_METRICS["stride_time_cv_pct"]["unit"],
         "derived",
-        DERIVED_METRICS["stride_time_cv_pct"]["formula"],
+        CORRECTED_METRIC_FORMULAS["stride_time_cv_pct"] if corrected else DERIVED_METRICS["stride_time_cv_pct"]["formula"],
     )
 
     double_support_values = []
     for frame in frames:
         single_support = _frame_value(frame, "single_support_time")
         double_support = _frame_value(frame, "double_support_time")
-        if single_support is not None and double_support is not None:
+        if corrected:
+            value = _safe_ratio(double_support, _frame_value(frame, "supported_stride_time"), multiplier=200)
+            if value is not None:
+                double_support_values.append(value)
+        elif single_support is not None and double_support is not None:
             total_support = _finite_or_none(single_support + double_support)
             value = _safe_ratio(double_support, total_support, multiplier=100)
             if value is not None:
@@ -274,7 +321,7 @@ def aggregate_session(frames):
         double_support_values,
         DERIVED_METRICS["double_support_ratio_pct"]["unit"],
         "derived",
-        DERIVED_METRICS["double_support_ratio_pct"]["formula"],
+        CORRECTED_METRIC_FORMULAS["double_support_ratio_pct"] if corrected else DERIVED_METRICS["double_support_ratio_pct"]["formula"],
     )
 
     return {"frame_count": len(frames), "metrics": metrics}

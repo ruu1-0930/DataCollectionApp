@@ -1,5 +1,6 @@
 import datetime
 from flask import Blueprint, request, jsonify, g
+from sqlalchemy.exc import IntegrityError
 from config import db
 from models.models import Device
 from models.models import Patient, DeviceRawData, DeviceTransformedData
@@ -23,23 +24,32 @@ def register_device():
     if not device_code:
         return jsonify(Response.error(400, "device_code 为必填")), 400
 
-    existing = Device.query.filter_by(device_code=device_code).first()
+    registration = Device.query.filter_by(clinician_id=g.clinician_id, device_code=device_code)
+    existing = registration.one_or_none()
     if existing:
-        if existing.clinician_id != g.clinician_id:
-            return jsonify(Response.error(403, "无权注册该设备")), 403
+        if not existing.is_enabled:
+            existing.is_enabled = True
+            db.session.commit()
         return jsonify(Response.success(data=_device_public(existing), msg="设备已注册"))
 
     d = Device(device_code=device_code, device_name=data.get('device_name'),
                clinician_id=g.clinician_id, is_enabled=True)
     db.session.add(d)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        existing = registration.one_or_none()
+        if existing is None:
+            raise
+        return jsonify(Response.success(data=_device_public(existing), msg="设备已注册"))
     return jsonify(Response.success(data=_device_public(d), msg="设备注册成功"))
 
 
 @device_bp.route('/devices', methods=['GET'])
 @token_required()
 def list_devices():
-    devices = Device.query.filter_by(clinician_id=g.clinician_id).all()
+    devices = Device.query.filter_by(clinician_id=g.clinician_id, is_enabled=True).all()
     return jsonify(Response.success(data=[_device_public(d) for d in devices]))
 
 
@@ -51,9 +61,9 @@ def delete_device(device_id):
         return jsonify(Response.error(404, "设备不存在")), 404
     if d.clinician_id != g.clinician_id:
         return jsonify(Response.error(403, "无权删除该设备")), 403
-    db.session.delete(d)
+    d.is_enabled = False
     db.session.commit()
-    return jsonify(Response.success(msg="设备已删除"))
+    return jsonify(Response.success(msg="设备已解绑"))
 
 
 # 一帧 BLE = 合并 38 字段：前 19 左脚、后 19 右脚（硬件固定顺序）。
@@ -101,6 +111,8 @@ def upload_raw_data(device_code):
             assert_clinical_scope(session, patient_id)
             if patient is None:
                 return jsonify(Response.error(403, "患者不存在或不属于当前医护")), 403
+            if not db.session.query(Device).filter_by(id=device.id, is_enabled=True).with_for_update().populate_existing().first():
+                return jsonify(Response.error(404, "设备未绑定")), 404
             try:
                 feet = {'L': _parse_foot(data, _LEFT_SRC), 'R': _parse_foot(data, _RIGHT_SRC)}
             except (KeyError, TypeError, ValueError):

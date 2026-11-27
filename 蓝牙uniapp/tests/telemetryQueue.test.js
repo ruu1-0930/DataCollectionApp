@@ -117,6 +117,11 @@ describe('fixed collection window and durable FIFO', () => {
     f.api.create = async body => { f.actor({ clinicianId: 12, authEpoch: 2, unlocked: true }); return { capture_id: body.capture_id } }
     await f.queue.drain()
     expect(f.requests).toEqual([])
+    expect(f.queue.snapshot().pending).toBe(0)
+    const [original] = JSON.parse(f.disk()).sessions
+    expect(original.clinicianId).toBe(11)
+    expect(original.outboxes.primary).toHaveLength(1)
+    f.actor({ clinicianId: 11, authEpoch: 3, unlocked: true })
     expect(f.queue.snapshot().pending).toBe(1)
   })
   it('refuses event 5001 without overwriting and stops capture', () => {

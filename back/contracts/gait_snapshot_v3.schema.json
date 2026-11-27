@@ -250,19 +250,40 @@
             },
             "unit": {
               "const": "m"
-            },
-            "source": {
-              "const": "firmware"
-            },
-            "formula": {
-              "type": "null"
-            },
-            "source_field": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 64
             }
-          }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "source": {
+                  "const": "firmware"
+                },
+                "formula": {
+                  "type": "null"
+                },
+                "source_field": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              }
+            },
+            {
+              "properties": {
+                "source": {
+                  "const": "derived"
+                },
+                "formula": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "source_field": {
+                  "type": "null"
+                }
+              }
+            }
+          ]
         },
         {
           "properties": {
@@ -271,19 +292,40 @@
             },
             "unit": {
               "const": "s"
-            },
-            "source": {
-              "const": "firmware"
-            },
-            "formula": {
-              "type": "null"
-            },
-            "source_field": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 64
             }
-          }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "source": {
+                  "const": "firmware"
+                },
+                "formula": {
+                  "type": "null"
+                },
+                "source_field": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              }
+            },
+            {
+              "properties": {
+                "source": {
+                  "const": "derived"
+                },
+                "formula": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "source_field": {
+                  "type": "null"
+                }
+              }
+            }
+          ]
         },
         {
           "properties": {
@@ -292,19 +334,40 @@
             },
             "unit": {
               "const": "s"
-            },
-            "source": {
-              "const": "firmware"
-            },
-            "formula": {
-              "type": "null"
-            },
-            "source_field": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 64
             }
-          }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "source": {
+                  "const": "firmware"
+                },
+                "formula": {
+                  "type": "null"
+                },
+                "source_field": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              }
+            },
+            {
+              "properties": {
+                "source": {
+                  "const": "derived"
+                },
+                "formula": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "source_field": {
+                  "type": "null"
+                }
+              }
+            }
+          ]
         },
         {
           "properties": {
@@ -1680,7 +1743,7 @@
           "const": "3"
         },
         "analyzer_set_version": {
-          "const": "snapshot-pipeline-v3"
+          "enum": ["snapshot-pipeline-v3", "snapshot-pipeline-v4"]
         },
         "threshold_profile_version": {
           "type": "string",

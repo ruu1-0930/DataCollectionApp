@@ -49,7 +49,11 @@ export const usePatientStore = defineStore('patientStore', {
     },
     // 拉取当前医护患者列表（权威以后端为准，写入本地缓存）
     async loadList() {
+      const actor = registrationActor(null)
+      if (!actor.unlocked || !actor.actorId) return []
       const res = await listPatientsApi()
+      const current = registrationActor(null)
+      if (!current.unlocked || actor.actorId !== current.actorId || actor.authEpoch !== current.authEpoch) return []
       const cached = new Map(this.patients.map(patient => [patient.id, patient]))
       this.patients = (res || []).map(row => {
         const previous = cached.get(row.id)
@@ -151,6 +155,14 @@ export const usePatientStore = defineStore('patientStore', {
       this.currentId = null
       this.registrationState = registrationView()
       clearCurrentPatientId()
+    },
+    clearAccountCache() {
+      registrationRuntimes.get(this)?.invalidate()
+      this.registrationState = registrationView()
+      this.currentId = null
+      this.patients = []
+      clearCurrentPatientId()
+      setPatients([])
     },
     // 本地缓存按 lastAt 倒序 + 关键字过滤（离线展示）
     list(keyword) {

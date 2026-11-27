@@ -9,9 +9,9 @@ export async function clinicianLoginApi(data) {
   // data: { hospital, name, phone, passcode }
   return instance.request({ url: '/clinician/login', method: 'post', data })
 }
-export async function clinicianMeApi() {
-  return instance.request({ url: '/clinician/me', method: 'get' })
+export async function clinicianMeApi(identity) {
+  return instance.request({ url: '/clinician/me', method: 'get', custom: { collectionIdentity: identity } })
 }
-export async function clinicianUpdateMeApi(data) {
-  return instance.request({ url: '/clinician/me', method: 'put', data })
+export async function clinicianUpdateMeApi(data, identity) {
+  return instance.request({ url: '/clinician/me', method: 'put', data, custom: { collectionIdentity: identity } })
 }

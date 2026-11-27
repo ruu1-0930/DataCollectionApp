@@ -341,6 +341,26 @@ def test_profile_update_rejects_duplicate_hospital_phone(client):
     assert response.get_json()['code'] == 409
 
 
+def test_self_profile_identity_edit_keeps_id_and_uses_new_login(client):
+    created = client.post('/clinician/enable', json=_enable_payload()).get_json()['data']
+    headers = {'Authorization': 'Bearer ' + created['token']}
+    changed = {'hospital': '新医院', 'dept': '新科室', 'name': '新姓名', 'phone': '13900000001'}
+    result = client.put('/clinician/me', headers=headers, json=changed)
+    assert result.status_code == 200
+    assert result.get_json()['data'] == {**changed, 'id': created['clinician']['id']}
+    assert client.post('/clinician/login', json=_login_payload()).status_code == 401
+    new_login = {key: changed[key] for key in ('hospital', 'name', 'phone')}
+    assert client.post('/clinician/login', json=_login_payload(**new_login)).status_code == 200
+
+
+@pytest.mark.parametrize(('field', 'bound'), [('hospital', 100), ('dept', 100), ('name', 50)])
+def test_profile_rejects_oversize_before_storage(client, field, bound):
+    headers = {'Authorization': f'Bearer {_token(client)}'}
+    before = client.get('/clinician/me', headers=headers).get_json()['data']
+    assert client.put('/clinician/me', headers=headers, json={field: '名' * (bound + 1)}).status_code == 400
+    assert client.get('/clinician/me', headers=headers).get_json()['data'] == before
+
+
 def test_profile_update_reraises_integrity_error_without_conflict(client, monkeypatch):
     token = _token(client)
     error = IntegrityError('simulated unrelated failure', None, None)

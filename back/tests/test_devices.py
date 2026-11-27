@@ -27,7 +27,7 @@ def test_list_and_delete_device(client):
     assert len(client.get('/devices', headers=auth).get_json()['data']) == 0
 
 
-def test_device_code_cannot_be_rebound_to_another_clinician(client):
+def test_clinicians_can_register_the_same_insole_independently(client):
     first_auth = _auth(client)
     original = client.post(
         '/devices',
@@ -49,14 +49,19 @@ def test_device_code_cannot_be_rebound_to_another_clinician(client):
         'passcode': '1234',
     }).get_json()['data']['token']
     second_auth = {'Authorization': f'Bearer {second_token}'}
-    denied = client.post(
+    shared = client.post(
         '/devices',
         headers=second_auth,
-        json={'device_code': 'INSOLE-001', 'device_name': '不得接管'},
+        json={'device_code': 'INSOLE-001', 'device_name': '共用鞋垫'},
     )
 
-    assert denied.status_code == 403
+    assert shared.status_code == 200
+    second_device = shared.get_json()['data']
+    assert second_device['id'] != original.get_json()['data']['id']
     assert client.get('/devices', headers=first_auth).get_json()['data'] == [
         original.get_json()['data']
     ]
-    assert client.get('/devices', headers=second_auth).get_json()['data'] == []
+    assert client.get('/devices', headers=second_auth).get_json()['data'] == [second_device]
+    assert client.delete(f"/devices/{second_device['id']}", headers=first_auth).status_code == 403
+    assert client.delete(f"/devices/{second_device['id']}", headers=second_auth).status_code == 200
+    assert client.get('/devices', headers=first_auth).get_json()['data'] == [original.get_json()['data']]

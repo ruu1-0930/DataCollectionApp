@@ -2,9 +2,11 @@ import { defineStore } from 'pinia'
 import { store } from '@/store'
 import { getOperator, setOperator, clearOperator } from '@/utils/clinicStorage'
 import { clearToken, setToken, getToken } from '@/utils/auth'
-import { clinicianEnableApi, clinicianLoginApi } from '@/api'
+import { clinicianEnableApi, clinicianLoginApi, clinicianMeApi, clinicianUpdateMeApi } from '@/api'
 import { useBlueToothStoreWithOut } from '@/store/modules/blueTooth'
+import { usePatientStoreWithOut } from '@/store/modules/patient'
 import {
+  applySelfProfile,
   createOperatorSessionRuntime,
   enableOperatorSession,
   refreshOperatorSession,
@@ -23,9 +25,19 @@ export const useOperatorStore = defineStore('operatorStore', {
     isEnabled: (s) => !!(s.operator && s.operator.enabled)
   },
   actions: {
+    async loadProfile(identity) {
+      const clinician = await clinicianMeApi(identity)
+      applySelfProfile(this, identity, clinician, setOperator)
+      return clinician
+    },
+    async updateProfile(changes, identity) {
+      const clinician = await clinicianUpdateMeApi(changes, identity)
+      applySelfProfile(this, identity, clinician, setOperator)
+    },
     // 首次启用：POST /clinician/enable → 存 token + 本地档案
     enable(credentials) {
       useBlueToothStoreWithOut().endCollectionContext('identity')
+      usePatientStoreWithOut().clearAccountCache()
       return enableOperatorSession({
         state: this,
         runtime: this.authRuntime,
@@ -33,6 +45,14 @@ export const useOperatorStore = defineStore('operatorStore', {
         enableApi: clinicianEnableApi,
         setToken,
         setOperator,
+      })
+    },
+    login({ hospital, name, phone, passcode }) {
+      useBlueToothStoreWithOut().endCollectionContext('identity')
+      usePatientStoreWithOut().clearAccountCache()
+      return unlockOperatorSession({
+        state: this, runtime: this.authRuntime, operator: { hospital, name, phone, enabled: true },
+        passcode, loginApi: clinicianLoginApi, setToken, setOperator,
       })
     },
     // 解锁必须经服务端重新验证；口令仅保留在当前运行期内存。

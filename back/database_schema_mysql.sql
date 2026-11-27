@@ -37,12 +37,13 @@ CREATE TABLE clinicians (
 
 CREATE TABLE devices (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  device_code VARCHAR(50) NOT NULL UNIQUE,
+  device_code VARCHAR(50) NOT NULL,
   device_name VARCHAR(100),
   is_enabled TINYINT(1) DEFAULT 1,
   clinician_id INT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   KEY idx_devices_clinician (clinician_id),
+  UNIQUE KEY uq_devices_clinician_code (clinician_id, device_code),
   CONSTRAINT fk_devices_clinician FOREIGN KEY (clinician_id) REFERENCES clinicians(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
